@@ -1,0 +1,22 @@
+{
+  "_nota": "DATO EDITABLE. Cada seccion de la nomina de la gestoria = el trabajo que realiza cada persona. Razo confirmado cruzando por nombre con las casillas de trabajo de los contratos de Access; Agetrans: la 1 son conductores nacional (con algo de administracion dentro) y la 3 administracion (por confirmar). driver=true: es coste de conductor y se compara con los partes.",
+  "sections": {
+    "Razo": {
+      "0": {"label": "Sin seccion", "type": "otros", "driver": false},
+      "1": {"label": "Conductor hormigonera", "type": "hormigonera", "driver": true},
+      "2": {"label": "Conductor nacional", "type": "nacional", "driver": true},
+      "3": {"label": "Conductor bañera", "type": "banera", "driver": true},
+      "4": {"label": "Administración", "type": "administracion", "driver": false},
+      "5": {"label": "Taller", "type": "taller", "driver": false}
+    },
+    "Agetrans": {
+      "0": {"label": "Sin seccion", "type": "otros", "driver": false},
+      "1": {"label": "Conductor nacional", "type": "nacional", "driver": true, "porConfirmar": true},
+      "3": {"label": "Administración", "type": "administracion", "driver": false, "porConfirmar": true}
+    }
+  },
+  "typeLabels": {"hormigonera": "Conductor hormigonera", "nacional": "Conductor nacional", "banera": "Conductor bañera", "administracion": "Administración", "taller": "Taller", "otros": "Sin sección"},
+  "categoryType": {"HORMIGONERA": "hormigonera", "TRACTORA BAÑERA": "banera", "TRACTORA NACIONAL": "nacional"},
+  "stationNave": ["NAVE"],
+  "ivaCombustible": 0.21
+}

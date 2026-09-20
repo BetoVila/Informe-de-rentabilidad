@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Rentabilidad · Vehículos</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#12202f;background:#f2f5f8}
+*{box-sizing:border-box}
+button,input,select{font:inherit}
+button{cursor:pointer;border:1px solid #dde4ec;border-radius:8px;background:#fff;color:#12202f;padding:7px 12px}
+button:hover{border-color:#a9bcd6;background:#f4f8ff}
+a{color:#2C5FD6}
+.textbtn{padding:0;border:0;background:none;color:#2C5FD6;font-size:13px}
+.masthead{background:#0A192F;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 32px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}
+.brand-text strong{display:block;font-size:18px;letter-spacing:.1em;font-weight:800}
+.brand-text strong span{font-weight:400;color:#b9c8dc}
+.brand-text small{display:block;font-size:11px;letter-spacing:.18em;color:#8fa0b2;margin-top:2px}
+.sources-strip{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.src-pill{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.02em}
+.src-pill.ok{background:rgba(111,214,193,.18);color:#bdeee1}
+.src-pill.pending{background:transparent;color:#a9bcd6;border:1px dashed rgba(255,255,255,.35)}
+.fresh{display:flex;align-items:center;gap:8px;font-size:12px;color:#c3d1e2;white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:#6ed6c1;flex:none}
+.workspace{display:flex;align-items:flex-start}
+.filters{width:270px;flex:none;background:#fff;border-right:1px solid #dde4ec;padding:24px 20px}
+.filterhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.filterhead h2{font-size:15px;margin:0}
+.fieldtitle{display:block;font-size:13px;color:#5A6B7C;margin-bottom:8px}
+.segmented{display:flex;padding:3px;background:#eef2f8;border-radius:9px;gap:2px;margin-bottom:22px}
+.segmented button{flex:1;border:0;padding:6px;font-size:13px;background:transparent;border-radius:7px}
+.segmented button.selected{background:#0A192F;color:#fff}
+.slicer{border-bottom:1px solid #dde4ec;padding:12px 0;font-size:13px}
+.slicer summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;font-weight:600;color:#233246}
+.slicer summary::-webkit-details-marker{display:none}
+.slicer small{font-weight:400;color:#5A6B7C}
+.slicer .options{margin-top:10px;display:flex;flex-direction:column;gap:7px;color:#3a4a5e}
+.slicer .options label{display:flex;gap:8px;align-items:center}
+.sidebar-note{margin-top:24px;padding:14px;background:#f2f6fc;border-radius:10px;font-size:13px}
+.sidebar-note p{color:#5A6B7C;margin:6px 0 8px}
+main{flex:1;min-width:0;padding:26px 32px 40px;max-width:1500px}
+.titlebar{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.eyebrow{color:#2C5FD6;font-size:11px;letter-spacing:.14em;font-weight:700;margin:0 0 3px}
+h1{margin:0;font-size:30px;letter-spacing:-.5px;color:#0A192F}
+.tag{background:#e3ebf8;color:#2a4a72;font-size:12px;border-radius:20px;padding:5px 12px;font-weight:600}
+.tabs{display:flex;gap:22px;border-bottom:1px solid #d3dce8;margin:22px 0;overflow-x:auto}
+.tabs button,.tabs a{border:0;border-radius:0;background:none;padding:10px 0;font-size:13.5px;color:#5A6B7C;border-bottom:3px solid transparent;text-decoration:none;white-space:nowrap;display:inline-block}
+.tabs button.selected,.tabs a.selected{color:#2C5FD6;border-bottom-color:#2C5FD6;font-weight:700}
+.panel{background:#fff;border:1px solid #dde4ec;border-radius:14px;padding:22px;margin-bottom:16px}
+.panel h2{margin:0 0 4px;font-size:17px;color:#0A192F}
+.sub{color:#5A6B7C;font-size:12.5px;margin:0 0 16px}
+.barrow{display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:10px;font-size:13px;margin:13px 0}
+.barlabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.bartrack{height:8px;background:#eef2f8;border-radius:5px;overflow:hidden}
+.barfill{height:100%;border-radius:5px;background:#2C5FD6}
+.barnum{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.tabletools{display:flex;justify-content:space-between;align-items:center;gap:15px;margin:0 0 16px;flex-wrap:wrap}
+.tabletools input{padding:9px 12px;border-radius:7px;border:1px solid #dde4ec;font-size:13px;width:260px;max-width:100%}
+.tabletools span{font-size:12.5px;color:#5A6B7C}
+.tablewrap{overflow:auto;border:1px solid #dde4ec;border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
+thead{position:sticky;top:0}
+th{background:#f2f5fa;text-align:left;font-size:11px;letter-spacing:.02em;color:#455b77;padding:0;border-bottom:1px solid #d6dfeb;font-weight:700}
+th button{width:100%;text-align:inherit;border:0;background:none;padding:11px 12px;border-radius:0;font-size:11px;color:#455b77;font-weight:700}
+td{padding:10px 12px;border-bottom:1px solid #eef1f6}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:#f7faff}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.platelink{color:#2C5FD6;font-weight:600;text-decoration:none}
+footer{font-size:11.5px;color:#5A6B7C;margin-top:24px;border-top:1px solid #dde4ec;padding-top:14px}
+</style>
+</helmet>
+
+<div style="width:100%;min-height:100vh;background:#f2f5f8;display:flex;flex-direction:column;">
+
+<header class="masthead">
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M 18 22 L 48 84 L 60 84 L 30 22 Z" fill="#FFFFFF"/>
+      <path d="M 46 22 H 58 V 84 H 46 Z" fill="#8FA0B2"/>
+      <path d="M 58 22 H 76 C 88 22 94 30 94 39 C 94 48 88 56 76 56 H 58 V 44 H 74 C 79 44 82 42 82 39 C 82 36 79 34 74 34 H 58 Z" fill="#FFFFFF"/>
+      <polygon points="46,84 60,84 48,84" fill="#FFFFFF"/>
+    </svg>
+    <div class="brand-text">
+      <strong>RAZO <span>+ AGETRANS</span></strong>
+      <small>CONTROL DE RENTABILIDAD</small>
+    </div>
+  </div>
+  <div class="sources-strip" aria-label="Fuentes conectadas">
+    <span class="src-pill ok">GesRuta ✓</span>
+    <span class="src-pill ok">Access ✓</span>
+    <span class="src-pill ok">Solred flota ✓</span>
+    <span class="src-pill pending">Movertis</span>
+    <span class="src-pill pending">Locatel</span>
+  </div>
+  <div class="fresh"><span class="dot"></span>Lectura 19 sep 03:04 · datos hasta 18 sep</div>
+</header>
+
+<div class="workspace">
+  <aside class="filters" aria-label="Segmentadores">
+    <div class="filterhead"><h2>Segmentadores</h2><button class="textbtn">Restablecer</button></div>
+    <label class="fieldtitle">Empresa facturadora</label>
+    <div class="segmented">
+      <button class="selected">Ambas</button><button>Razo</button><button>Agetrans</button>
+    </div>
+    <details class="slicer"><summary>Vehículo <small>Todos</small></summary>
+      <div class="options"><label><input type="checkbox">2481-KTP</label><label><input type="checkbox">3350-LFM</label></div>
+    </details>
+    <details class="slicer"><summary>Cliente <small>Todos</small></summary>
+      <div class="options"><label><input type="checkbox">Áridos Norte S.L.</label><label><input type="checkbox">Hormigón do Miño</label></div>
+    </details>
+    <details class="slicer"><summary>Tipo de vehículo <small>Todos</small></summary>
+      <div class="options"><label><input type="checkbox">Tractora</label><label><input type="checkbox">Hormigonera</label></div>
+    </details>
+    <details class="slicer"><summary>Carga <small>Todas</small></summary>
+      <div class="options"><label><input type="checkbox">Árido</label><label><input type="checkbox">Hormigón</label></div>
+    </details>
+    <details class="slicer"><summary>Concepto de facturación <small>Todos</small></summary>
+      <div class="options"><label><input type="checkbox">Transporte</label><label><input type="checkbox">Espera</label></div>
+    </details>
+    <div class="sidebar-note">
+      <strong>Un mismo ámbito</strong>
+      <p>Los filtros se aplican a tarjetas, gráficos y tablas. El reparto de coste se conserva al filtrar.</p>
+      <a href="#">Ver cómo se calcula ↗</a>
+    </div>
+  </aside>
+
+  <main>
+    <div class="titlebar">
+      <div><p class="eyebrow">ANÁLISIS DE LA OPERACIÓN · SERVIDOR</p><h1>Rentabilidad</h1></div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span class="tag">Ene–Ago 2026</span>
+        <a class="textbtn" href="#">Estado de actualización ↗</a>
+        <button class="textbtn">Recargar informe</button>
+      </div>
+    </div>
+
+    <nav class="tabs" aria-label="Vistas">
+      <a href="Main.dc.html">Resumen</a>
+      <button class="selected" aria-current="page">Vehículos</button>
+      <button>Clientes</button>
+      <button>Facturas</button>
+      <button>Partes y costes</button>
+      <a href="Conciliacion.dc.html">Conciliación</a>
+      <a href="Personal.dc.html">Personal<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-left:5px"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></a>
+      <button>Criterios y fuentes</button>
+    </nav>
+
+    <section class="panel">
+      <h2>Vehículos con más ingresos</h2>
+      <p class="sub">Primeros ocho por ingresos; tabla completa debajo.</p>
+      <div class="barrow"><span class="barlabel">2481-KTP</span><div class="bartrack"><div class="barfill" style="width:100%"></div></div><span class="barnum">412.300 €</span></div>
+      <div class="barrow"><span class="barlabel">3350-LFM</span><div class="bartrack"><div class="barfill" style="width:94%"></div></div><span class="barnum">386.750 €</span></div>
+      <div class="barrow"><span class="barlabel">0972-MBR</span><div class="bartrack"><div class="barfill" style="width:87%"></div></div><span class="barnum">358.900 €</span></div>
+      <div class="barrow"><span class="barlabel">5510-JXC</span><div class="bartrack"><div class="barfill" style="width:80%"></div></div><span class="barnum">331.200 €</span></div>
+      <div class="barrow"><span class="barlabel">1187-NPQ</span><div class="bartrack"><div class="barfill" style="width:72%"></div></div><span class="barnum">298.450 €</span></div>
+      <div class="barrow"><span class="barlabel">4423-GHV</span><div class="bartrack"><div class="barfill" style="width:67%"></div></div><span class="barnum">276.800 €</span></div>
+      <div class="barrow"><span class="barlabel">0056-RTS</span><div class="bartrack"><div class="barfill" style="width:62%"></div></div><span class="barnum">254.100 €</span></div>
+      <div class="barrow"><span class="barlabel">2299-DWK</span><div class="bartrack"><div class="barfill" style="width:58%"></div></div><span class="barnum">238.650 €</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Rentabilidad por vehículo</h2>
+      <p class="sub">Al elegir un vehículo se filtra todo el informe. El coste total de la matrícula es el del parte; la cuota comercial es estimada.</p>
+      <div class="tabletools"><input type="search" placeholder="Buscar en todas las filas…"><span>8 filas · 8 en el ámbito</span></div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th><button>Vehículo ↓</button></th>
+            <th><button style="text-align:right">Ingresos</button></th>
+            <th><button style="text-align:right">Coste</button></th>
+            <th><button style="text-align:right">Saldo</button></th>
+            <th><button style="text-align:right">Cobertura</button></th>
+            <th><button style="text-align:right">Viajes</button></th>
+            <th><button style="text-align:right">Km</button></th>
+            <th><button style="text-align:right">Horas</button></th>
+            <th><button style="text-align:right">l/100km</button></th>
+            <th><button style="text-align:right">€/km</button></th>
+            <th><button style="text-align:right">Facturas</button></th>
+          </tr></thead>
+          <tbody>
+            <tr><td><a class="platelink" href="#">2481-KTP ↗</a></td><td class="num">412.300,00 €</td><td class="num">233.400,00 €</td><td class="num">178.900,00 €</td><td class="num">95,2 %</td><td class="num">612</td><td class="num">268.400</td><td class="num">4.190,0</td><td class="num">28,4</td><td class="num">0,870 €</td><td class="num">245</td></tr>
+            <tr><td><a class="platelink" href="#">3350-LFM ↗</a></td><td class="num">386.750,00 €</td><td class="num">219.800,00 €</td><td class="num">166.950,00 €</td><td class="num">93,8 %</td><td class="num">588</td><td class="num">251.100</td><td class="num">3.980,0</td><td class="num">28,5</td><td class="num">0,875 €</td><td class="num">231</td></tr>
+            <tr><td><a class="platelink" href="#">0972-MBR ↗</a></td><td class="num">358.900,00 €</td><td class="num">214.600,00 €</td><td class="num">144.300,00 €</td><td class="num">91,4 %</td><td class="num">545</td><td class="num">241.700</td><td class="num">3.820,0</td><td class="num">29,3</td><td class="num">0,888 €</td><td class="num">219</td></tr>
+            <tr><td><a class="platelink" href="#">5510-JXC ↗</a></td><td class="num">331.200,00 €</td><td class="num">187.500,00 €</td><td class="num">143.700,00 €</td><td class="num">96,1 %</td><td class="num">503</td><td class="num">219.400</td><td class="num">3.510,0</td><td class="num">28,3</td><td class="num">0,854 €</td><td class="num">198</td></tr>
+            <tr><td><a class="platelink" href="#">1187-NPQ ↗</a></td><td class="num">298.450,00 €</td><td class="num">178.900,00 €</td><td class="num">119.550,00 €</td><td class="num">89,7 %</td><td class="num">468</td><td class="num">203.600</td><td class="num">3.240,0</td><td class="num">28,9</td><td class="num">0,879 €</td><td class="num">182</td></tr>
+            <tr><td><a class="platelink" href="#">4423-GHV ↗</a></td><td class="num">276.800,00 €</td><td class="num">149.200,00 €</td><td class="num">127.600,00 €</td><td class="num">97,3 %</td><td class="num">421</td><td class="num">186.300</td><td class="num">2.980,0</td><td class="num">27,6</td><td class="num">0,801 €</td><td class="num">165</td></tr>
+            <tr><td><a class="platelink" href="#">0056-RTS ↗</a></td><td class="num">254.100,00 €</td><td class="num">158.300,00 €</td><td class="num">95.800,00 €</td><td class="num">85,2 %</td><td class="num">402</td><td class="num">178.900</td><td class="num">2.860,0</td><td class="num">29,7</td><td class="num">0,885 €</td><td class="num">156</td></tr>
+            <tr><td><a class="platelink" href="#">2299-DWK ↗</a></td><td class="num">238.650,00 €</td><td class="num">139.700,00 €</td><td class="num">98.950,00 €</td><td class="num">92,0 %</td><td class="num">378</td><td class="num">165.200</td><td class="num">2.640,0</td><td class="num">28,9</td><td class="num">0,846 €</td><td class="num">143</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>Ene 2026–Ago 2026 · 8 vehículos en el ámbito. — Maqueta de diseño con cifras ilustrativas, no es una lectura en vivo.</footer>
+  </main>
+</div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1200}}'>
+class Component extends DCLogic {
+  renderVals(){ return {}; }
+}
+</script>
+</body>
+</html>

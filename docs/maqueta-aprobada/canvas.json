@@ -1,0 +1,59 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-09-19T12:00:00Z"
+  },
+  "title": "Rediseño Rentabilidad Razo+Agetrans",
+  "launch": {
+    "view": "focused",
+    "file": "Main.dc.html"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 1400,
+      "title": "Resumen",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Vehiculos.dc.html": {
+      "x": 1600,
+      "y": 0,
+      "w": 1440,
+      "h": 1200,
+      "title": "Vehículos",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Conciliacion.dc.html": {
+      "x": 3200,
+      "y": 0,
+      "w": 1440,
+      "h": 2300,
+      "title": "Conciliación",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Personal.dc.html": {
+      "x": 4800,
+      "y": 0,
+      "w": 1440,
+      "h": 1100,
+      "title": "Personal (protegido)",
+      "expand": "fill",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Vehiculos.dc.html",
+    "Conciliacion.dc.html",
+    "Personal.dc.html"
+  ],
+  "notes": {},
+  "designSystems": []
+}

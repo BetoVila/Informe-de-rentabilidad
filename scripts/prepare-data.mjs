@@ -1,0 +1,163 @@
+import fs from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {gzipSync} from 'node:zlib';
+import path from 'node:path';
+// Une las fuentes en un solo conjunto de datos. Access + GesRuta mandan (si fallan, no hay informe); las demas
+// (Solred, surtidor, nomina) son OPCIONALES: si faltan, el informe lo dice y sigue con lo que hay.
+const root=process.argv[2];
+if(!root)throw new Error('Indique el directorio privado de esta extracción');
+const readText=(f)=>fs.readFile(path.join(root,f),'utf8');
+const optional=async(f)=>{try{return JSON.parse(await readText(f));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
+const aText=await readText('rentabilidad_access_v3.json'),gText=await readText('rentabilidad_gesruta_v3.json');
+const a=JSON.parse(aText),g=JSON.parse(gText);
+const solred=await optional('solred_v2.json'),gespro=await optional('gespro_v1.json'),nomina=await optional('nomina_v1.json');
+const nominaDetalle=await optional('nomina_detalle.json'),personal=await optional('personal_v1.json'),contab=await optional('contabilidad_v1.json'),movertis=await optional('movertis_v1.json');
+const cuentasCfg=JSON.parse(await fs.readFile(new URL('../config/cuentas-contables.json',import.meta.url),'utf8'));
+const cfg=JSON.parse(await fs.readFile(new URL('../config/secciones-nomina.json',import.meta.url),'utf8'));
+const index=(rows)=>new Map(rows.map(r=>[String(r.id),r]));
+const machines=index(a.machines),categories=index(a.categories),companies=index(a.companies),clients=index(a.clients),plants=index(a.plants);
+const stationNames=new Map((a.stations||[]).map(s=>[String(s.id),String(s.nombre||'').trim()]));
+const plateKey=(p)=>String(p||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const costFields=[['fuel','Gasóleo','GasoilImporte'],['adblue','AdBlue','AdBlueImporte'],['driver','Conductor · ordinarias','CosteParteChoferHorasOrdinarias'],['overtime','Conductor · extras','CosteParteChoferHorasExtra'],['amort','Amortización','CosteParteCamionAmortizacion'],['maintenance','Mantenimiento','CosteParteCamionMantenimiento'],['insurance','Seguro','CosteParteCamionSeguro'],['expensesCompany','Gastos empresa','GastosEmpresa'],['expensesDriver','Gastos empleado','GastosEmpleado'],['expensesVehicle','Gastos vehículo','GastosVehiculo']];
+// Un camión no hace más de ~1.500 km en un parte. Access trae partes con millones de km (cuentakilómetros tecleado en
+// el campo de recorridos): esos km NO se cuentan (el importe del parte sí) y se anotan en metadata.quality.
+const KM_MAX_PARTE=1500;
+const parts=a.parts.map(r=>{
+ const machine=machines.get(String(r.IdMaquina)),plate=plateKey(machine?.matricula),values=Object.fromEntries(costFields.map(([k,,field])=>[k,Number(r[field])||0]));
+ const kmRaw=Number(r.KmRecorridos)||0,kmOk=kmRaw>=0&&kmRaw<=KM_MAX_PARTE?kmRaw:0;
+ const direct=Number(r.TotalCostesDirectos)||0,structure=Number(r.CosteEstructura)||0,componentDirect=Object.values(values).reduce((s,v)=>s+v,0),rate=Number(r['Estructura%'])||0;
+ return {id:String(r.IdParteTrabajo),machineId:r.IdMaquina,date:r.Fecha.slice(0,10),plate,plateLabel:machine?.matricula||'Sin matrícula',category:categories.get(String(machine?.categoria))?.nombre||'Sin categoría Access',owner:companies.get(String(machine?.titular))?.nombre||'Sin titular',partClient:clients.get(String(r.IdCliente))?.nombre||'Sin cliente en parte',plant:plants.get(String(r['IdCliente/Planta']))?.nombre||'',station:String(r.IdGasoilEstacionServicio||''),direct,structure,rate,stored:direct+structure,componentDirect,recalculated:componentDirect*(1+rate),residual:direct-componentDirect,...values,km:kmOk,kmExcluded:kmRaw-kmOk,hours:Number(r.HorasTrabajo)||0,litres:Number(r.GasoilLitros)||0,adblueLitres:Number(r.AdBlueLitros)||0,accessRevenue:Number(r.FacturacionDiariaTotal)||0,trips:Number(r.Viajes)||0,m3:Number(r.MetrosCubicos)||0,tonnes:Number(r.Toneladas)||0,loaded:Number(r.KmCargado)||0,empty:Number(r.KmVacio)||0};
+});
+const machinesByPlate=new Map(a.machines.map(r=>[plateKey(r.matricula),r]));
+const lines=g.lines.map(r=>({...r,load:r.load||'Sin carga',concept:r.concept||'Sin concepto',category:categories.get(String(machinesByPlate.get(r.plate)?.categoria))?.nombre||'Sin ficha Access'}));
+if(a.metadata.desde!==g.metadata.desde||a.metadata.hasta!==g.metadata.hasta)throw new Error('Periodos distintos entre fuentes');
+const to=g.metadata.hasta,month=(d)=>d.slice(0,7);
+const ownerOfPlate=new Map();for(const p of parts)if(p.plate&&!ownerOfPlate.has(p.plate))ownerOfPlate.set(p.plate,p.owner);
+const round=(v,n=2)=>Math.round(v*10**n)/10**n;
+
+// ---- combustible: Solred (tarjeta) y surtidor de la nave (deposito propio)
+const fuel={solred:null,surtidor:null};
+if(solred?.metadata?.disponible){
+ fuel.solred={meta:{desde:solred.metadata.desde,hasta:solred.metadata.hasta,maxFecha:solred.metadata.maxFecha,iva:solred.metadata.iva,ficheros:solred.metadata.ficheros,lineas:solred.metadata.lineas,sinMatricula:solred.metadata.sinMatricula,descuadres:solred.metadata.descuadres},rows:solred.rows.map(r=>({...r,owner:r.plate?ownerOfPlate.get(r.plate)||'Sin ficha':'Sin matrícula'}))};
+ if(solred.metadata.descuadres>Math.max(2,solred.metadata.lineas*0.005))throw new Error('Solred: el mapa de columnas ya no cuadra (bruto − descuento ≠ neto en '+solred.metadata.descuadres+' líneas)');
+}
+if(gespro?.metadata?.disponible){
+ const m=new Map();
+ for(const r of gespro.rows){const k=month(r.fecha)+'|'+(r.placa||'');if(!m.has(k))m.set(k,{month:month(r.fecha),plate:r.placa||null,n:0,litros:0,kmN:0});const x=m.get(k);x.n++;x.litros+=r.litros;if(r.km)x.kmN++;}
+ const maxs=[gespro.metadata.fuentes.base.maxFecha,gespro.metadata.fuentes.texto.maxFecha].filter(Boolean).sort();
+ fuel.surtidor={meta:{fuentes:gespro.metadata.fuentes,maxFecha:maxs[maxs.length-1]||null},rows:[...m.values()].map(x=>({...x,litros:round(x.litros,1),owner:x.plate?ownerOfPlate.get(x.plate)||'Sin ficha':'Sin matrícula'}))};
+}
+// ---- estaciones: solo las que salen en partes con gasoil
+const usedStations=new Set(parts.filter(p=>p.litres>0&&p.station).map(p=>p.station));
+const stations=Object.fromEntries([...usedStations].map(id=>[id,stationNames.get(id)||('Estación '+id)]));
+// Palabra completa: «NAVE» no es «BENAVENTE».
+const naveIds=Object.entries(stations).filter(([,n])=>cfg.stationNave.some(x=>new RegExp('(^|[^A-ZÁÉÍÓÚÑ])'+x+'([^A-ZÁÉÍÓÚÑ]|$)','i').test(n))).map(([id])=>id);
+
+// ---- nomina (agregados por seccion; SIN nombres)
+let payroll=null;
+if(nomina?.metadata?.disponible){
+ const seen=new Set();
+ for(const r of nomina.rows){const k=[r.company,r.period,r.section].join('|');if(seen.has(k))throw new Error('Nómina: sección repetida '+k);seen.add(k);if(r.people!=null&&r.people<3)throw new Error('Nómina: un grupo de menos de 3 personas sin plegar ('+k+')');}
+ payroll={meta:{periodos:nomina.metadata.periodos,ficheros:nomina.metadata.ficheros,elegidos:nomina.metadata.elegidos,minPersonasGrupo:nomina.metadata.minPersonasGrupo,erroresLectura:nomina.metadata.erroresLectura,sinDetalle:nomina.metadata.sinDetalle},rows:nomina.rows,versions:nomina.versions,sections:cfg.sections,typeLabels:cfg.typeLabels,categoryType:cfg.categoryType};
+}
+
+// ---- contabilidad real (CxConta vía el ERP): gastos (grupo 6) e ingresos (grupo 7) por sociedad, mes y cuenta
+let ledger=null;
+if(contab?.metadata?.disponible){
+ const catOf=(code,list)=>{let best='otros',len=-1;for(const c of list)for(const p of c.prefijos)if(code.startsWith(p)&&p.length>len){best=c.id;len=p.length;}return best;};
+ const rows=[];
+ for(const r of contab.rows){
+  const gasto=r.cuenta.startsWith('6'),amount=round(gasto?r.debe-r.haber:r.haber-r.debe,2);
+  if(!amount)continue;
+  rows.push({company:r.company,month:r.month,cuenta:r.cuenta,kind:gasto?'g':'i',cat:catOf(r.cuenta,gasto?cuentasCfg.gastos:cuentasCfg.ingresos),amount});
+ }
+ // Mes cerrado: la contabilidad se asienta cuando llegan las facturas; un mes con menos de la mitad de los ingresos de
+ // servicios de los tres anteriores todavía no está cerrado y no se compara.
+ const incomeOf=(company,month)=>rows.filter(r=>r.company===company&&r.month===month&&r.kind==='i'&&['servicios','ventas'].includes(r.cat)).reduce((s,r)=>s+r.amount,0);
+ const months=[...new Set(rows.map(r=>r.month))].sort();
+ let lastClosed=null;
+ for(const m of months){
+  const i=months.indexOf(m);if(i<3)continue;
+  const ok=[1,2].every(c=>{const prev=[1,2,3].map(k=>incomeOf(c,months[i-k])).reduce((s,v)=>s+v,0)/3;return prev<=0||incomeOf(c,m)>=0.5*prev;});
+  if(ok)lastClosed=m;
+ }
+ const used=new Set(rows.map(r=>r.cuenta));
+ ledger={meta:{fuente:contab.metadata.fuente,desde:contab.metadata.desde,hasta:contab.metadata.hasta,leido:contab.metadata.leido,maxFechaPorSociedad:contab.metadata.maxFechaPorSociedad,lastClosed},accounts:Object.fromEntries([...used].map(c=>[c,contab.accounts[c]||''])),categories:{gastos:cuentasCfg.gastos.map(c=>({id:c.id,label:c.label})),ingresos:cuentasCfg.ingresos.map(c=>({id:c.id,label:c.label}))},puente:cuentasCfg.puente,sociedades:cuentasCfg.sociedades,titularASociedad:cuentasCfg.titularASociedad,rows};
+}
+
+// ---- telemática: km y litros medidos por el propio camión (Movertis, vía el ERP), solo días fiables
+let telemetry=null;
+if(movertis?.metadata?.disponible){
+ const rows=movertis.rows.map(r=>({plate:plateKey(r.p),date:r.d,km:r.km,litres:r.l})).filter(r=>r.plate);
+ telemetry={meta:{fuente:movertis.metadata.fuente,desde:movertis.metadata.desde,hasta:movertis.metadata.hasta,diasCamion:movertis.metadata.diasCamion,diasFiables:movertis.metadata.diasFiables,diasDescartados:movertis.metadata.diasDescartados,unidades:movertis.metadata.unidades,leido:movertis.metadata.leido},rows};
+}
+
+// ---- estado de cada fuente (lo que ve Roberto arriba)
+const lastPeriod=payroll?Object.values(payroll.meta.periodos).map(p=>p[p.length-1]).sort().pop():null;
+const litresBy=(pred)=>parts.filter(p=>pred(p)&&p.litres>0&&(!naveIds.includes(p.station))).reduce((s,p)=>s+p.litres,0);
+const coverage={};
+if(fuel.solred){
+ const from=fuel.solred.meta.desde>'2025-01-01'?fuel.solred.meta.desde:'2026-05-01';
+ const months=new Set(fuel.solred.rows.filter(r=>r.kind==='gasoleo').map(r=>r.month));
+ for(const owner of new Set(parts.map(p=>p.owner))){
+  const declared=parts.filter(p=>p.owner===owner&&months.has(month(p.date))&&p.litres>0&&!naveIds.includes(p.station)).reduce((s,p)=>s+p.litres,0);
+  const card=fuel.solred.rows.filter(r=>r.kind==='gasoleo'&&r.owner===owner).reduce((s,r)=>s+r.litros,0);
+  if(declared>1000)coverage[owner]=round(card/declared,3);
+ }
+}
+const solredWeak=Object.entries(coverage).filter(([,c])=>c<0.6).map(([o])=>o);
+const sources=[
+ {id:'gesruta',name:'GesRuta',state:'ok',to:to,note:'Facturas y albaranes de Razo y Agetrans.'},
+ {id:'access',name:'Access',state:'ok',to:to,note:'Partes diarios por vehículo y conductor.'},
+ {id:'solred',name:'Solred',state:!fuel.solred?'sin':solredWeak.length?'parcial':'ok',to:fuel.solred?.meta.maxFecha||null,note:!fuel.solred?'Sin ficheros de Solred.':solredWeak.length?'Falta la cuenta de '+solredWeak.join(' y ')+': el fichero solo cubre una parte de sus litros ('+Object.entries(coverage).map(([o,c])=>o.replace(/,? S\.L\.?/i,'')+' '+Math.round(c*100)+' %').join(', ')+').':'Tarjeta de combustible.'},
+ {id:'surtidor',name:'Surtidor nave',state:!fuel.surtidor?'sin':(fuel.surtidor.meta.fuentes.base.maxFecha&&fuel.surtidor.meta.fuentes.base.maxFecha<to.slice(0,8)+'00'?'parcial':'ok'),to:fuel.surtidor?.meta.maxFecha||null,note:!fuel.surtidor?'Sin datos del surtidor.':'GesproWin: la base llega hasta el '+fuel.surtidor.meta.fuentes.base.maxFecha+'; se completa con las exportaciones de texto.'},
+ {id:'nomina',name:'Nómina',state:payroll?'ok':'sin',to:lastPeriod,note:payroll?'Resumen mensual de la gestoría; el último mes llega ~10 días después de cerrar.':'Sin resúmenes de nómina.'},
+ {id:'contabilidad',name:'Contabilidad',state:ledger?'ok':'sin',to:ledger?.meta.lastClosed||null,note:ledger?'Gastos e ingresos reales de CxConta (traspasados al ERP cada noche). Cerrada hasta '+ledger.meta.lastClosed+'; el mes en curso no se compara.':'Sin contabilidad: el gasto que se ve es solo el de los partes de Access, que no es el real.'},
+ {id:'movertis',name:'Movertis',state:telemetry?'parcial':'pendiente',to:telemetry?.meta.hasta||null,note:telemetry?'Km y litros medidos por el camión, leídos del ERP (que ya los baja de Movertis). Solo hay datos desde '+telemetry.meta.desde+': el histórico anterior aún no está cargado. '+telemetry.meta.diasDescartados+' días-camión sin lectura fiable no se cuentan.':'Kilómetros y consumo medidos por el camión: sin lectura en esta pasada.'},
+ {id:'locatel',name:'Locatel',state:'pendiente',to:null,note:'Kilómetros y consumo (CANbus) por GPS: falta el acceso automático.'}
+];
+
+const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,definitions:[
+ 'Contabilidad: gastos (grupo 6) e ingresos (grupo 7) reales de CxConta por sociedad, mes y cuenta, sin asientos de cierre ni apertura. El resultado contable es la referencia de rentabilidad; el coste de los partes de Access solo recoge una parte del gasto real (ver el puente en Conciliación). Un mes se compara solo cuando está cerrado; el mes en curso queda fuera.',
+ 'Ingresos sin IVA: líneas de GesRuta, excluidos suplidos, más diferencias explícitas con la base de cabecera. Las facturas anuladas y filas borradas no se incluyen.',
+ 'Fecha de factura: FECFAC. Fecha de línea: FECHA de linfaclib, con FECFAC como respaldo si no consta. La fecha del parte gobierna siempre los costes.',
+ 'Coste declarado en Access: TotalCostesDirectos + CosteEstructura del parte; lo rellena quien registra el parte y no es un dato contable. Recalculado: suma de diez conceptos de coste multiplicada por (1 + Estructura%). Con nómina real: como el recalculado, pero el conductor (ordinarias + extras + gastos de empleado) se ajusta cada mes y tipo de trabajo a la nómina real de la gestoría; la estructura mantiene el % de Access. Nada de esto modifica Access.',
+ 'El coste total por matrícula procede de Access. La atribución a empresa facturadora, cliente, carga y concepto es ESTIMADA por ingreso positivo del mismo mes y matrícula, según fecha de línea. Los abonos no generan pesos negativos. El reparto se fija antes de filtrar y no usa cuotas anuales.',
+ 'Los costes sin ingreso positivo enlazable en el mes quedan Sin asignar. Ambas incluye estos costes; seleccionar una empresa los excluye y muestra su importe aparte. Titular del vehículo no equivale a empresa facturadora.',
+ 'Saldo observado = ingresos seleccionados − coste seleccionado; no representa rentabilidad completa cuando hay ingresos sin coste, coste sin asignar, subcontratación sin costes u otras fuentes pendientes.',
+ 'Cobertura mensual = ingreso con una matrícula y algún parte en el mismo mes del criterio de fecha seleccionado / ingreso total. Es una medida de enlace, no prueba de que estén todos los gastos.',
+ 'Viajes GesRuta = referencias VIAJE distintas por empresa; albaranes = empresa + VIAJE + ALB_NUMERO. Viajes Access = contador declarado en los partes. No se suman entre fuentes.',
+ 'Consumo declarado = litros declarados en los partes / km declarados × 100. NO es consumo real: los partes traen km imposibles (no se cuentan los de más de '+KM_MAX_PARTE+' km en un solo parte) y faltan en muchos días en que el camión circula. El consumo real sale de los litros de la tarjeta Solred y del surtidor y de los km del localizador (Movertis, Locatel); ver Conciliación. Las horas de Access pueden ser aproximadas.',
+ 'Combustible: los litros y el importe de los partes se cruzan con la tarjeta Solred (importe con IVA; sin IVA = importe / 1,21, que coincide con el del parte al céntimo) y con el surtidor de la nave (solo litros). Solred llega por cuenta: si falta la de una sociedad, se avisa en lugar de darlo por bueno.',
+ 'Nómina: coste de empresa exacto de la gestoría (devengos + Seguridad Social + dietas), por mes y sección. La sección es el trabajo que realiza cada persona. Los grupos de menos de 3 personas se pliegan en otro para que un total no sea el sueldo de nadie. Si un mes aparece en varios ficheros se usa el más reciente y se anota la diferencia.',
+ 'Movertis y Locatel: kilómetros y litros medidos por el propio camión. Movertis se lee del ERP (que ya lo baja y valida; solo días fiables, un día sin lectura no cuenta como cero) y por ahora cubre desde el 20/08/2026; Locatel (CANbus) y el histórico anterior están pendientes. Un día-camión está «activo» si circula 30 km o más; «sin parte» si en ese día no hay ningún parte de Access de esa matrícula.'
+]};
+
+// ---- capa PRIVADA de personal (con nombres): solo se escribe en la carpeta de trabajo; build.mjs la cifra
+const norm=(s)=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase();
+const tok=(s)=>new Set(norm(s).replace(/[^A-Z ]/g,' ').split(/\s+/).filter(t=>t.length>1&&!['DE','DEL','LA','LAS','LOS','Y'].includes(t)));
+const overlap=(x,y)=>{let n=0;for(const t of x)if(y.has(t))n++;return n;};
+let privateLayer=null;
+if(nominaDetalle&&personal){
+ const emps=personal.employees.map(e=>({...e,t:tok(e.nombre)}));
+ const empHours=new Map(),partEmp=new Map(personal.parts.map(p=>[String(p.id),p.emp]));
+ for(const p of parts){const e=partEmp.get(p.id);if(!e)continue;const k=e+'|'+month(p.date);const x=empHours.get(k)||{hours:0,partes:0};x.hours+=p.hours;x.partes++;empHours.set(k,x);}
+ const match=(name)=>{
+  const t=tok(name);let best=null,sc=0,second=0;
+  for(const e of emps){const o=overlap(t,e.t);if(!o)continue;const s=o/Math.min(t.size,e.t.size)*(o>=3||o===Math.min(t.size,e.t.size)?1:0.5)+o/(t.size+e.t.size-o)*0.25;if(s>sc){second=sc;sc=s;best=e;}else if(s>second)second=s;}
+  return best&&sc>=0.85&&sc-second>=0.1?best:null;
+ };
+ const byPerson=new Map();let casadas=0,total=0;
+ for(const r of nominaDetalle.rows){
+  if(r.period<data.metadata.from.slice(0,7))continue;
+  const e=match(r.nombre);total++;if(e)casadas++;
+  const key=e?('a'+e.id):('n'+norm(r.nombre)+'|'+r.company);
+  if(!byPerson.has(key))byPerson.set(key,{key,name:r.nombre,company:r.company,accessId:e?.id??null,tipo:e?Object.entries(e.tipo).filter(([,v])=>v).map(([k])=>k):[],costeHoraOrd:e?.costeHoraOrd??null,sueldoPactado:e?.sueldoPactado??null,rows:[]});
+  const h=e?empHours.get(e.id+'|'+r.period):null;
+  byPerson.get(key).rows.push({period:r.period,company:r.company,section:r.seccion,cost:r.cost,devengos:r.devengos,ss:r.ss,dietas:r.dietas,extras:r.extras,hours:h?round(h.hours,1):null,partes:h?.partes??null});
+ }
+ privateLayer={generatedAt:new Date().toISOString(),people:[...byPerson.values()],match:{casadas,total},sectionLabels:cfg.sections,typeLabels:cfg.typeLabels};
+}
+await fs.writeFile(path.join(root,'current.json.gz'),gzipSync(JSON.stringify(data),{level:9}));
+if(privateLayer)await fs.writeFile(path.join(root,'personal_private.json'),JSON.stringify(privateLayer));
+console.log(JSON.stringify({ledger:ledger?{rows:ledger.rows.length,lastClosed:ledger.meta.lastClosed}:null,quality:data.metadata.quality.partesKmImposible+' partes con km imposibles ('+data.metadata.quality.kmExcluidos+' km)',parts:parts.length,lines:lines.length,headers:g.headers.length,unmappedParts:parts.filter(p=>!p.plate).length,solred:!!fuel.solred,surtidor:!!fuel.surtidor,payrollRows:payroll?.rows.length||0,stations:usedStations.size,naveIds,coverage,private:privateLayer?{personas:privateLayer.people.length,casadas:privateLayer.match.casadas,total:privateLayer.match.total}:null}));

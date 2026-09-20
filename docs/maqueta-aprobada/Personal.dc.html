@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Rentabilidad · Personal</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#12202f;background:#f2f5f8}
+*{box-sizing:border-box}
+button,input,select{font:inherit}
+button{cursor:pointer;border:1px solid #dde4ec;border-radius:8px;background:#fff;color:#12202f;padding:7px 12px}
+button:hover{border-color:#a9bcd6;background:#f4f8ff}
+a{color:#2C5FD6}
+.textbtn{padding:0;border:0;background:none;color:#2C5FD6;font-size:13px}
+.masthead{background:#0A192F;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 32px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}
+.brand-text strong{display:block;font-size:18px;letter-spacing:.1em;font-weight:800}
+.brand-text strong span{font-weight:400;color:#b9c8dc}
+.brand-text small{display:block;font-size:11px;letter-spacing:.18em;color:#8fa0b2;margin-top:2px}
+.sources-strip{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.src-pill{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.02em}
+.src-pill.ok{background:rgba(111,214,193,.18);color:#bdeee1}
+.src-pill.pending{background:transparent;color:#a9bcd6;border:1px dashed rgba(255,255,255,.35)}
+.fresh{display:flex;align-items:center;gap:8px;font-size:12px;color:#c3d1e2;white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:#6ed6c1;flex:none}
+.workspace{display:flex;align-items:flex-start}
+.filters{width:270px;flex:none;background:#fff;border-right:1px solid #dde4ec;padding:24px 20px}
+.filterhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.filterhead h2{font-size:15px;margin:0}
+.fieldtitle{display:block;font-size:13px;color:#5A6B7C;margin-bottom:8px}
+.segmented{display:flex;padding:3px;background:#eef2f8;border-radius:9px;gap:2px;margin-bottom:22px}
+.segmented button{flex:1;border:0;padding:6px;font-size:13px;background:transparent;border-radius:7px}
+.segmented button.selected{background:#0A192F;color:#fff}
+.slicer{border-bottom:1px solid #dde4ec;padding:12px 0;font-size:13px}
+.slicer summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;font-weight:600;color:#233246}
+.slicer summary::-webkit-details-marker{display:none}
+.slicer small{font-weight:400;color:#5A6B7C}
+.slicer .options{margin-top:10px;display:flex;flex-direction:column;gap:7px;color:#3a4a5e}
+.slicer .options label{display:flex;gap:8px;align-items:center}
+.sidebar-note{margin-top:24px;padding:14px;background:#f2f6fc;border-radius:10px;font-size:13px}
+.sidebar-note p{color:#5A6B7C;margin:6px 0 8px}
+main{flex:1;min-width:0;padding:26px 32px 40px;max-width:1500px}
+.titlebar{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.eyebrow{color:#2C5FD6;font-size:11px;letter-spacing:.14em;font-weight:700;margin:0 0 3px}
+h1{margin:0;font-size:30px;letter-spacing:-.5px;color:#0A192F}
+.tag{background:#e3ebf8;color:#2a4a72;font-size:12px;border-radius:20px;padding:5px 12px;font-weight:600}
+.periodbar{display:flex;gap:14px;flex-wrap:wrap;padding:16px;background:#fff;border:1px solid #dde4ec;border-radius:12px;align-items:end}
+.periodbar label{font-size:12px;color:#5A6B7C;display:grid;gap:5px;flex:1;min-width:140px}
+.periodbar input,.periodbar select{border:1px solid #cbd6e4;border-radius:7px;padding:8px 10px;font-size:13px}
+.quickrow{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap}
+.quickrow .chips{display:flex;gap:6px;flex-wrap:wrap}
+.quickrow .chips button{font-size:12px;padding:5px 10px}
+.costselect{font-size:12px;color:#5A6B7C;display:flex;align-items:center;gap:8px}
+.notice{display:flex;gap:12px;align-items:flex-start;border:1px solid #ecd9a8;border-left:4px solid #A9660A;background:#fdf8ec;border-radius:10px;padding:13px 16px;font-size:13px;color:#6d4d13;margin:16px 0}
+.notice svg{flex:none;margin-top:1px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}
+.card{background:#fff;border:1px solid #dde4ec;border-radius:14px;padding:18px}
+.card.primary{background:#0A192F;border-color:#0A192F;color:#fff}
+.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.card .label{font-size:12.5px;color:#5A6B7C;font-weight:600}
+.card.primary .label{color:#b9c8dc}
+.card-icon{width:30px;height:30px;border-radius:8px;background:#eef2f8;display:grid;place-items:center;color:#2C5FD6}
+.card.primary .card-icon{background:rgba(255,255,255,.12);color:#fff}
+.card .value{font-size:26px;font-weight:700;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.card .hint{font-size:12px;color:#5A6B7C;margin-top:8px;line-height:1.5}
+.card.primary .hint{color:#a9bcd6}
+.compare{display:flex;flex-direction:column;gap:3px;margin-top:10px;padding-top:10px;border-top:1px solid #eef1f6;font-size:11.5px}
+.card.primary .compare{border-top-color:rgba(255,255,255,.14)}
+.compare-prior{color:#5A6B7C}
+.card.primary .compare-prior{color:#a9bcd6}
+.compare-delta{font-weight:700;display:flex;align-items:center;gap:4px}
+.compare-delta svg{flex:none}
+.compare-delta.up{color:#0E9488}
+.compare-delta.down{color:#C1394B}
+.compare-delta.neutral{color:#5A6B7C}
+.card.primary .compare-delta.up{color:#7CE0CF}
+.card.primary .compare-delta.down{color:#ff9baa}
+.card.primary .compare-delta.neutral{color:#c5d2e4}
+.tabs{display:flex;gap:22px;border-bottom:1px solid #d3dce8;margin:22px 0;overflow-x:auto}
+.tabs button,.tabs a{border:0;border-radius:0;background:none;padding:10px 0;font-size:13.5px;color:#5A6B7C;border-bottom:3px solid transparent;text-decoration:none;white-space:nowrap;display:inline-block}
+.tabs button.selected,.tabs a.selected{color:#2C5FD6;border-bottom-color:#2C5FD6;font-weight:700}
+.grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px}
+.panel{background:#fff;border:1px solid #dde4ec;border-radius:14px;padding:22px}
+.panel h2{margin:0 0 4px;font-size:17px;color:#0A192F}
+.sub{color:#5A6B7C;font-size:12.5px;margin:0 0 16px}
+.legend{display:flex;gap:16px;font-size:12px;color:#5A6B7C;margin-bottom:8px}
+.legend i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:6px}
+.chart text{font-size:11px;fill:#5A6B7C;font-family:inherit}
+.barrow{display:grid;grid-template-columns:150px 1fr auto;align-items:center;gap:10px;font-size:13px;margin:13px 0}
+.barlabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bartrack{height:8px;background:#eef2f8;border-radius:5px;overflow:hidden}
+.barfill{height:100%;border-radius:5px;background:#2C5FD6}
+.barnum{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:18px}
+.smallkpi{padding:2px 0}
+.smallkpi .label{font-size:11.5px;color:#5A6B7C;display:block}
+.smallkpi .value{font-size:20px;font-weight:700;margin-top:4px;display:block;color:#0A192F}
+.smallkpi small{font-size:11px;color:#5A6B7C}
+.tablewrap{overflow:auto;border:1px solid #dde4ec;border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f2f5fa;text-align:left;font-size:11px;letter-spacing:.02em;color:#455b77;padding:11px 12px;border-bottom:1px solid #d6dfeb;font-weight:700}
+td{padding:10px 12px;border-bottom:1px solid #eef1f6}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:#f7faff}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+footer{font-size:11.5px;color:#5A6B7C;margin-top:24px;border-top:1px solid #dde4ec;padding-top:14px}
+
+.ph{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11.5px;font-weight:700;background:#eef2f8;color:#455b77;white-space:nowrap}
+.pill.ok{background:#dcf3ec;color:#0b6b5f}.pill.warn{background:#fff0d6;color:#8a5608}.pill.bad{background:#fde4e7;color:#a12a3a}.pill.off{background:#eef2f8;color:#6b7c90;border:1px dashed #b8c4d3}
+.verdict{border:1px solid #d3dceb;border-left:4px solid #2C5FD6;background:#f4f8ff;border-radius:10px;padding:13px 16px;font-size:13.5px;color:#22344d;margin:0 0 16px;line-height:1.55}
+.verdict.warn{border-left-color:#A9660A;background:#fdf8ec;color:#5f430f}
+.panel h3{margin:22px 0 10px;font-size:14px;color:#0A192F}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+.stat{border:1px solid #dde4ec;border-radius:12px;padding:14px 16px}
+.stat .label{font-size:12px;color:#5A6B7C;display:block}.stat .value{font-size:22px;font-weight:700;color:#0A192F;display:block;margin-top:4px}.stat small{font-size:11.5px;color:#5A6B7C}
+.ph2{display:grid;grid-template-columns:150px 1fr auto auto;align-items:center;gap:12px;font-size:13px;margin:12px 0}
+.note{font-size:12px;color:#5A6B7C;margin-top:10px;line-height:1.5}
+.lockbox{max-width:460px;margin:34px auto;text-align:center;padding:30px 28px;background:#fff;border:1px solid #dde4ec;border-radius:16px}
+.lockbox .ico{width:54px;height:54px;border-radius:14px;background:#eef2f8;display:grid;place-items:center;margin:0 auto 14px;color:#0A192F}
+.lockbox h2{margin:0 0 6px;font-size:19px;color:#0A192F}.lockbox p{color:#5A6B7C;font-size:13.5px;margin:0 0 16px;line-height:1.55}
+.lockbox input{width:100%;padding:11px 12px;border:1px solid #cbd6e4;border-radius:9px;font-size:14px;margin-bottom:10px}
+.lockbox button.go{width:100%;padding:11px;background:#0A192F;color:#fff;border:0;border-radius:9px;font-size:14px;font-weight:600}
+.ribbon{display:inline-block;background:#fdf1d8;color:#7a5209;border:1px solid #ecd9a8;font-size:12px;font-weight:700;padding:4px 10px;border-radius:8px;margin-bottom:12px}
+.chips2{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.chips2 button{font-size:12px;padding:5px 11px}.chips2 button.selected{background:#0A192F;color:#fff;border-color:#0A192F}
+</style>
+</helmet>
+
+<div style="width:100%;min-height:100vh;background:#f2f5f8;display:flex;flex-direction:column;">
+
+<header class="masthead">
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M 18 22 L 48 84 L 60 84 L 30 22 Z" fill="#FFFFFF"/>
+      <path d="M 46 22 H 58 V 84 H 46 Z" fill="#8FA0B2"/>
+      <path d="M 58 22 H 76 C 88 22 94 30 94 39 C 94 48 88 56 76 56 H 58 V 44 H 74 C 79 44 82 42 82 39 C 82 36 79 34 74 34 H 58 Z" fill="#FFFFFF"/>
+      <polygon points="46,84 60,84 48,84" fill="#FFFFFF"/>
+    </svg>
+    <div class="brand-text">
+      <strong>RAZO <span>+ AGETRANS</span></strong>
+      <small>CONTROL DE RENTABILIDAD</small>
+    </div>
+  </div>
+  <div class="sources-strip" aria-label="Fuentes conectadas">
+    <span class="src-pill ok" title="Lectura nocturna en SERVIDOR">GesRuta ✓</span>
+    <span class="src-pill ok" title="Lectura nocturna en SERVIDOR">Access ✓</span>
+    <span class="src-pill ok" title="Extracto mensual de Solred, vía Analizador Carburantes">Solred flota ✓</span>
+    <span class="src-pill pending" title="En estudio de viabilidad">Movertis</span>
+    <span class="src-pill pending" title="En estudio de viabilidad">Locatel</span>
+  </div>
+  <div class="fresh"><span class="dot"></span>Lectura 19 sep 03:04 · datos hasta 18 sep</div>
+</header>
+
+<div class="workspace">
+  <aside class="filters" aria-label="Segmentadores">
+    <div class="filterhead"><h2>Segmentadores</h2><button class="textbtn">Restablecer</button></div>
+    <label class="fieldtitle">Empresa facturadora</label>
+    <div class="segmented">
+      <button class="selected">Ambas</button><button>Razo</button><button>Agetrans</button>
+    </div>
+
+    <details class="slicer"><summary>Vehículo <small>Todos</small></summary>
+      <div class="options">
+        <label><input type="checkbox">2481-KTP</label>
+        <label><input type="checkbox">3350-LFM</label>
+        <label><input type="checkbox">0972-MBR</label>
+      </div>
+    </details>
+    <details class="slicer"><summary>Cliente <small>Todos</small></summary>
+      <div class="options">
+        <label><input type="checkbox">Áridos Norte S.L.</label>
+        <label><input type="checkbox">Construcciones Ribadeo</label>
+        <label><input type="checkbox">Hormigón do Miño</label>
+      </div>
+    </details>
+    <details class="slicer"><summary>Tipo de vehículo <small>Todos</small></summary>
+      <div class="options">
+        <label><input type="checkbox">Tractora</label>
+        <label><input type="checkbox">Bañera</label>
+        <label><input type="checkbox">Hormigonera</label>
+      </div>
+    </details>
+    <details class="slicer"><summary>Carga <small>Todas</small></summary>
+      <div class="options">
+        <label><input type="checkbox">Árido</label>
+        <label><input type="checkbox">Hormigón</label>
+      </div>
+    </details>
+    <details class="slicer"><summary>Concepto de facturación <small>Todos</small></summary>
+      <div class="options">
+        <label><input type="checkbox">Transporte</label>
+        <label><input type="checkbox">Espera</label>
+      </div>
+    </details>
+
+    <div class="sidebar-note">
+      <strong>Un mismo ámbito</strong>
+      <p>Los filtros se aplican a tarjetas, gráficos y tablas. El reparto de coste se conserva al filtrar.</p>
+      <a href="#">Ver cómo se calcula ↗</a>
+    </div>
+  </aside>
+
+  <main><div class="titlebar"><div><p class="eyebrow">ANÁLISIS DE LA OPERACIÓN · SERVIDOR</p><h1>Rentabilidad</h1></div><div style="display:flex;gap:10px;align-items:center"><span class="tag">Personal · Ago 2026</span><a class="textbtn" href="#">Estado de actualización ↗</a><button class="textbtn">Recargar informe</button></div></div><nav class="tabs" aria-label="Vistas"><a href="Main.dc.html">Resumen</a><a href="Vehiculos.dc.html">Vehículos</a><button>Clientes</button><button>Facturas</button><button>Partes y costes</button><a href="Conciliacion.dc.html">Conciliación</a><button class="selected" aria-current="page">Personal<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-left:5px"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button><button>Criterios y fuentes</button></nav>
+<sc-if value="{{ locked }}" hint-placeholder-val="{{ true }}">
+  <div class="lockbox">
+    <div class="ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+    <h2>Coste por empleado</h2>
+    <p>Este apartado muestra el sueldo y el coste de cada persona. Cualquiera con acceso a la carpeta puede abrir el informe, así que se protege con una clave. El resto del informe se ve igual sin ella.</p>
+    <label for="clave" style="position:absolute;left:-9999px">Clave</label>
+    <input id="clave" type="password" placeholder="Clave del apartado de personal" autocomplete="off">
+    <button class="go" onClick="{{ unlock }}">Desbloquear (demo)</button>
+    <p class="note" style="margin-top:12px">La clave la eliges tú al instalar el informe en SERVIDOR. Sin clave, este apartado no se llega a descifrar: los sueldos no están en el fichero en claro.</p>
+  </div>
+</sc-if>
+<sc-if value="{{ unlocked }}" hint-placeholder-val="{{ false }}">
+  <section class="panel">
+    <div class="ph"><div><h2>Coste por empleado y mes</h2><p class="sub">Coste de empresa exacto de la nómina de la gestoría, por persona, con su tipo de trabajo. Horas y €/hora salen de los partes de Access.</p></div>
+      <button class="textbtn" onClick="{{ lock }}">Bloquear</button></div>
+    <span class="ribbon">EJEMPLO CON DATOS FICTICIOS · en el informe real salen los nombres y sueldos de la nómina</span>
+    <div class="chips2"><button class="selected">Todos</button><button>Conductor hormigonera</button><button>Conductor nacional</button><button>Conductor bañera</button><button>Taller</button><button>Administración</button></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Persona</th><th>Trabajo que realiza</th><th>Empresa</th><th style="text-align:right">Coste empresa</th><th style="text-align:right">Devengos</th><th style="text-align:right">Seg. Social</th><th style="text-align:right">Dietas</th><th style="text-align:right">Horas en partes</th><th style="text-align:right">€/hora real</th><th style="text-align:right">€/hora en Access</th></tr></thead>
+      <tbody><tr><td>Conductor 1</td><td>Conductor hormigonera</td><td>Razo</td><td class="num">3.412,50 €</td><td class="num">2.648,10 €</td><td class="num">764,40 €</td><td class="num">198,20 €</td><td class="num">168,0</td><td class="num">20,31 €</td><td class="num">18,89 €</td></tr><tr><td>Conductor 2</td><td>Conductor hormigonera</td><td>Razo</td><td class="num">3.287,15 €</td><td class="num">2.531,00 €</td><td class="num">756,15 €</td><td class="num">176,00 €</td><td class="num">171,5</td><td class="num">19,17 €</td><td class="num">17,83 €</td></tr><tr><td>Conductor 3</td><td>Conductor nacional</td><td>Razo</td><td class="num">3.690,80 €</td><td class="num">2.902,35 €</td><td class="num">788,45 €</td><td class="num">512,40 €</td><td class="num">164,0</td><td class="num">22,50 €</td><td class="num">20,93 €</td></tr><tr><td>Conductor 4</td><td>Conductor nacional</td><td>Agetrans</td><td class="num">3.544,20 €</td><td class="num">2.760,90 €</td><td class="num">783,30 €</td><td class="num">498,60 €</td><td class="num">160,5</td><td class="num">22,08 €</td><td class="num">20,54 €</td></tr><tr><td>Conductor 5</td><td>Conductor bañera</td><td>Razo</td><td class="num">3.201,95 €</td><td class="num">2.470,55 €</td><td class="num">731,40 €</td><td class="num">121,30 €</td><td class="num">169,0</td><td class="num">18,95 €</td><td class="num">17,62 €</td></tr><tr><td>Conductor 6</td><td>Conductor bañera</td><td>Razo</td><td class="num">3.315,60 €</td><td class="num">2.566,20 €</td><td class="num">749,40 €</td><td class="num">133,90 €</td><td class="num">172,0</td><td class="num">19,28 €</td><td class="num">17,93 €</td></tr><tr><td>Mecánico 1</td><td>Taller</td><td>Razo</td><td class="num">2.508,30 €</td><td class="num">1.961,75 €</td><td class="num">546,55 €</td><td class="num">0,00 €</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr><tr><td>Administrativo 1</td><td>Administración</td><td>Razo</td><td class="num">2.887,40 €</td><td class="num">2.321,60 €</td><td class="num">565,80 €</td><td class="num">0,00 €</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr></tbody></table></div>
+    <p class="note">«€/hora real» = coste de empresa del mes ÷ horas de sus partes. «€/hora en Access» es la tarifa del contrato que usan los partes hoy: la diferencia dice qué tarifas hay que corregir. Bajas, vacaciones y personas sin partes aparecen igual, con horas en blanco.</p>
+  </section>
+</sc-if>
+<footer>Maqueta · datos ficticios en esta pantalla. La nómina real nunca se publica en claro.</footer>
+</main>
+</div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1100}}'>
+class Component extends DCLogic {
+  constructor(props){ super(props); this.state = { unlocked: false }; }
+  renderVals(){
+    return { unlocked: this.state.unlocked, locked: !this.state.unlocked,
+      unlock: () => this.setState({ unlocked: true }), lock: () => this.setState({ unlocked: false }) };
+  }
+}
+</script>
+</body>
+</html>

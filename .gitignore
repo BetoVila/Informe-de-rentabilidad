@@ -1,0 +1,12 @@
+runtime/
+work/
+work_gespro/
+logs/
+release-*/
+config.json
+refresh.lock
+*_test.json
+personal*.json
+nomina_detalle.json
+clave-personal.bin
+__pycache__/

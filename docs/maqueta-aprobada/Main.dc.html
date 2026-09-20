@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Rentabilidad · Resumen</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:#12202f;background:#f2f5f8}
+*{box-sizing:border-box}
+button,input,select{font:inherit}
+button{cursor:pointer;border:1px solid #dde4ec;border-radius:8px;background:#fff;color:#12202f;padding:7px 12px}
+button:hover{border-color:#a9bcd6;background:#f4f8ff}
+a{color:#2C5FD6}
+.textbtn{padding:0;border:0;background:none;color:#2C5FD6;font-size:13px}
+.masthead{background:#0A192F;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 32px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}
+.brand-text strong{display:block;font-size:18px;letter-spacing:.1em;font-weight:800}
+.brand-text strong span{font-weight:400;color:#b9c8dc}
+.brand-text small{display:block;font-size:11px;letter-spacing:.18em;color:#8fa0b2;margin-top:2px}
+.sources-strip{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.src-pill{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.02em}
+.src-pill.ok{background:rgba(111,214,193,.18);color:#bdeee1}
+.src-pill.pending{background:transparent;color:#a9bcd6;border:1px dashed rgba(255,255,255,.35)}
+.fresh{display:flex;align-items:center;gap:8px;font-size:12px;color:#c3d1e2;white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:#6ed6c1;flex:none}
+.workspace{display:flex;align-items:flex-start}
+.filters{width:270px;flex:none;background:#fff;border-right:1px solid #dde4ec;padding:24px 20px}
+.filterhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.filterhead h2{font-size:15px;margin:0}
+.fieldtitle{display:block;font-size:13px;color:#5A6B7C;margin-bottom:8px}
+.segmented{display:flex;padding:3px;background:#eef2f8;border-radius:9px;gap:2px;margin-bottom:22px}
+.segmented button{flex:1;border:0;padding:6px;font-size:13px;background:transparent;border-radius:7px}
+.segmented button.selected{background:#0A192F;color:#fff}
+.slicer{border-bottom:1px solid #dde4ec;padding:12px 0;font-size:13px}
+.slicer summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;font-weight:600;color:#233246}
+.slicer summary::-webkit-details-marker{display:none}
+.slicer small{font-weight:400;color:#5A6B7C}
+.slicer .options{margin-top:10px;display:flex;flex-direction:column;gap:7px;color:#3a4a5e}
+.slicer .options label{display:flex;gap:8px;align-items:center}
+.sidebar-note{margin-top:24px;padding:14px;background:#f2f6fc;border-radius:10px;font-size:13px}
+.sidebar-note p{color:#5A6B7C;margin:6px 0 8px}
+main{flex:1;min-width:0;padding:26px 32px 40px;max-width:1500px}
+.titlebar{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.eyebrow{color:#2C5FD6;font-size:11px;letter-spacing:.14em;font-weight:700;margin:0 0 3px}
+h1{margin:0;font-size:30px;letter-spacing:-.5px;color:#0A192F}
+.tag{background:#e3ebf8;color:#2a4a72;font-size:12px;border-radius:20px;padding:5px 12px;font-weight:600}
+.periodbar{display:flex;gap:14px;flex-wrap:wrap;padding:16px;background:#fff;border:1px solid #dde4ec;border-radius:12px;align-items:end}
+.periodbar label{font-size:12px;color:#5A6B7C;display:grid;gap:5px;flex:1;min-width:140px}
+.periodbar input,.periodbar select{border:1px solid #cbd6e4;border-radius:7px;padding:8px 10px;font-size:13px}
+.quickrow{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap}
+.quickrow .chips{display:flex;gap:6px;flex-wrap:wrap}
+.quickrow .chips button{font-size:12px;padding:5px 10px}
+.costselect{font-size:12px;color:#5A6B7C;display:flex;align-items:center;gap:8px}
+.notice{display:flex;gap:12px;align-items:flex-start;border:1px solid #ecd9a8;border-left:4px solid #A9660A;background:#fdf8ec;border-radius:10px;padding:13px 16px;font-size:13px;color:#6d4d13;margin:16px 0}
+.notice svg{flex:none;margin-top:1px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}
+.card{background:#fff;border:1px solid #dde4ec;border-radius:14px;padding:18px}
+.card.primary{background:#0A192F;border-color:#0A192F;color:#fff}
+.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.card .label{font-size:12.5px;color:#5A6B7C;font-weight:600}
+.card.primary .label{color:#b9c8dc}
+.card-icon{width:30px;height:30px;border-radius:8px;background:#eef2f8;display:grid;place-items:center;color:#2C5FD6}
+.card.primary .card-icon{background:rgba(255,255,255,.12);color:#fff}
+.card .value{font-size:26px;font-weight:700;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.card .hint{font-size:12px;color:#5A6B7C;margin-top:8px;line-height:1.5}
+.card.primary .hint{color:#a9bcd6}
+.compare{display:flex;flex-direction:column;gap:3px;margin-top:10px;padding-top:10px;border-top:1px solid #eef1f6;font-size:11.5px}
+.card.primary .compare{border-top-color:rgba(255,255,255,.14)}
+.compare-prior{color:#5A6B7C}
+.card.primary .compare-prior{color:#a9bcd6}
+.compare-delta{font-weight:700;display:flex;align-items:center;gap:4px}
+.compare-delta svg{flex:none}
+.compare-delta.up{color:#0E9488}
+.compare-delta.down{color:#C1394B}
+.compare-delta.neutral{color:#5A6B7C}
+.card.primary .compare-delta.up{color:#7CE0CF}
+.card.primary .compare-delta.down{color:#ff9baa}
+.card.primary .compare-delta.neutral{color:#c5d2e4}
+.tabs{display:flex;gap:22px;border-bottom:1px solid #d3dce8;margin:22px 0;overflow-x:auto}
+.tabs button,.tabs a{border:0;border-radius:0;background:none;padding:10px 0;font-size:13.5px;color:#5A6B7C;border-bottom:3px solid transparent;text-decoration:none;white-space:nowrap;display:inline-block}
+.tabs button.selected,.tabs a.selected{color:#2C5FD6;border-bottom-color:#2C5FD6;font-weight:700}
+.grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px}
+.panel{background:#fff;border:1px solid #dde4ec;border-radius:14px;padding:22px}
+.panel h2{margin:0 0 4px;font-size:17px;color:#0A192F}
+.sub{color:#5A6B7C;font-size:12.5px;margin:0 0 16px}
+.legend{display:flex;gap:16px;font-size:12px;color:#5A6B7C;margin-bottom:8px}
+.legend i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:6px}
+.chart text{font-size:11px;fill:#5A6B7C;font-family:inherit}
+.barrow{display:grid;grid-template-columns:150px 1fr auto;align-items:center;gap:10px;font-size:13px;margin:13px 0}
+.barlabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bartrack{height:8px;background:#eef2f8;border-radius:5px;overflow:hidden}
+.barfill{height:100%;border-radius:5px;background:#2C5FD6}
+.barnum{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:18px}
+.smallkpi{padding:2px 0}
+.smallkpi .label{font-size:11.5px;color:#5A6B7C;display:block}
+.smallkpi .value{font-size:20px;font-weight:700;margin-top:4px;display:block;color:#0A192F}
+.smallkpi small{font-size:11px;color:#5A6B7C}
+.tablewrap{overflow:auto;border:1px solid #dde4ec;border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f2f5fa;text-align:left;font-size:11px;letter-spacing:.02em;color:#455b77;padding:11px 12px;border-bottom:1px solid #d6dfeb;font-weight:700}
+td{padding:10px 12px;border-bottom:1px solid #eef1f6}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:#f7faff}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+footer{font-size:11.5px;color:#5A6B7C;margin-top:24px;border-top:1px solid #dde4ec;padding-top:14px}
+</style>
+</helmet>
+
+<div style="width:100%;min-height:100vh;background:#f2f5f8;display:flex;flex-direction:column;">
+
+<header class="masthead">
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M 18 22 L 48 84 L 60 84 L 30 22 Z" fill="#FFFFFF"/>
+      <path d="M 46 22 H 58 V 84 H 46 Z" fill="#8FA0B2"/>
+      <path d="M 58 22 H 76 C 88 22 94 30 94 39 C 94 48 88 56 76 56 H 58 V 44 H 74 C 79 44 82 42 82 39 C 82 36 79 34 74 34 H 58 Z" fill="#FFFFFF"/>
+      <polygon points="46,84 60,84 48,84" fill="#FFFFFF"/>
+    </svg>
+    <div class="brand-text">
+      <strong>RAZO <span>+ AGETRANS</span></strong>
+      <small>CONTROL DE RENTABILIDAD</small>
+    </div>
+  </div>
+  <div class="sources-strip" aria-label="Fuentes conectadas">
+    <span class="src-pill ok" title="Lectura nocturna en SERVIDOR">GesRuta ✓</span>
+    <span class="src-pill ok" title="Lectura nocturna en SERVIDOR">Access ✓</span>
+    <span class="src-pill ok" title="Extracto mensual de Solred, vía Analizador Carburantes">Solred flota ✓</span>
+    <span class="src-pill pending" title="En estudio de viabilidad">Movertis</span>
+    <span class="src-pill pending" title="En estudio de viabilidad">Locatel</span>
+  </div>
+  <div class="fresh"><span class="dot"></span>Lectura 19 sep 03:04 · datos hasta 18 sep</div>
+</header>
+
+<div class="workspace">
+  <aside class="filters" aria-label="Segmentadores">
+    <div class="filterhead"><h2>Segmentadores</h2><button class="textbtn">Restablecer</button></div>
+    <label class="fieldtitle">Empresa facturadora</label>
+    <div class="segmented">
+      <button class="{{companyAllClass}}" onClick="{{pickAll}}" aria-pressed="{{isAll}}">Ambas</button>
+      <button class="{{companyRazoClass}}" onClick="{{pickRazo}}" aria-pressed="{{isRazo}}">Razo</button>
+      <button class="{{companyAgetransClass}}" onClick="{{pickAgetrans}}" aria-pressed="{{isAgetrans}}">Agetrans</button>
+    </div>
+
+    <details class="slicer"><summary>Vehículo <small>Todos</small></summary>
+      <div class="options">
+        <label><input type="checkbox">2481-KTP</label>
+        <label><input type="checkbox">3350-LFM</label>
+        <label><input type="checkbox">0972-MBR</label>
+      </div>
+    </details>
+    <details class="slicer"><summary>Cliente <small>Todos</small></summary>
+      <div class="options">
+        <label><input type="checkbox">Áridos Norte S.L.</label>
+        <label><input type="checkbox">Construcciones Ribadeo</label>
+        <label><input type="checkbox">Hormigón do Miño</label>
+      </div>
+    </details>
+    <details class="slicer"><summary>Tipo de vehículo <small>Todos</small></summary>
+      <div class="options">
+        <label><input type="checkbox">Tractora</label>
+        <label><input type="checkbox">Bañera</label>
+        <label><input type="checkbox">Hormigonera</label>
+      </div>
+    </details>
+    <details class="slicer"><summary>Carga <small>Todas</small></summary>
+      <div class="options">
+        <label><input type="checkbox">Árido</label>
+        <label><input type="checkbox">Hormigón</label>
+      </div>
+    </details>
+    <details class="slicer"><summary>Concepto de facturación <small>Todos</small></summary>
+      <div class="options">
+        <label><input type="checkbox">Transporte</label>
+        <label><input type="checkbox">Espera</label>
+      </div>
+    </details>
+
+    <div class="sidebar-note">
+      <strong>Un mismo ámbito</strong>
+      <p>Los filtros se aplican a tarjetas, gráficos y tablas. El reparto de coste se conserva al filtrar.</p>
+      <a href="#">Ver cómo se calcula ↗</a>
+    </div>
+  </aside>
+
+  <main>
+    <div class="titlebar">
+      <div><p class="eyebrow">ANÁLISIS DE LA OPERACIÓN · SERVIDOR</p><h1>Rentabilidad</h1></div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span class="tag">Ene–Ago 2026</span>
+        <a class="textbtn" href="#">Estado de actualización ↗</a>
+        <button class="textbtn">Recargar informe</button>
+      </div>
+    </div>
+
+    <section class="periodbar" aria-label="Periodo y comparación">
+      <label>Desde<input type="date" value="2026-01-01"></label>
+      <label>Hasta<input type="date" value="2026-08-31"></label>
+      <label>Ingresos por<select><option>Fecha de factura</option><option>Fecha de línea</option></select></label>
+      <label>Comparar con<select><option>Mismo periodo del año anterior</option><option>Sin comparación</option></select></label>
+    </section>
+    <div class="quickrow">
+      <div class="chips">
+        <button>Año 2026</button><button>Ene</button><button>Feb</button><button>Mar</button><button>Abr</button><button>May</button><button>Jun</button><button>Jul</button><button>Ago</button>
+      </div>
+      <label class="costselect">Coste mostrado<select><option>Guardado en Access</option><option>Recalculado del desglose</option></select></label>
+    </div>
+
+    <div class="notice">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span>Movertis y Locatel todavía no están conectados: el coste por cliente sigue siendo un reparto mensual estimado, no el coste real de cada servicio. <button class="textbtn" data-tab="method" style="font-size:13px">Ver conciliación y criterios</button></span>
+    </div>
+
+    <p style="margin:14px 0 -4px;font-size:12.5px;color:#5A6B7C;font-weight:600">Comparado con el mismo periodo de 2025 (interanual)</p>
+    <section class="cards" aria-label="Indicadores principales">
+      <article class="card primary">
+        <div class="card-head"><span class="label">Ingresos sin IVA</span><span class="card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg></span></div>
+        <div class="value">5.910.473,43 €</div>
+        <div class="hint">Base de facturación · fecha de factura</div>
+        <div class="compare"><span class="compare-prior">5.450.000,00 € · Ene–Ago 2025</span><span class="compare-delta up"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 10H4z"/></svg>+460.473,43 € · +8,4 %</span></div>
+      </article>
+      <article class="card">
+        <div class="card-head"><span class="label">Coste guardado</span><span class="card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M16 12h3"/></svg></span></div>
+        <div class="value">3.375.809,92 €</div>
+        <div class="hint">Access · reparto mensual estimado por empresa y cliente</div>
+        <div class="compare"><span class="compare-prior">3.180.000,00 € · Ene–Ago 2025</span><span class="compare-delta neutral"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 10H4z"/></svg>+195.809,92 € · +6,2 %</span></div>
+      </article>
+      <article class="card">
+        <div class="card-head"><span class="label">Saldo observado</span><span class="card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 7l-3 6a3 3 0 0 0 6 0Z"/><path d="M19 7l-3 6a3 3 0 0 0 6 0Z"/><path d="M5 7h14"/></svg></span></div>
+        <div class="value">2.534.663,51 €</div>
+        <div class="hint">Ingresos − coste disponible. No es beneficio completo.</div>
+        <div class="compare"><span class="compare-prior">2.270.000,00 € · Ene–Ago 2025</span><span class="compare-delta up"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 10H4z"/></svg>+264.663,51 € · +11,7 %</span></div>
+      </article>
+      <article class="card">
+        <div class="card-head"><span class="label">Cobertura de ingresos</span><span class="card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg></span></div>
+        <div class="value">93,1 %</div>
+        <div class="hint">Enlace por matrícula y mes; no certifica todos los gastos.</div>
+        <div class="compare"><span class="compare-prior">91,8 % · Ene–Ago 2025</span><span class="compare-delta up"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 10H4z"/></svg>+1,3 puntos</span></div>
+      </article>
+    </section>
+
+    <nav class="tabs" aria-label="Vistas">
+      <button class="selected" aria-current="page">Resumen</button>
+      <a href="Vehiculos.dc.html">Vehículos</a>
+      <button>Clientes</button>
+      <button>Facturas</button>
+      <button>Partes y costes</button>
+      <a href="Conciliacion.dc.html">Conciliación</a>
+      <a href="Personal.dc.html">Personal<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-left:5px"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></a>
+      <button data-tab="method">Criterios y fuentes</button>
+    </nav>
+
+    <div class="grid2">
+      <section class="panel">
+        <h2>Evolución mensual</h2>
+        <p class="sub">Ingresos según el criterio elegido · costes según fecha del parte.</p>
+        <div class="legend"><span><i style="background:#2C5FD6"></i>Ingresos sin IVA</span><span><i style="background:#0E9488"></i>Coste disponible</span><span><svg width="14" height="9" viewBox="0 0 14 9" style="vertical-align:middle;margin-right:5px"><line x1="0" y1="4.5" x2="14" y2="4.5" stroke="#5A6B7C" stroke-width="2" stroke-dasharray="3 2"/></svg>Ingresos año anterior</span></div>
+        <svg class="chart" viewBox="0 0 760 260" role="img" aria-label="Ingresos y costes por mes; valores exactos en la tabla mensual">
+          <line x1="55" x2="745" y1="226" y2="226" stroke="#e6ecf4"/><text x="45" y="230" text-anchor="end">0</text>
+          <line x1="55" x2="745" y1="155" y2="155" stroke="#e6ecf4"/><text x="45" y="159" text-anchor="end">300 k€</text>
+          <line x1="55" x2="745" y1="85" y2="85" stroke="#e6ecf4"/><text x="45" y="89" text-anchor="end">600 k€</text>
+          <line x1="55" x2="745" y1="14" y2="14" stroke="#e6ecf4"/><text x="45" y="18" text-anchor="end">900 k€</text>
+          <rect x="84.5" y="65" width="16" height="161" rx="2" fill="#2C5FD6"><title>Ene · Ingreso: 682.400 €</title></rect>
+          <rect x="104.5" y="131" width="16" height="95" rx="2" fill="#0E9488"><title>Ene · Coste: 402.100 €</title></rect>
+          <text x="102.5" y="248" text-anchor="middle">ene</text>
+          <rect x="169.5" y="60" width="16" height="166" rx="2" fill="#2C5FD6"><title>Feb · Ingreso: 704.800 €</title></rect>
+          <rect x="189.5" y="129" width="16" height="97" rx="2" fill="#0E9488"><title>Feb · Coste: 411.500 €</title></rect>
+          <text x="187.5" y="248" text-anchor="middle">feb</text>
+          <rect x="254.5" y="52" width="16" height="174" rx="2" fill="#2C5FD6"><title>Mar · Ingreso: 738.300 €</title></rect>
+          <rect x="274.5" y="125" width="16" height="101" rx="2" fill="#0E9488"><title>Mar · Coste: 427.900 €</title></rect>
+          <text x="272.5" y="248" text-anchor="middle">mar</text>
+          <rect x="339.5" y="48" width="16" height="178" rx="2" fill="#2C5FD6"><title>Abr · Ingreso: 756.100 €</title></rect>
+          <rect x="359.5" y="124" width="16" height="102" rx="2" fill="#0E9488"><title>Abr · Coste: 430.800 €</title></rect>
+          <text x="357.5" y="248" text-anchor="middle">abr</text>
+          <rect x="424.5" y="42" width="16" height="184" rx="2" fill="#2C5FD6"><title>May · Ingreso: 779.900 €</title></rect>
+          <rect x="444.5" y="122" width="16" height="104" rx="2" fill="#0E9488"><title>May · Coste: 441.300 €</title></rect>
+          <text x="442.5" y="248" text-anchor="middle">may</text>
+          <rect x="509.5" y="34" width="16" height="192" rx="2" fill="#2C5FD6"><title>Jun · Ingreso: 815.300 €</title></rect>
+          <rect x="529.5" y="118" width="16" height="108" rx="2" fill="#0E9488"><title>Jun · Coste: 459.600 €</title></rect>
+          <text x="527.5" y="248" text-anchor="middle">jun</text>
+          <rect x="594.5" y="39" width="16" height="187" rx="2" fill="#2C5FD6"><title>Jul · Ingreso: 793.700 €</title></rect>
+          <rect x="614.5" y="120" width="16" height="106" rx="2" fill="#0E9488"><title>Jul · Coste: 448.200 €</title></rect>
+          <text x="612.5" y="248" text-anchor="middle">jul</text>
+          <rect x="679.5" y="75" width="16" height="151" rx="2" fill="#2C5FD6"><title>Ago · Ingreso: 639.900 €</title></rect>
+          <rect x="699.5" y="142" width="16" height="84" rx="2" fill="#0E9488"><title>Ago · Coste: 354.400 €</title></rect>
+          <text x="697.5" y="248" text-anchor="middle">ago</text>
+          <polyline points="102.5,78 187.5,73 272.5,66 357.5,62 442.5,57 527.5,49 612.5,54 697.5,87" fill="none" stroke="#5A6B7C" stroke-width="2" stroke-dasharray="4 3"/>
+          <circle cx="102.5" cy="78" r="2.5" fill="#5A6B7C"><title>Ene 2025 · Ingreso: 627.800 €</title></circle>
+          <circle cx="187.5" cy="73" r="2.5" fill="#5A6B7C"><title>Feb 2025 · Ingreso: 648.400 €</title></circle>
+          <circle cx="272.5" cy="66" r="2.5" fill="#5A6B7C"><title>Mar 2025 · Ingreso: 679.200 €</title></circle>
+          <circle cx="357.5" cy="62" r="2.5" fill="#5A6B7C"><title>Abr 2025 · Ingreso: 695.600 €</title></circle>
+          <circle cx="442.5" cy="57" r="2.5" fill="#5A6B7C"><title>May 2025 · Ingreso: 717.500 €</title></circle>
+          <circle cx="527.5" cy="49" r="2.5" fill="#5A6B7C"><title>Jun 2025 · Ingreso: 750.100 €</title></circle>
+          <circle cx="612.5" cy="54" r="2.5" fill="#5A6B7C"><title>Jul 2025 · Ingreso: 730.200 €</title></circle>
+          <circle cx="697.5" cy="87" r="2.5" fill="#5A6B7C"><title>Ago 2025 · Ingreso: 588.700 €</title></circle>
+        </svg>
+      </section>
+
+      <section class="panel">
+        <h2>De qué está hecho el coste</h2>
+        <p class="sub">Desglose conservado del parte de Access.</p>
+        <div class="barrow"><span class="barlabel" title="Gasóleo">Gasóleo</span><div class="bartrack"><div class="barfill" style="width:100%"></div></div><span class="barnum">1.180.000 €</span></div>
+        <div class="barrow"><span class="barlabel" title="Conductor · ordinarias">Conductor · ordinarias</span><div class="bartrack"><div class="barfill" style="width:58%"></div></div><span class="barnum">690.000 €</span></div>
+        <div class="barrow"><span class="barlabel" title="Amortización">Amortización</span><div class="bartrack"><div class="barfill" style="width:35%"></div></div><span class="barnum">410.000 €</span></div>
+        <div class="barrow"><span class="barlabel" title="Mantenimiento">Mantenimiento</span><div class="bartrack"><div class="barfill" style="width:26%"></div></div><span class="barnum">305.000 €</span></div>
+        <div class="barrow"><span class="barlabel" title="Conductor · extras">Conductor · extras</span><div class="bartrack"><div class="barfill" style="width:18%"></div></div><span class="barnum">210.000 €</span></div>
+        <div class="barrow"><span class="barlabel" title="Seguro">Seguro</span><div class="bartrack"><div class="barfill" style="width:15%"></div></div><span class="barnum">175.000 €</span></div>
+        <div class="barrow"><span class="barlabel" title="Gastos empresa">Gastos empresa</span><div class="bartrack"><div class="barfill" style="width:12%"></div></div><span class="barnum">140.000 €</span></div>
+        <div class="barrow"><span class="barlabel" title="AdBlue">AdBlue</span><div class="bartrack"><div class="barfill" style="width:8%"></div></div><span class="barnum">95.000 €</span></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <h2>Actividad y eficiencia</h2>
+      <p class="sub">Actividad registrada en Access. Con filtros comerciales, km/horas/repostajes se reparten con el coste.</p>
+      <div class="kpi-grid">
+        <div class="smallkpi"><span class="label">Viajes GesRuta</span><span class="value">8.412</span><small>Referencias distintas</small></div>
+        <div class="smallkpi"><span class="label">Albaranes GesRuta</span><span class="value">9.150</span><small>No se cuentan como viajes</small></div>
+        <div class="smallkpi"><span class="label">Kilómetros</span><span class="value">3.940.210</span><small>Registrados en partes</small></div>
+        <div class="smallkpi"><span class="label">Horas</span><span class="value">62.480,5</span><small>Pueden ser aproximadas</small></div>
+        <div class="smallkpi"><span class="label">Litros repostados</span><span class="value">1.115.300,2</span><small>Gasóleo · Access</small></div>
+        <div class="smallkpi"><span class="label">Consumo aparente</span><span class="value">28,31 l/100km</span><small>Repostajes / km</small></div>
+        <div class="smallkpi"><span class="label">Coste por km</span><span class="value">0,857 €</span><small>Coste disponible / km</small></div>
+        <div class="smallkpi"><span class="label">Coste por hora</span><span class="value">54,02 €</span><small>Coste disponible / horas</small></div>
+        <div class="smallkpi"><span class="label">Km vacíos declarados</span><span class="value">11,4 %</span><small>Vacíos / (cargados+vacíos)</small></div>
+        <div class="smallkpi"><span class="label">Saldo sobre ingresos</span><span class="value">42,9 %</span><small>Parcial: revisar cobertura</small></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Mes a mes</h2>
+      <p class="sub">Esta tabla y los indicadores comparten el mismo cálculo.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Mes</th><th style="text-align:right">Ingresos sin IVA</th><th style="text-align:right">Coste disponible</th><th style="text-align:right">Saldo</th><th style="text-align:right">Cobertura</th><th style="text-align:right">Viajes</th><th style="text-align:right">Km</th></tr></thead>
+          <tbody>
+            <tr><td>Ene 2026</td><td class="num">682.400,00 €</td><td class="num">402.100,00 €</td><td class="num">280.300,00 €</td><td class="num">94,2 %</td><td class="num">1.048</td><td class="num">483.900</td></tr>
+            <tr><td>Feb 2026</td><td class="num">704.800,00 €</td><td class="num">411.500,00 €</td><td class="num">293.300,00 €</td><td class="num">93,8 %</td><td class="num">1.071</td><td class="num">497.100</td></tr>
+            <tr><td>Mar 2026</td><td class="num">738.300,00 €</td><td class="num">427.900,00 €</td><td class="num">310.400,00 €</td><td class="num">92,6 %</td><td class="num">1.102</td><td class="num">512.600</td></tr>
+            <tr><td>Abr 2026</td><td class="num">756.100,00 €</td><td class="num">430.800,00 €</td><td class="num">325.300,00 €</td><td class="num">93,4 %</td><td class="num">1.118</td><td class="num">519.800</td></tr>
+            <tr><td>May 2026</td><td class="num">779.900,00 €</td><td class="num">441.300,00 €</td><td class="num">338.600,00 €</td><td class="num">92,9 %</td><td class="num">1.135</td><td class="num">527.400</td></tr>
+            <tr><td>Jun 2026</td><td class="num">815.300,00 €</td><td class="num">459.600,00 €</td><td class="num">355.700,00 €</td><td class="num">93,5 %</td><td class="num">1.164</td><td class="num">540.900</td></tr>
+            <tr><td>Jul 2026</td><td class="num">793.700,00 €</td><td class="num">448.200,00 €</td><td class="num">345.500,00 €</td><td class="num">93,0 %</td><td class="num">1.149</td><td class="num">534.100</td></tr>
+            <tr><td>Ago 2026 <small style="color:#8a97a8">· incompleto</small></td><td class="num">639.973,43 €</td><td class="num">354.409,92 €</td><td class="num">285.563,51 €</td><td class="num">90,1 %</td><td class="num">625</td><td class="num">324.400</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>Ene 2026–Ago 2026 · 8.412 viajes en el ámbito · Costes según fecha del parte. Lectura de Access: 18 sep 2026; GesRuta: 18 sep 2026. — Maqueta de diseño con cifras ilustrativas (referencia interna de pruebas), no es una lectura en vivo.</footer>
+  </main>
+</div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1400}}'>
+class Component extends DCLogic {
+  constructor(props){
+    super(props);
+    this.state = { company: '' };
+  }
+  renderVals(){
+    const c = this.state.company;
+    const cls = (v) => 'seg-btn' , base = 'button';
+    return {
+      isAll: c === '', isRazo: c === 'Razo', isAgetrans: c === 'Agetrans',
+      companyAllClass: c === '' ? 'selected' : '',
+      companyRazoClass: c === 'Razo' ? 'selected' : '',
+      companyAgetransClass: c === 'Agetrans' ? 'selected' : '',
+      pickAll: () => this.setState({ company: '' }),
+      pickRazo: () => this.setState({ company: 'Razo' }),
+      pickAgetrans: () => this.setState({ company: 'Agetrans' })
+    };
+  }
+}
+</script>
+</body>
+</html>

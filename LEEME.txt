@@ -1,0 +1,73 @@
+RENTABILIDAD RAZO + AGETRANS - ACTUALIZACION DIARIA
+
+CONSULTA DESDE LOS PC
+Abra el icono del escritorio, o directamente:
+\\SERVIDOR\Programas\_RENTABILIDAD\informe.html
+Estado de la ultima lectura: \\SERVIDOR\Programas\_RENTABILIDAD\estado.html
+Copie el acceso directo, no el informe: una copia del HTML deja de actualizarse.
+Necesita red de la empresa, permiso a esa carpeta y Edge/Chrome/Firefox actual.
+No se han abierto puertos, publicado datos en Internet ni cambiado el ERP.
+
+QUIEN LO ACTUALIZA Y CUANDO
+La tarea Razo-Rentabilidad-Nocturna lee las fuentes cada noche a las 03:00 y publica
+el informe en esa carpeta de SERVIDOR. Si el equipo estaba apagado a esa hora, la
+lanza en cuanto se enciende. El icono "Actualizar rentabilidad ahora" (escritorio)
+la lanza a mano; tarda menos de un minuto.
+Hay DOS sitios posibles donde puede vivir la tarea. Use solo uno a la vez:
+ - EL PC DE ROBERTO (instalacion actual): INSTALAR EN ESTE PC.cmd. Aqui estan las
+   claves de Movertis y Locatel (variables de entorno de su usuario) y el PC ya
+   ejecuta el resto de tareas de la casa. Se instala sin administrador.
+ - SERVIDOR: ACTIVAR EN SERVIDOR.cmd, abierto DENTRO de SERVIDOR con una cuenta
+   administradora. Vale cuando no se quiera depender del PC, pero alli habria que
+   poner las claves de Movertis y Locatel. Antes, desactive la tarea del PC:
+   Disable-ScheduledTask -TaskName 'Razo-Rentabilidad-Nocturna'
+Para actualizar el programa basta repetir el instalador: conserva la configuracion,
+los registros y la tarea; solo cambia los ficheros del programa.
+Programa y registros: C:\ProgramData\RazoRentabilidad (logs 90 dias; work 14 dias).
+
+QUE LEE Y QUE CALCULA (todo en SOLO LECTURA)
+ - GesRuta (Razo EMPTR21 y Agetrans EMPAG21) y Partes 7.0.accdb (Access).
+ - Tarjeta Solred (litros, importe, AdBlue y peajes), del buzon de la carpeta de
+   combustible. Solred llega por cuenta: si falta la de una sociedad, se avisa.
+ - Surtidor de la nave (GesproWin): litros y kilometros de cada repostaje.
+ - Nomina de la gestoria (resumenes mensuales de Documentos\LABORAL): coste de empresa
+   por mes y tipo de trabajo. Los grupos de menos de 3 personas se pliegan.
+ - Contabilidad real (CxConta): gastos e ingresos por sociedad, mes y cuenta. La trae
+   el ERP a su base de datos cada noche; aqui solo se le pregunta por los totales
+   (consulta SELECT agregada, sin apuntes sueltos). Solo en el PC de Roberto (Docker).
+   Es la REFERENCIA de rentabilidad: la cabecera del informe muestra ingresos, gastos y
+   resultado contables de los meses cerrados; el mes en curso no se compara.
+Relee desde enero de 2025 hasta AYER para recoger tambien cambios retrospectivos.
+Si una fuente opcional falla o no esta, el informe sale igual y lo dice arriba.
+NUNCA se sustituye un dato que falta por un cero.
+
+COSTE POR EMPLEADO (APARTADO CON CLAVE)
+Para ver el coste de cada persona (nomina de la gestoria + horas de los partes) hay que
+elegir una clave: icono "Rentabilidad - Clave del personal" (o CLAVE DEL PERSONAL.cmd).
+La clave se escribe en esa ventana, nunca en un chat, y queda cifrada para el usuario de
+Windows de este PC. En la siguiente lectura (03:00 o "Actualizar ahora") aparece la
+pestana "Personal" en el informe: pide la clave, descifra en el navegador (AES-256-GCM)
+y no guarda nada. Sin la clave, los nombres y sueldos ni se leen ni salen en el fichero.
+Si se olvida, se elige otra y en la lectura siguiente se vuelve a cifrar.
+
+LO DECLARADO NO ES LO REAL
+Los gastos y el consumo (litros/km) que traen los partes de Access los declara quien
+los rellena: son DECLARADOS, no reales, y estan incompletos (faltan partes en muchos
+dias y no recogen subcontratacion, compra de aridos ni gastos generales). Lo real es
+la contabilidad, la tarjeta Solred, el surtidor de la nave, la nomina de la gestoria y,
+para kilometros y consumo, los localizadores (Movertis y Locatel). El informe muestra
+ambos y los contrasta en Conciliacion (puente contabilidad / partes).
+
+FALLOS Y MANTENIMIENTO
+Si falla cualquier fuente obligatoria o cualquier control, NO se sustituye el informe
+anterior. estado.html muestra el fallo y la ultima lectura correcta. El propio informe
+avisa si su lectura tiene mas de 48 horas.
+Detener la programacion: Disable-ScheduledTask -TaskName 'Razo-Rentabilidad-Nocturna'
+Reanudar: Enable-ScheduledTask -TaskName 'Razo-Rentabilidad-Nocturna'
+Nunca modificar las fuentes Access, GesRuta o Solred desde este programa.
+
+SEGURIDAD
+La consulta hereda los permisos de la carpeta Programas de SERVIDOR. No es acceso
+publico ni por Internet. Ninguna contrasena se guarda en el programa ni se escribe en
+el chat. Los datos con nombres de personas no viajan en el informe salvo en una capa
+cifrada con una clave que solo conoce quien la elige.

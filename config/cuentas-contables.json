@@ -1,0 +1,45 @@
+{
+  "_nota": "Agrupa las cuentas del Plan General (grupos 6 y 7) en las categorias del informe. Gana el prefijo MAS LARGO que coincida; lo que no coincide con ninguno va a 'otros'. Los cierres y aperturas de ejercicio no se leen.",
+  "gastos": [
+    {"id": "subcontratacion", "label": "Trabajos de otras empresas (subcontratación)", "prefijos": ["607"]},
+    {"id": "combustible", "label": "Combustible", "prefijos": ["6280000000"]},
+    {"id": "personal", "label": "Sueldos y Seguridad Social", "prefijos": ["640", "641", "642", "643", "649"]},
+    {"id": "dietas", "label": "Dietas del personal", "prefijos": ["6290080"]},
+    {"id": "aridos", "label": "Compra de áridos y productos", "prefijos": ["600", "601", "6020000006", "6020000022"]},
+    {"id": "repuestos", "label": "Repuestos y neumáticos", "prefijos": ["6020020000", "6020000003"]},
+    {"id": "reparaciones", "label": "Reparación y conservación", "prefijos": ["622"]},
+    {"id": "seguros", "label": "Seguros", "prefijos": ["625"]},
+    {"id": "peajes", "label": "Peajes", "prefijos": ["6290000070"]},
+    {"id": "amortizacion", "label": "Amortización de vehículos", "prefijos": ["681", "680", "682"]},
+    {"id": "alquileres", "label": "Renting y arrendamientos", "prefijos": ["621"]},
+    {"id": "tributos", "label": "Impuestos y tasas", "prefijos": ["63"]},
+    {"id": "financieros", "label": "Gastos financieros", "prefijos": ["66"]},
+    {"id": "extraordinarios", "label": "Gastos extraordinarios y pérdidas", "prefijos": ["67"]},
+    {"id": "suministros", "label": "Suministros (luz, agua)", "prefijos": ["628"]},
+    {"id": "otras_compras", "label": "Otras compras", "prefijos": ["602", "608", "609"]},
+    {"id": "otros", "label": "Otros servicios y gastos", "prefijos": ["6"]}
+  ],
+  "ingresos": [
+    {"id": "servicios", "label": "Servicios de transporte", "prefijos": ["705"]},
+    {"id": "ventas", "label": "Ventas de productos", "prefijos": ["700", "701", "702"]},
+    {"id": "subvenciones", "label": "Subvenciones (gasóleo, otras)", "prefijos": ["74"]},
+    {"id": "extraordinarios_ing", "label": "Ingresos extraordinarios y de inmovilizado", "prefijos": ["77", "79"]},
+    {"id": "otros_ing", "label": "Otros ingresos", "prefijos": ["7"]}
+  ],
+  "puente": [
+    {"id": "combustible", "label": "Combustible", "cats": ["combustible"], "partes": ["fuel"]},
+    {"id": "personal", "label": "Sueldos y Seguridad Social", "cats": ["personal"], "partes": ["driver", "overtime"], "nota": "La contabilidad incluye a todo el personal (taller, oficina, áridos…); el parte solo el tiempo del conductor."},
+    {"id": "dietas", "label": "Dietas del personal", "cats": ["dietas"], "partes": ["expensesDriver"]},
+    {"id": "amortizacion", "label": "Amortización de vehículos", "cats": ["amortizacion"], "partes": ["amort"]},
+    {"id": "seguros", "label": "Seguros", "cats": ["seguros"], "partes": ["insurance"]},
+    {"id": "mantenimiento", "label": "Reparaciones, repuestos y neumáticos", "cats": ["reparaciones", "repuestos"], "partes": ["maintenance"]},
+    {"id": "peajes", "label": "Peajes", "cats": ["peajes"], "partes": ["expensesVehicle"], "nota": "«Gastos vehículo» del parte también recoge otros gastos del camión."},
+    {"id": "consumibles", "label": "AdBlue y otras compras", "cats": ["otras_compras"], "partes": ["adblue"]},
+    {"id": "generales", "label": "Gastos generales (renting, suministros, impuestos, financieros, otros)", "cats": ["alquileres", "suministros", "tributos", "financieros", "otros"], "partes": ["expensesCompany", "structure"], "nota": "El parte imputa la estructura con un porcentaje fijo; no es el gasto real."},
+    {"id": "subcontratacion", "label": "Trabajos de otras empresas (subcontratación)", "cats": ["subcontratacion"], "partes": [], "nota": "No existe en los partes de Access."},
+    {"id": "aridos", "label": "Compra de áridos y productos", "cats": ["aridos"], "partes": [], "nota": "No existe en los partes de Access."},
+    {"id": "extraordinarios", "label": "Gastos extraordinarios y pérdidas", "cats": ["extraordinarios"], "partes": [], "nota": "No existe en los partes de Access."}
+  ],
+  "sociedades": {"1": "Razo", "2": "Agetrans"},
+  "titularASociedad": {"RAZO": "Razo", "AGETRANS": "Agetrans"}
+}
