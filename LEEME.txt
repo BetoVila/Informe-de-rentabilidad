@@ -72,4 +72,6 @@ publico ni por Internet. Ninguna contrasena se guarda en el programa ni se escri
 el chat. Los datos con nombres de personas no viajan en el informe salvo en una capa
 cifrada con una clave que solo conoce quien la elige.
 
-CODIGO FUENTE (git): C:\CLAUDE ESPECIAL-PROGRAMAS-Y-HERRAMIENTASentabilidad-informe
+entabilidad-informe
+
+CODIGO FUENTE (git): C:\CLAUDE ESPECIAL\05-PROGRAMAS-Y-HERRAMIENTAS\rentabilidad-informe
