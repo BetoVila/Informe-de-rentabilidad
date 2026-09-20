@@ -139,12 +139,21 @@ export function createModel(data) {
     const names=ledger.sociedades,wanted=f.companies?.length?f.companies:Object.values(names),closed=ledger.meta.lastClosed;
     const all=monthList(f.from,f.to),months=all.filter(m=>!closed||m<=closed),excludedMonths=all.filter(m=>closed&&m>closed);
     const set=new Set(months),rows=ledger.rows.filter(r=>set.has(r.month)&&wanted.includes(names[r.company]));
-    const income=rows.filter(r=>r.kind==='i').reduce((s,r)=>s+r.amount,0),expenses=rows.filter(r=>r.kind==='g').reduce((s,r)=>s+r.amount,0);
-    const cat=(kind)=>ledger.categories[kind==='g'?'gastos':'ingresos'].map(c=>({...c,amount:rows.filter(r=>r.kind===kind&&r.cat===c.id).reduce((s,r)=>s+r.amount,0)})).filter(c=>Math.abs(c.amount)>.5).sort((a,b)=>b.amount-a.amount);
-    const byMonth=months.map(m=>{const rs=rows.filter(r=>r.month===m),i=rs.filter(r=>r.kind==='i').reduce((s,r)=>s+r.amount,0),g=rs.filter(r=>r.kind==='g').reduce((s,r)=>s+r.amount,0);return {key:m,income:i,expenses:g,result:i-g,marginPct:divide(i-g,i)};});
-    const byCompany=Object.values(names).filter(n=>wanted.includes(n)).map(n=>{const rs=rows.filter(r=>names[r.company]===n),i=rs.filter(r=>r.kind==='i').reduce((s,r)=>s+r.amount,0),g=rs.filter(r=>r.kind==='g').reduce((s,r)=>s+r.amount,0);return {key:n,income:i,expenses:g,result:i-g,marginPct:divide(i-g,i)};});
+    // Intragrupo (facturación consolidada): ingreso/gasto entre Razo y Agetrans medido en el libro. El ingreso es siempre
+    // servicio de transporte (705 -> 'servicios') y el gasto subcontratación (607 -> 'subcontratacion'); consolidar = quitarlos.
+    const intra=(ledger.intragrupo||[]).filter(r=>set.has(r.month)&&wanted.includes(names[r.company]));
+    const igIncome=intra.reduce((s,r)=>s+(r.ingreso||0),0),igExpense=intra.reduce((s,r)=>s+(r.gasto||0),0);
+    const igByCompany=Object.values(names).filter(n=>wanted.includes(n)).map(n=>{const rs=intra.filter(r=>names[r.company]===n);return {key:n,income:rs.reduce((s,r)=>s+(r.ingreso||0),0),expense:rs.reduce((s,r)=>s+(r.gasto||0),0)};});
+    const igByMonth=months.map(m=>{const rs=intra.filter(r=>r.month===m);return {key:m,income:rs.reduce((s,r)=>s+(r.ingreso||0),0),expense:rs.reduce((s,r)=>s+(r.gasto||0),0)};});
+    const intragrupo={income:igIncome,expense:igExpense,net:igIncome-igExpense,byCompany:igByCompany,byMonth:igByMonth,metodo:ledger.meta.intragrupoMetodo||''};
+    const con=!!f.consolidado;
+    const income=rows.filter(r=>r.kind==='i').reduce((s,r)=>s+r.amount,0)-(con?igIncome:0);
+    const expenses=rows.filter(r=>r.kind==='g').reduce((s,r)=>s+r.amount,0)-(con?igExpense:0);
+    const cat=(kind)=>ledger.categories[kind==='g'?'gastos':'ingresos'].map(c=>{let amount=rows.filter(r=>r.kind===kind&&r.cat===c.id).reduce((s,r)=>s+r.amount,0);if(con&&kind==='i'&&c.id==='servicios')amount-=igIncome;if(con&&kind==='g'&&c.id==='subcontratacion')amount-=igExpense;return {...c,amount};}).filter(c=>Math.abs(c.amount)>.5).sort((a,b)=>b.amount-a.amount);
+    const byMonth=months.map(m=>{const rs=rows.filter(r=>r.month===m),ig=con?igByMonth.find(x=>x.key===m):null,i=rs.filter(r=>r.kind==='i').reduce((s,r)=>s+r.amount,0)-(ig?ig.income:0),g=rs.filter(r=>r.kind==='g').reduce((s,r)=>s+r.amount,0)-(ig?ig.expense:0);return {key:m,income:i,expenses:g,result:i-g,marginPct:divide(i-g,i)};});
+    const byCompany=Object.values(names).filter(n=>wanted.includes(n)).map(n=>{const rs=rows.filter(r=>names[r.company]===n),ig=con?igByCompany.find(x=>x.key===n):null,i=rs.filter(r=>r.kind==='i').reduce((s,r)=>s+r.amount,0)-(ig?ig.income:0),g=rs.filter(r=>r.kind==='g').reduce((s,r)=>s+r.amount,0)-(ig?ig.expense:0);return {key:n,income:i,expenses:g,result:i-g,marginPct:divide(i-g,i)};});
     const partial=months.length>0&&(f.from.slice(0,7)===months[0]&&f.from.slice(8)!=='01'||(f.to.slice(0,7)===months[months.length-1]&&f.to<monthEnd(months[months.length-1])));
-    return {income,expenses,result:income-expenses,marginPct:divide(income-expenses,income),months,excludedMonths,partial,expenseCategories:cat('g'),incomeCategories:cat('i'),byMonth,byCompany,lastClosed:closed};
+    return {income,expenses,result:income-expenses,marginPct:divide(income-expenses,income),months,excludedMonths,partial,expenseCategories:cat('g'),incomeCategories:cat('i'),byMonth,byCompany,lastClosed:closed,consolidado:con,intragrupo};
   }
   // Puente: lo que dice la contabilidad frente a lo que captan los partes de Access, por concepto (mismos meses y sociedades).
   function bridge(f){
@@ -153,7 +162,9 @@ export function createModel(data) {
     const rows=ledger.rows.filter(r=>r.kind==='g'&&set.has(r.month)&&wanted.includes(names[r.company]));
     const ps=data.parts.filter(p=>set.has(p.date.slice(0,7))&&wanted.includes(societyOf(p.owner)));
     const groups=ledger.puente.map(g=>{
-      const led=rows.filter(r=>g.cats.includes(r.cat)).reduce((s,r)=>s+r.amount,0),parts=ps.reduce((s,p)=>s+g.partes.reduce((a,k)=>a+(p[k]||0),0),0);
+      let led=rows.filter(r=>g.cats.includes(r.cat)).reduce((s,r)=>s+r.amount,0);
+      if(f.consolidado&&g.id==='subcontratacion')led-=view.intragrupo.expense; // la subcontratación a la otra casa se elimina
+      const parts=ps.reduce((s,p)=>s+g.partes.reduce((a,k)=>a+(p[k]||0),0),0);
       return {id:g.id,label:g.label,note:g.nota||'',ledger:led,parts,difference:led-parts,coverage:g.partes.length?divide(parts,led):0,inParts:g.partes.length>0};
     });
     const residual=ps.reduce((s,p)=>s+p.residual,0);

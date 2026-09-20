@@ -41,6 +41,7 @@ Si falla una fuente opcional el informe sale igual y lo dice arriba. **Nunca se 
 3. Lo real: contabilidad, Solred, surtidor, nómina y, para km y consumo, los localizadores.
 4. Sin claves en ficheros ni en el chat: Movertis/Locatel = variables de entorno de usuario (`WIALON_TOKEN`, `LOCATEL_USUARIO`, `LOCATEL_CLAVE`); la clave del apartado de personal la teclea Roberto en su ventana (`CLAVE DEL PERSONAL.cmd`, DPAPI del usuario).
 5. Con filtros de vehículo/cliente solo se ve el coste imputable y se avisa de que no es el resultado real.
+6. **Facturación consolidada**: el selector «Suma de empresas / Consolidada» elimina el intragrupo Razo↔Agetrans, medido en el libro por la cuenta de empresas del grupo (clientes 433-436 → ingreso 7xx; proveedores 403-406 → gasto 6xx; la 552 cta. cte. es tesorería y se excluye), sin cablear cuentas. 2026 ene-ago: 924k de ingreso y 758k de gasto intragrupo; el margen del grupo pasa de 10,7 % (suma) a 9,5 % (consolidado) y un panel enseña los 166k sin casar por timing. Solo meses cerrados.
 
 ## Cómo se trabaja
 
@@ -63,4 +64,5 @@ powershell -File scripts\package.ps1 -ReleaseName release-rN
 - Roberto: elegir la clave del apartado «Personal» (icono) y bajar de Mi Solred, con la cuenta de Agetrans, los `Operaciones` en **texto** (no Excel) a `Z:\A CARBURANTES\1 DEJAR AQUI`.
 - Locatel (informe de emisiones, CANbus) y km de Movertis anteriores al 20/08/2026; cuando exista `razo_km_historico` en la copia local del ERP, leerlo (filtrando `descartada = False`).
 - Repartir con criterio subcontratación, áridos y generales por vehículo/cliente (la contabilidad ya trae cuentas por actividad y amortización por matrícula).
+- Rentabilidad por cliente y viaje: aplicar también ahí la eliminación intragrupo (en la vista contable ya está) y, del marco de Tactio (referencia, no plantilla), el margen de contribución por unidad de negocio alimentado con dato real, no con % fijos.
 - Copia nocturna de GesproWin desde PC AUXILIAR (parada desde el 06/08).

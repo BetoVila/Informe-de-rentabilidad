@@ -82,7 +82,9 @@ if(contab?.metadata?.disponible){
   if(ok)lastClosed=m;
  }
  const used=new Set(rows.map(r=>r.cuenta));
- ledger={meta:{fuente:contab.metadata.fuente,desde:contab.metadata.desde,hasta:contab.metadata.hasta,leido:contab.metadata.leido,maxFechaPorSociedad:contab.metadata.maxFechaPorSociedad,lastClosed},accounts:Object.fromEntries([...used].map(c=>[c,contab.accounts[c]||''])),categories:{gastos:cuentasCfg.gastos.map(c=>({id:c.id,label:c.label})),ingresos:cuentasCfg.ingresos.map(c=>({id:c.id,label:c.label}))},puente:cuentasCfg.puente,sociedades:cuentasCfg.sociedades,titularASociedad:cuentasCfg.titularASociedad,rows};
+ // Intragrupo (facturación consolidada): ingreso/gasto entre Razo y Agetrans, medido en el libro por cuenta de grupo.
+ const intragrupo=(contab.intragrupo?.rows||[]).map(r=>({company:r.company,month:r.month,ingreso:round(r.ingreso||0,2),gasto:round(r.gasto||0,2)}));
+ ledger={meta:{fuente:contab.metadata.fuente,desde:contab.metadata.desde,hasta:contab.metadata.hasta,leido:contab.metadata.leido,maxFechaPorSociedad:contab.metadata.maxFechaPorSociedad,lastClosed,intragrupoMetodo:contab.intragrupo?.metodo||''},accounts:Object.fromEntries([...used].map(c=>[c,contab.accounts[c]||''])),categories:{gastos:cuentasCfg.gastos.map(c=>({id:c.id,label:c.label})),ingresos:cuentasCfg.ingresos.map(c=>({id:c.id,label:c.label}))},puente:cuentasCfg.puente,sociedades:cuentasCfg.sociedades,titularASociedad:cuentasCfg.titularASociedad,intragrupo,rows};
 }
 
 // ---- telemática: km y litros medidos por el propio camión (Movertis, vía el ERP), solo días fiables

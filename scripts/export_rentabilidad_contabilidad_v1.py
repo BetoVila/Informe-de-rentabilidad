@@ -45,19 +45,46 @@ def main():
     meta = consulta(docker, a.contenedor, a.base, a.usuario,
         "SELECT company_id, max(fecha) AS max_fecha, count(*) AS n FROM razo_cxconta_apunte WHERE clase='ordinario' "
         "AND fecha <= '%s' GROUP BY 1 ORDER BY 1" % hasta)
+    # Intragrupo (facturacion consolidada): un asiento es intragrupo si toca una cuenta de EMPRESAS DEL GRUPO del PGC.
+    # Clientes grupo 433-436 -> las patas 7xx del asiento son ingreso intragrupo; proveedores grupo 403-406 -> las 6xx
+    # son gasto intragrupo. No se usa el tercero (el apunte no lo trae) ni se cablea ninguna cuenta concreta. La 552
+    # (cuenta corriente con el grupo) es tesoreria, no P&L, y no entra. Medido, verificado contra los albaranes de GesRuta.
+    intra_ing = consulta(docker, a.contenedor, a.base, a.usuario,
+        "WITH grp AS (SELECT DISTINCT company_id,ejercicio,libro,asiento FROM razo_cxconta_apunte WHERE clase='ordinario' "
+        "AND fecha>='%s' AND fecha<='%s' AND (cuenta_codigo LIKE '433%%' OR cuenta_codigo LIKE '434%%' OR cuenta_codigo LIKE '435%%' OR cuenta_codigo LIKE '436%%')) "
+        "SELECT a.company_id, to_char(a.fecha,'YYYY-MM') AS mes, round(sum(CASE WHEN a.cuenta_codigo LIKE '7%%' THEN a.haber-a.debe ELSE 0 END)::numeric,2) AS importe "
+        "FROM razo_cxconta_apunte a JOIN grp ON grp.company_id=a.company_id AND grp.ejercicio=a.ejercicio AND grp.libro=a.libro AND grp.asiento=a.asiento "
+        "WHERE a.clase='ordinario' GROUP BY 1,2 ORDER BY 1,2" % (a.from_date, hasta))
+    intra_gas = consulta(docker, a.contenedor, a.base, a.usuario,
+        "WITH grp AS (SELECT DISTINCT company_id,ejercicio,libro,asiento FROM razo_cxconta_apunte WHERE clase='ordinario' "
+        "AND fecha>='%s' AND fecha<='%s' AND (cuenta_codigo LIKE '403%%' OR cuenta_codigo LIKE '404%%' OR cuenta_codigo LIKE '405%%' OR cuenta_codigo LIKE '406%%')) "
+        "SELECT a.company_id, to_char(a.fecha,'YYYY-MM') AS mes, round(sum(CASE WHEN a.cuenta_codigo LIKE '6%%' THEN a.debe-a.haber ELSE 0 END)::numeric,2) AS importe "
+        "FROM razo_cxconta_apunte a JOIN grp ON grp.company_id=a.company_id AND grp.ejercicio=a.ejercicio AND grp.libro=a.libro AND grp.asiento=a.asiento "
+        "WHERE a.clase='ordinario' GROUP BY 1,2 ORDER BY 1,2" % (a.from_date, hasta))
     if not apuntes:
         raise RuntimeError('La contabilidad no devuelve ningun apunte de gasto ni de ingreso en el periodo')
     rows = [{'company': int(r['company_id']), 'month': r['mes'], 'cuenta': r['cuenta'], 'debe': float(r['debe']),
              'haber': float(r['haber']), 'n': int(r['n'])} for r in apuntes]
+    intra = {}
+    for r in intra_ing:
+        k = (int(r['company_id']), r['mes']); intra.setdefault(k, {'ingreso': 0.0, 'gasto': 0.0})['ingreso'] = float(r['importe'] or 0)
+    for r in intra_gas:
+        k = (int(r['company_id']), r['mes']); intra.setdefault(k, {'ingreso': 0.0, 'gasto': 0.0})['gasto'] = float(r['importe'] or 0)
+    intragrupo_rows = [{'company': k[0], 'month': k[1], 'ingreso': round(v['ingreso'], 2), 'gasto': round(v['gasto'], 2)}
+                       for k, v in sorted(intra.items())]
     out = {'metadata': {'disponible': True, 'fuente': 'CxConta (espejo razo_cxconta_apunte del ERP)', 'desde': a.from_date,
                         'hasta': hasta, 'apuntesAgregados': len(rows),
                         'maxFechaPorSociedad': {m['company_id']: m['max_fecha'] for m in meta},
                         'leido': datetime.datetime.now().isoformat(timespec='seconds')},
-           'accounts': {r['code']: r['name'] for r in nombres}, 'rows': rows}
+           'accounts': {r['code']: r['name'] for r in nombres}, 'rows': rows,
+           'intragrupo': {'metodo': 'Asientos que tocan cuentas de empresas del grupo (clientes 433-436 -> ingreso 7xx; proveedores 403-406 -> gasto 6xx)',
+                          'rows': intragrupo_rows}}
     with open(a.output, 'w', encoding='utf-8') as f:
         json.dump(out, f, ensure_ascii=False)
     print(json.dumps({'disponible': True, 'filas': len(rows), 'cuentas': len(out['accounts']),
-                      'meses': sorted({r['month'] for r in rows})[-3:], 'maxFecha': out['metadata']['maxFechaPorSociedad']},
+                      'meses': sorted({r['month'] for r in rows})[-3:], 'maxFecha': out['metadata']['maxFechaPorSociedad'],
+                      'intragrupoIngreso': round(sum(r['ingreso'] for r in intragrupo_rows), 2),
+                      'intragrupoGasto': round(sum(r['gasto'] for r in intragrupo_rows), 2)},
                      ensure_ascii=False))
 
 

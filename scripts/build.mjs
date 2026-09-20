@@ -49,6 +49,16 @@ if(data.ledger){
  close(sum(lv.byCompany,'expenses'),lv.expenses,'Contabilidad gastos por sociedad');
  close(br.totalLedger,lv.expenses,'Puente: la contabilidad del puente es todo el gasto');
  for(const company of ['Razo','Agetrans'])close(model.ledgerView({...f,companies:[company]}).expenses,lv.byCompany.find(c=>c.key===company).expenses,'Contabilidad '+company);
+ // Facturación consolidada: eliminar el intragrupo Razo↔Agetrans debe cuadrar en todas las agregaciones.
+ assert.ok(lv.intragrupo&&lv.intragrupo.income>0,'Intragrupo: no se ha medido ingreso entre las empresas');
+ const lc=model.ledgerView({...f,consolidado:true});
+ close(lc.income,lv.income-lv.intragrupo.income,'Consolidado: ingresos = suma − ingreso intragrupo');
+ close(lc.expenses,lv.expenses-lv.intragrupo.expense,'Consolidado: gastos = suma − gasto intragrupo');
+ close(lc.result,lv.result-(lv.intragrupo.income-lv.intragrupo.expense),'Consolidado: resultado = suma − neto intragrupo');
+ close(sum(lc.incomeCategories,'amount'),lc.income,'Consolidado: ingresos por categoría');
+ close(sum(lc.expenseCategories,'amount'),lc.expenses,'Consolidado: gastos por categoría');
+ close(sum(lc.byMonth,'income'),lc.income,'Consolidado: ingresos por mes');close(sum(lc.byMonth,'expenses'),lc.expenses,'Consolidado: gastos por mes');
+ close(sum(lc.byCompany,'expenses'),lc.expenses,'Consolidado: gastos por sociedad');
 }
 for(const company of ['Razo','Agetrans']){
  const expected=model.group(full,period,'company').groups.find(g=>g.key===company);

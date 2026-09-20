@@ -45,7 +45,7 @@ function comparisonRange(){
  return {from,to,valid:from>=D.metadata.from&&to<=D.metadata.to&&from<=to};
 }
 function update(){
- state.from=$('from').value;state.to=$('to').value;state.dateBasis=$('dateBasis').value;state.costMode=$('costMode').value;
+ state.from=$('from').value;state.to=$('to').value;state.dateBasis=$('dateBasis').value;state.costMode=$('costMode').value;state.consolidado=$('billing').value==='consolidada';
  syncFilters();
  if(!state.from||!state.to||state.from>state.to||state.from<D.metadata.from||state.to>D.metadata.to){$('message').innerHTML=`<div class="alert error">Seleccione un periodo válido dentro de ${date(D.metadata.from)}–${date(D.metadata.to)}.</div>`;$('cards').innerHTML='';$('content').innerHTML='';return;}
  selection=M.select(state);current=M.group(selection,state,'plate');
@@ -81,9 +81,9 @@ function update(){
  const kcard=(label,value,hint,extra='',primary=false)=>`<article class="card ${primary?'primary':''}"><span class="label">${label}</span><div class="value">${value}</div><div class="hint">${hint}</div>${extra}</article>`;
  if(ledgerOn){
   $('cards').innerHTML=[
-   kcard('Ingresos contables',eur(lv.income),'Contabilidad, '+monthRange(lv.months)+'. Facturas GesRuta de esos mismos meses: '+eur(M.run({...state,from:lv.months[0]+'-01',to:monthEndOf(lv.months[lv.months.length-1])}).totals.revenue)+'.',cmp(lv.income,lvBase?.income),true),
-   kcard('Gastos contables',eur(lv.expenses),'Todo el gasto real. Los partes de Access solo captan el '+pct(br.coverage)+' ('+eur(br.totalParts)+').',cmp(lv.expenses,lvBase?.expenses,false)),
-   kcard('Resultado contable',eur(lv.result),'Margen '+pct(lv.marginPct)+' sobre ingresos. Es el resultado de la contabilidad, no un cálculo de los partes.',cmp(lv.result,lvBase?.result)),
+   kcard('Ingresos contables'+(lv.consolidado?' (consolidados)':''),eur(lv.income),'Contabilidad, '+monthRange(lv.months)+'. Facturas GesRuta de esos mismos meses: '+eur(M.run({...state,from:lv.months[0]+'-01',to:monthEndOf(lv.months[lv.months.length-1])}).totals.revenue)+'.'+(lv.consolidado?' Consolidado: excluidos '+eur(lv.intragrupo.income)+' de facturación intragrupo Razo–Agetrans.':''),cmp(lv.income,lvBase?.income),true),
+   kcard('Gastos contables'+(lv.consolidado?' (consolidados)':''),eur(lv.expenses),'Todo el gasto real. Los partes de Access solo captan el '+pct(br.coverage)+' ('+eur(br.totalParts)+').'+(lv.consolidado?' Consolidado: excluidos '+eur(lv.intragrupo.expense)+' de subcontratación intragrupo.':''),cmp(lv.expenses,lvBase?.expenses,false)),
+   kcard('Resultado contable',eur(lv.result),'Margen '+pct(lv.marginPct)+' sobre ingresos'+(lv.consolidado?' del grupo (sin intragrupo)':'')+'. Es el resultado de la contabilidad, no un cálculo de los partes.',cmp(lv.result,lvBase?.result)),
    kcard('Gasto que no llega a los partes',eur(br.missing),'Subcontratación, compra de áridos, generales… existen en la contabilidad y no en ningún parte de vehículo.',cmp(br.missing,lvBase?M.bridge({...state,...range}).missing:null,false))].join('');
  }else{
   $('cards').innerHTML=[
@@ -152,6 +152,22 @@ function simpleTable(columns,rows){
 }
 const dash=(fmt)=>(v)=>v==null?'—':fmt(v);
 // Puente: gasto real de la contabilidad frente a lo que captan los partes de Access.
+function intercompanyPanel(){
+ const {lv}=ledgerCtx;if(!lv||!lv.intragrupo)return '';
+ const ig=lv.intragrupo;if(!(ig.income>1||ig.expense>1))return '';
+ const gap=ig.income-ig.expense,con=lv.consolidado;
+ const razo=(ig.byCompany||[]).find(c=>c.key==='Razo'),age=(ig.byCompany||[]).find(c=>c.key==='Agetrans');
+ const li=(l,v,cls='')=>`<div class="ic-row ${cls}"><span>${l}</span><b>${eur(v)}</b></div>`;
+ let body='<div class="ic-grid">';
+ if(razo&&razo.income>1)body+=li('Razo factura a Agetrans',razo.income);
+ if(age&&age.income>1)body+=li('Agetrans factura a Razo',age.income);
+ body+=li('Facturación intragrupo (ingreso)',ig.income,'sub');
+ body+=li('Gasto intragrupo ya contabilizado (subcontratación)',ig.expense);
+ body+=li('Sin casar por fecha de contabilización',gap,'gap');
+ body+='</div>';
+ body+=`<p class="ic-note">La otra sociedad todavía no ha contabilizado como gasto <b>${eur(gap)}</b> de facturas ya emitidas (sobre todo por la fecha en que las mete; no es un error de cálculo). ${con?'Estás viendo la <b>consolidada</b>: ese intragrupo se ha quitado de ingresos y de gastos, y el resultado del grupo queda '+eur(gap)+' por debajo de la suma de las dos empresas mientras el desfase no cierre.':'Estás viendo la <b>suma de las dos empresas</b>: la cifra de negocio del grupo cuenta dos veces esos '+eur(ig.income)+'. Cambia «Facturación» a <b>Consolidada</b> para eliminar el intragrupo.'}</p>`;
+ return panel('Facturación entre Razo y Agetrans (intragrupo)','Medido en el libro contable por la cuenta de empresas del grupo, '+monthRange(lv.months)+'.',body);
+}
 function bridgePanel(){
  const {br,lv}=ledgerCtx;if(!br||!lv?.months.length)return '';
  const top=br.groups.filter(g=>g.difference>0).sort((a,b)=>b.difference-a.difference).slice(0,3);
@@ -216,7 +232,7 @@ function renderContent(){
    const {lv,br,lvBase}=ledgerCtx,op=new Map(M.group(selection,state,'month').groups.map(m=>[m.key,m]));
    const plRows=lv.byMonth.map(m=>({key:m.key,label:monthName(m.key),income:m.income,expenses:m.expenses,result:m.result,marginPct:m.marginPct,gesruta:op.get(m.key)?.revenue??0,parts:op.get(m.key)?.[state.costMode==='stored'?'rawCost':state.costMode==='recalculated'?'calcCost':'realCost']??0}));
    const totalExp=lv.expenses||1,cats=lv.expenseCategories.filter(c=>c.amount>0).slice(0,11).map(c=>({label:c.label,cost:c.amount,note:nf(c.amount/totalExp*100,0)+' %'}));
-   html=`<div class="grid2">${panel('Ingresos y gastos por mes','Contabilidad real (CxConta), solo meses cerrados.'+(lvBase?' Líneas discontinuas: '+ledgerCtx.priorLabel.toLowerCase()+'.':''),`<div class="legend"><span><i style="background:var(--blue)"></i>Ingresos</span><span><i style="background:#169389"></i>Gastos</span>${lvBase?'<span style="color:var(--blue)"><i class="dash"></i>Ingresos (comparación)</span><span style="color:#169389"><i class="dash"></i>Gastos (comparación)</span>':''}</div>${plChart(lv.byMonth,lvBase?.byMonth)}`)}${panel('De qué está hecho el gasto real','Por naturaleza de la cuenta contable, en el periodo cerrado.',bars(cats,'cost'))}</div>${ratiosPanel()}${metrics()}`;
+   html=`<div class="grid2">${panel('Ingresos y gastos por mes','Contabilidad real (CxConta), solo meses cerrados.'+(lvBase?' Líneas discontinuas: '+ledgerCtx.priorLabel.toLowerCase()+'.':''),`<div class="legend"><span><i style="background:var(--blue)"></i>Ingresos</span><span><i style="background:#169389"></i>Gastos</span>${lvBase?'<span style="color:var(--blue)"><i class="dash"></i>Ingresos (comparación)</span><span style="color:#169389"><i class="dash"></i>Gastos (comparación)</span>':''}</div>${plChart(lv.byMonth,lvBase?.byMonth)}`)}${panel('De qué está hecho el gasto real','Por naturaleza de la cuenta contable, en el periodo cerrado.',bars(cats,'cost'))}</div>${intercompanyPanel()}${ratiosPanel()}${metrics()}`;
    html+=setTable('Resultado mes a mes','Ingresos y gastos de la contabilidad. A la derecha, lo que captan las facturas de GesRuta y los partes de Access el mismo mes (el gasto de los partes es incompleto).',plRows,[{label:'Mes',key:'label'},moneyCol('Ingresos','income'),moneyCol('Gastos','expenses'),moneyCol('Resultado','result'),percentCol('Margen','marginPct'),moneyCol('Facturas GesRuta','gesruta'),moneyCol('Coste en partes','parts')]);
  }else if(state.tab==='summary'){
    const months=M.group(selection,state,'month').groups.sort((a,b)=>a.key.localeCompare(b.key));
@@ -321,16 +337,17 @@ function bind(){
   if(e.target.dataset.searchSlicer){const id=e.target.dataset.searchSlicer,q=e.target.value.toLocaleLowerCase('es');$('options-'+id).querySelectorAll('label').forEach(l=>l.hidden=!l.textContent.toLocaleLowerCase('es').includes(q));}
   if(e.target.id==='tableSearch'){tableState.query=e.target.value;tableState.page=0;drawTable();}
  });
- for(const id of ['from','to','dateBasis','compare','compareFrom','compareTo','costMode'])$(id).addEventListener('change',()=>{$('customCompare').hidden=$('compare').value!=='custom';tableState.page=0;update();});
+ for(const id of ['from','to','dateBasis','compare','compareFrom','compareTo','costMode','billing'])$(id).addEventListener('change',()=>{$('customCompare').hidden=$('compare').value!=='custom';tableState.page=0;update();});
  $('reset').onclick=()=>{state={...state,companies:[],plates:[],clients:[],categories:[],loads:[],concepts:[]};$('from').value=D.metadata.defaultFrom;$('to').value=D.metadata.defaultTo;$('dateBasis').value='invoice';$('costMode').value=D.payroll?'real':'stored';$('compare').value='none';$('customCompare').hidden=true;tableState={page:0,query:'',sort:'',asc:false};update();};
  $('methodlink').onclick=e=>{e.preventDefault();switchTab('method');};
 }
 async function boot(){
  const bytes=Uint8Array.from(atob('__PACKED_DATA__'),c=>c.charCodeAt(0));
  D=JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
- M=createModel(D);state={from:D.metadata.defaultFrom,to:D.metadata.defaultTo,dateBasis:'invoice',costMode:D.payroll?'real':'stored',tab:'summary',companies:[],plates:[],clients:[],categories:[],loads:[],concepts:[]};
+ M=createModel(D);state={from:D.metadata.defaultFrom,to:D.metadata.defaultTo,dateBasis:'invoice',costMode:D.payroll?'real':'stored',consolidado:false,tab:'summary',companies:[],plates:[],clients:[],categories:[],loads:[],concepts:[]};
  if(!D.payroll)$('costMode').querySelector('option[value="real"]').remove();
- $('costMode').value=state.costMode;renderSources();$('personalTab').hidden=!PERSONAL_BLOB;
+ if(!D.ledger?.intragrupo?.length)$('billing').closest('label').hidden=true;
+ $('costMode').value=state.costMode;$('billing').value='suma';renderSources();$('personalTab').hidden=!PERSONAL_BLOB;
  for(const id of ['from','to','compareFrom','compareTo']){$(id).min=D.metadata.from;$(id).max=D.metadata.to;}
  $('from').value=state.from;$('to').value=state.to;$('compareFrom').value=priorYear(state.from);$('compareTo').value=priorYear(state.to);
  $('fresh').textContent='Lectura '+new Date(D.metadata.accessReadAt).toLocaleString('es-ES',{timeZone:'Europe/Madrid'})+' · datos hasta '+date(D.metadata.to);
