@@ -11,7 +11,7 @@ const optional=async(f)=>{try{return JSON.parse(await readText(f));}catch(e){if(
 const aText=await readText('rentabilidad_access_v3.json'),gText=await readText('rentabilidad_gesruta_v3.json');
 const a=JSON.parse(aText),g=JSON.parse(gText);
 const solred=await optional('solred_v2.json'),gespro=await optional('gespro_v1.json'),nomina=await optional('nomina_v1.json');
-const nominaDetalle=await optional('nomina_detalle.json'),personal=await optional('personal_v1.json'),contab=await optional('contabilidad_v1.json'),movertis=await optional('movertis_v1.json');
+const nominaDetalle=await optional('nomina_detalle.json'),personal=await optional('personal_v1.json'),contab=await optional('contabilidad_v1.json'),movertis=await optional('movertis_v1.json'),solredVeh=await optional('solred_vehiculos_v1.json');
 const cuentasCfg=JSON.parse(await fs.readFile(new URL('../config/cuentas-contables.json',import.meta.url),'utf8'));
 const cfg=JSON.parse(await fs.readFile(new URL('../config/secciones-nomina.json',import.meta.url),'utf8'));
 const index=(rows)=>new Map(rows.map(r=>[String(r.id),r]));
@@ -105,11 +105,26 @@ if(fuel.solred){
   if(declared>1000)coverage[owner]=round(card/declared,3);
  }
 }
+// ---- resumen por matrícula de Solred (informe «Vehículos» de Mi Solred): para las sociedades sin ficheros mensuales
+const coverageResumen=new Set();
+fuel.solredVehiculos=null;
+if(solredVeh?.metadata?.disponible){
+ fuel.solredVehiculos=solredVeh.informes.map(inf=>{
+  const rows=inf.filas.map(f=>({plate:plateKey(f.plate),importe:f.importe,litros:f.litros,operaciones:f.operaciones,descuento:f.descuento}));
+  const votes=new Map();for(const r of rows){const o=ownerOfPlate.get(r.plate)||'Sin ficha';votes.set(o,(votes.get(o)||0)+r.litros);}
+  const owner=[...votes.entries()].sort((a,b)=>b[1]-a[1])[0]?.[0]||'Sin ficha',plates=new Set(rows.map(r=>r.plate));
+  const declared=parts.filter(p=>plates.has(p.plate)&&p.date>=inf.desde&&p.date<=inf.hasta&&p.litres>0&&!naveIds.includes(p.station)).reduce((s,p)=>s+p.litres,0);
+  const litros=rows.reduce((s,r)=>s+r.litros,0);
+  return {fichero:inf.fichero,nif:inf.nif,desde:inf.desde,hasta:inf.hasta,owner,rows,litros:round(litros,1),importe:round(rows.reduce((s,r)=>s+r.importe,0),2),declared:round(declared,1),coverage:declared>1000?round(litros/declared,3):null};
+ });
+ // un informe da la cobertura de una sociedad SOLO si esa sociedad no tiene ficheros mensuales suficientes
+ for(const inf of fuel.solredVehiculos)if(inf.coverage!=null&&!(coverage[inf.owner]>=0.6)){coverage[inf.owner]=inf.coverage;coverageResumen.add(inf.owner);}
+}
 const solredWeak=Object.entries(coverage).filter(([,c])=>c<0.6).map(([o])=>o);
 const sources=[
  {id:'gesruta',name:'GesRuta',state:'ok',to:to,note:'Facturas y albaranes de Razo y Agetrans.'},
  {id:'access',name:'Access',state:'ok',to:to,note:'Partes diarios por vehículo y conductor.'},
- {id:'solred',name:'Solred',state:!fuel.solred?'sin':solredWeak.length?'parcial':'ok',to:fuel.solred?.meta.maxFecha||null,note:!fuel.solred?'Sin ficheros de Solred.':solredWeak.length?'Falta la cuenta de '+solredWeak.join(' y ')+': el fichero solo cubre una parte de sus litros ('+Object.entries(coverage).map(([o,c])=>o.replace(/,? S\.L\.?/i,'')+' '+Math.round(c*100)+' %').join(', ')+').':'Tarjeta de combustible.'},
+ {id:'solred',name:'Solred',state:!fuel.solred?'sin':(solredWeak.length||coverageResumen.size)?'parcial':'ok',to:fuel.solred?.meta.maxFecha||null,note:!fuel.solred?'Sin ficheros de Solred.':solredWeak.length?'Falta la cuenta de '+solredWeak.join(' y ')+': el fichero solo cubre una parte de sus litros ('+Object.entries(coverage).map(([o,c])=>o.replace(/,? S\.L\.?/i,'')+' '+Math.round(c*100)+' %').join(', ')+').':coverageResumen.size?'Ficheros mensuales solo de una sociedad. '+[...coverageResumen].map(o=>o.replace(/,? S\.L\.?/i,'')).join(' y ')+' llega como resumen por matrícula (informe «Vehículos» de Solred), sin detalle por mes: faltan sus ficheros de operaciones en texto.':'Tarjeta de combustible.'},
  {id:'surtidor',name:'Surtidor nave',state:!fuel.surtidor?'sin':(fuel.surtidor.meta.fuentes.base.maxFecha&&fuel.surtidor.meta.fuentes.base.maxFecha<to.slice(0,8)+'00'?'parcial':'ok'),to:fuel.surtidor?.meta.maxFecha||null,note:!fuel.surtidor?'Sin datos del surtidor.':'GesproWin: la base llega hasta el '+fuel.surtidor.meta.fuentes.base.maxFecha+'; se completa con las exportaciones de texto.'},
  {id:'nomina',name:'Nómina',state:payroll?'ok':'sin',to:lastPeriod,note:payroll?'Resumen mensual de la gestoría; el último mes llega ~10 días después de cerrar.':'Sin resúmenes de nómina.'},
  {id:'contabilidad',name:'Contabilidad',state:ledger?'ok':'sin',to:ledger?.meta.lastClosed||null,note:ledger?'Gastos e ingresos reales de CxConta (traspasados al ERP cada noche). Cerrada hasta '+ledger.meta.lastClosed+'; el mes en curso no se compara.':'Sin contabilidad: el gasto que se ve es solo el de los partes de Access, que no es el real.'},
@@ -117,7 +132,7 @@ const sources=[
  {id:'locatel',name:'Locatel',state:'pendiente',to:null,note:'Kilómetros y consumo (CANbus) por GPS: falta el acceso automático.'}
 ];
 
-const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,definitions:[
+const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,solredResumen:[...coverageResumen],naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,definitions:[
  'Contabilidad: gastos (grupo 6) e ingresos (grupo 7) reales de CxConta por sociedad, mes y cuenta, sin asientos de cierre ni apertura. El resultado contable es la referencia de rentabilidad; el coste de los partes de Access solo recoge una parte del gasto real (ver el puente en Conciliación). Un mes se compara solo cuando está cerrado; el mes en curso queda fuera.',
  'Ingresos sin IVA: líneas de GesRuta, excluidos suplidos, más diferencias explícitas con la base de cabecera. Las facturas anuladas y filas borradas no se incluyen.',
  'Fecha de factura: FECFAC. Fecha de línea: FECHA de linfaclib, con FECFAC como respaldo si no consta. La fecha del parte gobierna siempre los costes.',

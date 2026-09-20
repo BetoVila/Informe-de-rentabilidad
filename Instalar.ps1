@@ -53,7 +53,7 @@ try{
         $config.scheduled=[bool]$prev.scheduled
         if($prev.clavePersonalFile){$config.clavePersonalFile=$prev.clavePersonalFile}
     }
-    foreach($o in @(@('laboral',(Join-Path $documentos 'LABORAL\_NOMINAS')),@('gasoil',(Join-Path $documentos 'Z Datos Gasoil')),@('repostajes',(Join-Path $programas 'Analizador Carburantes\datos\repostajes')),@('gespromdb',(Join-Path $programas 'Analizador Carburantes\datos\gespro\GesproWinBD.mdb')))){
+    foreach($o in @(@('laboral',(Join-Path $documentos 'LABORAL\_NOMINAS')),@('gasoil',(Join-Path $documentos 'Z Datos Gasoil')),@('buzon',(Join-Path $documentos 'A CARBURANTES')),@('repostajes',(Join-Path $programas 'Analizador Carburantes\datos\repostajes')),@('gespromdb',(Join-Path $programas 'Analizador Carburantes\datos\gespro\GesproWinBD.mdb')))){
         if(Test-Path -LiteralPath $o[1]){$config.optional[$o[0]]=$o[1]}else{Write-Output ('Aviso: no se encuentra '+$o[1]+'; esa fuente opcional quedara sin leer.')}
     }
     # Contabilidad real: la trae el ERP a su base en Docker (solo en el PC de Roberto).

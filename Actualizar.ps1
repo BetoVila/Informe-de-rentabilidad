@@ -59,6 +59,8 @@ try{
         $na=@((Join-Path $root 'scripts\export_rentabilidad_nomina_v1.py'),'--root',$opt.laboral,'--output',(Join-Path $run 'nomina_v1.json'),'--from-date',$config.from,'--to-date',$hasta)
         if($clave){$na+=@('--output-detail',(Join-Path $run 'nomina_detalle.json'))}
         & $py @na}}
+    # Informe «Vehiculos» de Mi Solred (Excel) en el buzon de carburantes: resumen por matricula para las cuentas sin ficheros mensuales.
+    if($opt.buzon){Invoke-Opcional 'Solred (vehiculos)' {& $py (Join-Path $root 'scripts\export_rentabilidad_solred_vehiculos_v1.py') --roots $opt.buzon --output (Join-Path $run 'solred_vehiculos_v1.json')}}
     # La contabilidad ya la trae el ERP a su base cada noche; aqui solo se le pregunta por los totales (SELECT agregado).
     if($opt.contabilidad){Invoke-Opcional 'Contabilidad' {& $py (Join-Path $root 'scripts\export_rentabilidad_contabilidad_v1.py') --output (Join-Path $run 'contabilidad_v1.json') --from-date $config.from --to-date $hasta}}
     # Km y litros medidos por Movertis: se leen del ERP (que ya los baja y valida); aqui no se abre sesion en Movertis.
