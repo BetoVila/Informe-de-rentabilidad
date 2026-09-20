@@ -156,7 +156,7 @@ let privateLayer=null;
 if(nominaDetalle&&personal){
  const emps=personal.employees.map(e=>({...e,t:tok(e.nombre)}));
  const empHours=new Map(),partEmp=new Map(personal.parts.map(p=>[String(p.id),p.emp]));
- for(const p of parts){const e=partEmp.get(p.id);if(!e)continue;const k=e+'|'+month(p.date);const x=empHours.get(k)||{hours:0,partes:0};x.hours+=p.hours;x.partes++;empHours.set(k,x);}
+ for(const p of parts){const e=partEmp.get(p.id);if(!e)continue;const k=e+'|'+month(p.date);const x=empHours.get(k)||{hours:0,partes:0,km:0,rev:0};x.hours+=p.hours;x.km+=p.km;x.rev+=p.accessRevenue;x.partes++;empHours.set(k,x);}
  const match=(name)=>{
   const t=tok(name);let best=null,sc=0,second=0;
   for(const e of emps){const o=overlap(t,e.t);if(!o)continue;const s=o/Math.min(t.size,e.t.size)*(o>=3||o===Math.min(t.size,e.t.size)?1:0.5)+o/(t.size+e.t.size-o)*0.25;if(s>sc){second=sc;sc=s;best=e;}else if(s>second)second=s;}
@@ -169,7 +169,7 @@ if(nominaDetalle&&personal){
   const key=e?('a'+e.id):('n'+norm(r.nombre)+'|'+r.company);
   if(!byPerson.has(key))byPerson.set(key,{key,name:r.nombre,company:r.company,accessId:e?.id??null,tipo:e?Object.entries(e.tipo).filter(([,v])=>v).map(([k])=>k):[],costeHoraOrd:e?.costeHoraOrd??null,sueldoPactado:e?.sueldoPactado??null,rows:[]});
   const h=e?empHours.get(e.id+'|'+r.period):null;
-  byPerson.get(key).rows.push({period:r.period,company:r.company,section:r.seccion,cost:r.cost,devengos:r.devengos,ss:r.ss,dietas:r.dietas,extras:r.extras,hours:h?round(h.hours,1):null,partes:h?.partes??null});
+  byPerson.get(key).rows.push({period:r.period,company:r.company,section:r.seccion,cost:r.cost,devengos:r.devengos,ss:r.ss,dietas:r.dietas,extras:r.extras,hours:h?round(h.hours,1):null,km:h?round(h.km,0):null,revenue:h?round(h.rev,2):null,partes:h?.partes??null});
  }
  privateLayer={generatedAt:new Date().toISOString(),people:[...byPerson.values()],match:{casadas,total},sectionLabels:cfg.sections,typeLabels:cfg.typeLabels};
 }

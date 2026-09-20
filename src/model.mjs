@@ -79,7 +79,9 @@ export function createModel(data) {
     return {revenue,matchedRevenue,uncoveredRevenue:revenue-matchedRevenue,cost,rawCost,calcCost,realCost,costDifference:calcCost-rawCost,
       balance:revenue-cost,comparableMargin:matchedRevenue-cost,coverage,marginPct:divide(revenue-cost,revenue),km,hours,litres,m3,tonnes,loaded,empty,
       invoices:invoices.size,trips:trips.size,deliveries:deliveries.size,parts:parts.size,partEquivalents,tripsAccess,plates:plates.size,accessRevenue,
-      consumption:divide(litres*100,km),costKm:divide(cost,km),costHour:divide(cost,hours),revenueKm:divide(revenue,km),emptyPct:divide(empty,loaded+empty),breakdown};
+      consumption:divide(litres*100,km),costKm:divide(cost,km),costHour:divide(cost,hours),revenueKm:divide(revenue,km),emptyPct:divide(empty,loaded+empty),
+      // Ratios de rentabilidad: por € gastado, por km y por hora (sobre el coste y las horas/km que tenga esta lectura).
+      revenuePerCost:divide(revenue,cost),profitPerCost:divide(revenue-cost,cost),profitKm:divide(revenue-cost,km),revenueHour:divide(revenue,hours),profitHour:divide(revenue-cost,hours),breakdown};
   }
   function group(selected,f,dimension='plate') {
     const {lines,costs,dateField}=selected;
