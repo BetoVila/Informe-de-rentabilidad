@@ -168,6 +168,21 @@ function intercompanyPanel(){
  body+=`<p class="ic-note">La otra sociedad todavía no ha contabilizado como gasto <b>${eur(gap)}</b> de facturas ya emitidas (sobre todo por la fecha en que las mete; no es un error de cálculo). ${con?'Estás viendo la <b>consolidada</b>: ese intragrupo se ha quitado de ingresos y de gastos, y el resultado del grupo queda '+eur(gap)+' por debajo de la suma de las dos empresas mientras el desfase no cierre.':'Estás viendo la <b>suma de las dos empresas</b>: la cifra de negocio del grupo cuenta dos veces esos '+eur(ig.income)+'. Cambia «Facturación» a <b>Consolidada</b> para eliminar el intragrupo.'}</p>`;
  return panel('Facturación entre Razo y Agetrans (intragrupo)','Medido en el libro contable por la cuenta de empresas del grupo, '+monthRange(lv.months)+'.',body);
 }
+function fuelPersonnelPanel(){
+ const {lv}=ledgerCtx;if(!lv||!(lv.income>0))return '';
+ const fuel=lv.expenseCategories.find(c=>c.id==='combustible')?.amount||0,pers=lv.expenseCategories.find(c=>c.id==='personal')?.amount||0;
+ if(fuel<=0&&pers<=0)return '';
+ const income=lv.income,base=lv.result,both=fuel+pers;
+ const steps=[-0.10,-0.05,0,0.05,0.10],res=(df,dp)=>base-fuel*df-pers*dp;
+ let maxAbs=0;for(const df of steps)for(const dp of steps)maxAbs=Math.max(maxAbs,Math.abs(res(df,dp)-base));
+ const color=(v)=>{const d=v-base;if(Math.abs(d)<1||maxAbs<1)return '';const a=(0.10+0.30*Math.min(1,Math.abs(d)/maxAbs)).toFixed(2);return `background:${d>0?`rgba(14,148,136,${a})`:`rgba(193,57,75,${a})`}`;};
+ const dl=(d)=>(d>0?'+':'')+Math.round(d*100)+' %';
+ const header=`<tr><th class="plain">Combustible ↓ / Personal →</th>${steps.map(dp=>`<th class="plain num">${dl(dp)}</th>`).join('')}</tr>`;
+ const body=steps.map(df=>`<tr><th class="plain">${dl(df)}</th>${steps.map(dp=>{const v=res(df,dp),b=df===0&&dp===0;return `<td class="num${b?' total':''}" style="${color(v)}" title="Combustible ${dl(df)}, personal ${dl(dp)} → resultado ${eur(v)} (margen ${pct(v/income)})">${eur(v)}</td>`;}).join('')}</tr>`).join('');
+ const lev=`<div class="ic-grid"><div class="ic-row"><span>Combustible (real, contabilidad)</span><b>${eur(fuel)} · ${pct(fuel/income)} de ingresos</b></div><div class="ic-row"><span>Personal (real, contabilidad)</span><b>${eur(pers)} · ${pct(pers/income)} de ingresos</b></div><div class="ic-row sub"><span>Los dos juntos</span><b>${eur(both)} · ${pct(both/income)} de ingresos</b></div><div class="ic-row"><span>Resultado actual</span><b>${eur(base)} · margen ${pct(base/income)}</b></div></div>`;
+ const note=`<p class="ic-note">Cada 1 % que sube el combustible se lleva <b>${eur(fuel/100)}</b> de resultado; cada 1 % que sube el personal, <b>${eur(pers/100)}</b>. En la matriz, la <b>fila</b> y la <b>columna</b> del 0 % son el efecto de cada coste <b>por separado</b>; las demás casillas, los <b>dos a la vez</b>. Verde mejora el resultado, rojo lo empeora.</p>`;
+ return panel('El resultado según el combustible y el personal',`Sobre la contabilidad real (${monthRange(lv.months)}${lv.consolidado?', consolidada':''}). Combustible = cuenta 628; personal = cuentas 640-649. Los dos costes que más mueven el resultado, por separado y juntos.`,lev+note+`<div class="tablewrap"><table><thead>${header}</thead><tbody>${body}</tbody></table></div>`);
+}
 function bridgePanel(){
  const {br,lv}=ledgerCtx;if(!br||!lv?.months.length)return '';
  const top=br.groups.filter(g=>g.difference>0).sort((a,b)=>b.difference-a.difference).slice(0,3);
@@ -244,7 +259,7 @@ function renderContent(){
    const {lv,br,lvBase}=ledgerCtx,op=new Map(M.group(selection,state,'month').groups.map(m=>[m.key,m]));
    const plRows=lv.byMonth.map(m=>({key:m.key,label:monthName(m.key),income:m.income,expenses:m.expenses,result:m.result,marginPct:m.marginPct,gesruta:op.get(m.key)?.revenue??0,parts:op.get(m.key)?.[state.costMode==='stored'?'rawCost':state.costMode==='recalculated'?'calcCost':'realCost']??0}));
    const totalExp=lv.expenses||1,cats=lv.expenseCategories.filter(c=>c.amount>0).slice(0,11).map(c=>({label:c.label,cost:c.amount,note:nf(c.amount/totalExp*100,0)+' %'}));
-   html=`<div class="grid2">${panel('Ingresos y gastos por mes','Contabilidad real (CxConta), solo meses cerrados.'+(lvBase?' Líneas discontinuas: '+ledgerCtx.priorLabel.toLowerCase()+'.':''),`<div class="legend"><span><i style="background:var(--blue)"></i>Ingresos</span><span><i style="background:#169389"></i>Gastos</span>${lvBase?'<span style="color:var(--blue)"><i class="dash"></i>Ingresos (comparación)</span><span style="color:#169389"><i class="dash"></i>Gastos (comparación)</span>':''}</div>${plChart(lv.byMonth,lvBase?.byMonth)}`)}${panel('De qué está hecho el gasto real','Por naturaleza de la cuenta contable, en el periodo cerrado.',bars(cats,'cost'))}</div>${intercompanyPanel()}${ratiosPanel()}${metrics()}`;
+   html=`<div class="grid2">${panel('Ingresos y gastos por mes','Contabilidad real (CxConta), solo meses cerrados.'+(lvBase?' Líneas discontinuas: '+ledgerCtx.priorLabel.toLowerCase()+'.':''),`<div class="legend"><span><i style="background:var(--blue)"></i>Ingresos</span><span><i style="background:#169389"></i>Gastos</span>${lvBase?'<span style="color:var(--blue)"><i class="dash"></i>Ingresos (comparación)</span><span style="color:#169389"><i class="dash"></i>Gastos (comparación)</span>':''}</div>${plChart(lv.byMonth,lvBase?.byMonth)}`)}${panel('De qué está hecho el gasto real','Por naturaleza de la cuenta contable, en el periodo cerrado.',bars(cats,'cost'))}</div>${intercompanyPanel()}${fuelPersonnelPanel()}${ratiosPanel()}${metrics()}`;
    html+=setTable('Resultado mes a mes','Ingresos y gastos de la contabilidad. A la derecha, lo que captan las facturas de GesRuta y los partes de Access el mismo mes (el gasto de los partes es incompleto).',plRows,[{label:'Mes',key:'label'},moneyCol('Ingresos','income'),moneyCol('Gastos','expenses'),moneyCol('Resultado','result'),percentCol('Margen','marginPct'),moneyCol('Facturas GesRuta','gesruta'),moneyCol('Coste en partes','parts')]);
  }else if(state.tab==='summary'){
    const months=M.group(selection,state,'month').groups.sort((a,b)=>a.key.localeCompare(b.key));
