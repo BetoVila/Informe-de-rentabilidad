@@ -251,16 +251,31 @@ export function createModel(data) {
     const mMap=new Map();for(const r of rows){const k=A.mo[r[M]];let x=mMap.get(k);if(!x){x=blank(k);mMap.set(k,x);}add(x,r);}
     const byMonth=[...mMap.values()].sort((a,b)=>a.key<b.key?-1:1);
     const grp=(fn)=>{const map=new Map();for(const r of rows){const k=fn(r)||'(sin asignar)';let x=map.get(k);if(!x){x=blank(k);map.set(k,x);}add(x,r);}return [...map.values()].sort((a,b)=>b.viajes-a.viajes);};
-    // Zonas anidadas provincia -> localidad. Cada provincia lleva el desglose de sus localidades.
-    const zona=(pi,li)=>{const map=new Map();for(const r of rows){const p=A.prov[r[pi]];let z=map.get(p);if(!z){z=blank(p);z.locs=new Map();map.set(p,z);}add(z,r);const lc=A.loc[r[li]];let l=z.locs.get(lc);if(!l){l=blank(lc);z.locs.set(lc,l);}add(l,r);}
-      return [...map.values()].map(z=>({...z,locs:[...z.locs.values()].sort((a,b)=>b.viajes-a.viajes)})).sort((a,b)=>b.viajes-a.viajes);};
-    // Ambos: cada viaje cuenta en su provincia de salida Y en la de llegada.
-    const amb=new Map();const addAmb=(pi,li,r)=>{const p=A.prov[pi];let z=amb.get(p);if(!z){z=blank(p);z.locs=new Map();amb.set(p,z);}add(z,r);const lc=A.loc[li];let l=z.locs.get(lc);if(!l){l=blank(lc);z.locs.set(lc,l);}add(l,r);};
-    for(const r of rows){addAmb(r[OI],r[LI],r);addAmb(r[DI],r[LD],r);}
-    const zonasAmbos=[...amb.values()].map(z=>({...z,locs:[...z.locs.values()].sort((a,b)=>b.viajes-a.viajes)})).sort((a,b)=>b.viajes-a.viajes);
+    // Zonas anidadas en TRES niveles: provincia -> localidad (pueblo) -> punto (planta, cantera u obra).
+    // paths(r) da los extremos que cuentan para el viaje (salida, llegada o ambos). Un viaje suma UNA sola vez en cada
+    // nodo aunque sus dos extremos caigan en el mismo (p. ej. sale y llega en A Coruña: cuenta una vez en A Coruña).
+    const PO=13,PD=14;
+    const arbol=(paths)=>{
+      const top=new Map();
+      for(const r of rows){
+        const visto=new Set();
+        for(const [pi,li,qi] of paths(r)){
+          const p=A.prov[pi],lc=A.loc[li],pn=A.pt?(A.pt[qi]??A.pt[0]):null;
+          let z=top.get(p);if(!z){z=blank(p);z.hijos=new Map();top.set(p,z);}
+          if(!visto.has('P'+p)){visto.add('P'+p);add(z,r);}
+          let l=z.hijos.get(lc);if(!l){l=blank(lc);l.hijos=new Map();z.hijos.set(lc,l);}
+          if(!visto.has('L'+p+'|'+lc)){visto.add('L'+p+'|'+lc);add(l,r);}
+          if(pn!=null){let q=l.hijos.get(pn);if(!q){q=blank(pn);l.hijos.set(pn,q);}
+            if(!visto.has('Q'+p+'|'+lc+'|'+pn)){visto.add('Q'+p+'|'+lc+'|'+pn);add(q,r);}}
+        }
+      }
+      const ord=m=>[...m.values()].sort((a,b)=>b.viajes-a.viajes);
+      return ord(top).map(z=>({...z,hijos:ord(z.hijos).map(l=>({...l,hijos:ord(l.hijos)}))}));
+    };
+    const zonasAmbos=arbol(r=>[[r[OI],r[LI],r[PO]],[r[DI],r[LD],r[PD]]]);
     const rutas=grp(r=>A.prov[r[OI]]+' → '+A.prov[r[DI]]);
     return {tot,byMonth,byClient:grp(r=>A.cli[r[CI]]),byVeh:grp(r=>A.mat[r[MI]]||'(sin matrícula)'),
-            zonasSalida:zona(OI,LI),zonasLlegada:zona(DI,LD),zonasAmbos,rutas,months:byMonth.map(m=>m.key),from,to};
+            zonasSalida:arbol(r=>[[r[OI],r[LI],r[PO]]]),zonasLlegada:arbol(r=>[[r[DI],r[LD],r[PD]]]),zonasAmbos,rutas,months:byMonth.map(m=>m.key),from,to};
   }
   function marginView(f){
     if(!activity||!activity.margen)return null;                 // P&L operativo de GesRuta (inggas): ingreso - gasto directo por viaje

@@ -11,17 +11,18 @@ viaje (matricula y chofer), puntos + puntcd (maestros de lugares: provincia/loca
 NUNCA escribe en los sistemas de origen. Si se le pasa --lugares, MANTIENE un CSV editable (fuera del origen) donde
 Roberto escribe la provincia/localidad de los puntos que GesRuta nunca geolocalizo; ese CSV manda sobre puntcd.
 """
-import argparse, csv, datetime, json, os, sys
+import argparse, csv, datetime, json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dbf_gesruta import abrir
 
 
 # ---- CSV editable de provincias/localidades por punto (lo rellena Roberto; nosotros lo respetamos y lo mantenemos) ----
-CAB_LUGARES = ["Codigo", "Punto", "Viajes", "Provincia", "Localidad"]
+CAB_LUGARES = ["Codigo", "Punto", "Viajes", "Falta", "Provincia", "Localidad"]
 
 
 def cargar_override(path):
-    """Devuelve (override, previos). override={cod:{prov,loc}} solo con Provincia escrita; previos=todas las filas guardadas."""
+    """Devuelve (override, previos). override={cod:{prov,loc}} con lo que Roberto haya escrito (provincia, localidad o las dos);
+    previos = todas las filas guardadas."""
     override, previos = {}, {}
     if not path or not os.path.isfile(path):
         return override, previos
@@ -31,35 +32,37 @@ def cargar_override(path):
             if not cod:
                 continue
             prov = norm_prov(row.get("Provincia") or "")
-            loc = (row.get("Localidad") or "").strip()
+            loc = norm_loc(row.get("Localidad"))
             previos[cod] = {"punto": (row.get("Punto") or "").strip(), "prov": prov, "loc": loc}
-            if prov:
+            if prov or loc:
                 override[cod] = {"prov": prov, "loc": loc}
     return override, previos
 
 
 def escribir_override(path, pend, previos):
-    """Reescribe el CSV preservando lo que Roberto ya escribio; refresca 'Viajes' y anade los puntos nuevos sin provincia."""
+    """Reescribe el CSV preservando lo que Roberto ya escribio; refresca 'Viajes' y 'Falta' y anade los puntos nuevos a los que
+    les falta la provincia o la localidad."""
     codigos = set(pend) | set(previos)
     filas = []
     for cod in codigos:
         p = previos.get(cod, {})
         u = pend.get(cod)
-        # Se mantiene lo que Roberto ya escribió (tiene provincia) y lo que sigue pendiente (aparece en pend).
+        # Se mantiene lo que Roberto ya escribió y lo que sigue pendiente (aparece en pend).
         # Lo que ya resolvió el maestro y él no había tocado, se cae de la lista.
-        if not p.get("prov") and u is None:
+        if not (p.get("prov") or p.get("loc")) and u is None:
             continue
         filas.append({"Codigo": cod, "Punto": (u or {}).get("punto") or p.get("punto") or cod,
-                      "Viajes": (u or {}).get("viajes", 0), "Provincia": p.get("prov", ""), "Localidad": p.get("loc", "")})
-    # Primero los pendientes (sin provincia) de mas trafico, para que Roberto ataque lo que mas pesa.
-    filas.sort(key=lambda r: (1 if r["Provincia"] else 0, -r["Viajes"], r["Punto"]))
+                      "Viajes": (u or {}).get("viajes", 0), "Falta": (u or {}).get("falta", ""),
+                      "Provincia": p.get("prov", ""), "Localidad": p.get("loc", "")})
+    # Primero lo que Roberto aún no ha tocado, de más tráfico a menos: así ataca lo que más pesa.
+    filas.sort(key=lambda r: (1 if (r["Provincia"] or r["Localidad"]) else 0, -r["Viajes"], r["Punto"]))
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CAB_LUGARES, delimiter=";")
         w.writeheader()
         w.writerows(filas)
     os.replace(tmp, path)
-    return len(filas), sum(1 for r in filas if not r["Provincia"])
+    return len(filas), sum(1 for r in filas if not (r["Provincia"] or r["Localidad"]))
 
 
 def limpio_km(v):
@@ -120,8 +123,24 @@ def prov_desde(pa, pv, cp):
     return ""
 
 
-def cargar_lugares(base):
+def limpio_txt(s):
+    # Texto de lugar comparable: mayusculas y espacios simples.
+    return " ".join((s or "").upper().split())
+
+
+def norm_loc(s):
+    # Localidad = el PUEBLO (no la planta ni la cantera), normalizado.
+    p = limpio_txt(s).strip(" .,;-")
+    if p in ("LA CORUNA", "LA CORUÑA", "A CORUNA", "CORUNA", "CORUÑA"):
+        return "A CORUÑA"
+    if p in ("SANTIAGO", "SANTIAGO COMPOSTELA"):
+        return "SANTIAGO DE COMPOSTELA"
+    return p
+
+
+def cargar_lugares(base, empresa="", gps=None):
     # Maestro de lugares combinado: puntos.dbf (rico: provincia/CP/código) manda; puntcd.dbf rellena huecos.
+    # Tres niveles distintos: provincia, LOCALIDAD (pueblo, campo LOCALI) y PUNTO (planta/cantera/obra, campo NOMBRE).
     lugar = {}
     try:
         pt = abrir(base, "puntos.dbf")
@@ -129,10 +148,8 @@ def cargar_lugares(base):
             c = (pt.get(r, "CODIGO") or "").strip()
             if not c:
                 continue
-            nom = (pt.get(r, "NOMBRE") or "").strip()
-            pro = prov_desde(pt.get(r, "PROVINCIA"), pt.get(r, "PROVIN"), pt.get(r, "CP"))
-            loc = (pt.get(r, "LOCALI") or "").strip()
-            lugar[c] = {"pro": pro, "loc": loc or nom, "nom": nom}
+            lugar[c] = {"pro": prov_desde(pt.get(r, "PROVINCIA"), pt.get(r, "PROVIN"), pt.get(r, "CP")),
+                        "loc": norm_loc(pt.get(r, "LOCALI")), "nom": limpio_txt(pt.get(r, "NOMBRE"))}
         pt.cerrar()
     except IOError:
         pass
@@ -141,20 +158,82 @@ def cargar_lugares(base):
         c = (pc.get(r, "CODIGO") or "").strip()
         if not c:
             continue
-        nom = (pc.get(r, "NOMBRE") or "").strip()
+        nom = limpio_txt(pc.get(r, "NOMBRE"))
         pro = prov_desde(pc.get(r, "PROVINCIA") if "PROVINCIA" in pc.nombres() else "", "", pc.get(r, "CP")) or norm_prov(pc.get(r, "PROVIN") or "")
-        loc = (pc.get(r, "LOCALI") or "").strip()
+        loc = norm_loc(pc.get(r, "LOCALI"))
         prev = lugar.get(c)
         if prev is None:
-            lugar[c] = {"pro": pro, "loc": loc or nom, "nom": nom}
+            lugar[c] = {"pro": pro, "loc": loc, "nom": nom}
         else:
             # completar lo que puntos no trajo
             if not prev["pro"] and pro:
                 prev["pro"] = pro
-            if (not prev["loc"] or prev["loc"] == prev["nom"]) and loc:
+            if not prev["loc"] and loc:
                 prev["loc"] = loc
+            if not prev["nom"] and nom:
+                prev["nom"] = nom
     pc.cerrar()
+    # Capa GPS: el municipio REAL adonde van a parar los camiones (Wialon/Locatel + OpenStreetMap). Rellena el pueblo
+    # y la provincia que el maestro dejo vacios; no pisa un LOCALI escrito a mano en el maestro. El CSV de Roberto (rprov/rloc)
+    # sigue por encima de todo. Clave del GPS: «Empresa|Codigo» (los codigos colisionan entre Razo y Agetrans).
+    if gps:
+        for c, x in lugar.items():
+            g = gps.get("%s|%s" % (empresa, c))
+            if not g:
+                continue
+            if not x["loc"] and g.get("localidad"):
+                x["loc"] = norm_loc(g["localidad"])
+            if not x["pro"] and g.get("provincia"):
+                x["pro"] = norm_prov(g["provincia"])
+    # Puntos sin pueblo en el maestro, cuyo NOMBRE ya dice el pueblo: «CARBALLO», «CORUÑA», o «… (FERROL)».
+    # Solo se usa un pueblo que ya existe como LOCALI en el propio maestro (no se inventa ninguno).
+    pueblos = {x["loc"] for x in lugar.values() if x["loc"]}
+    for x in lugar.values():
+        if x["loc"] or not x["nom"]:
+            continue
+        cand = norm_loc(x["nom"])
+        if cand in pueblos:
+            x["loc"] = cand
+            continue
+        m = re.search(r"\(([^()]+)\)\s*$", x["nom"])
+        if m:
+            p = norm_loc(m.group(1))
+            if p in pueblos:
+                x["loc"] = p
+            else:
+                largos = [q for q in pueblos if q.startswith(p + " ")]
+                if len(largos) == 1:          # «SANTIAGO» -> «SANTIAGO DE COMPOSTELA» solo si no hay duda
+                    x["loc"] = largos[0]
     return lugar
+
+
+def clasificar_unidad(um, cod, con):
+    """Que unidad mueve una linea de viaje real: 'm3' (hormigon), 't' (arido/material) o '' (no medible en esas dos).
+    UNIMED suele ir VACIO, asi que se decide tambien por el codigo de concepto (CODCON) y por el texto del concepto.
+    Medido sobre 2026: sin esto se perdian ~230.000 t (toneladas de material, servidas, portes) por venir sin unidad."""
+    um = (um or "").strip().upper()
+    cod = (cod or "").strip().upper()
+    con = (con or "").strip().upper()
+    # 1) Unidad explicita cuando la hay
+    if um in ("M3", "M³", "MC", "MCU"):
+        return "m3"
+    if um in ("TN", "TM", "T", "TON", "TM.", "TN.", "TNM"):
+        return "t"
+    if um in ("MM", "ML", "M", "H", "HR", "HRS", "UD", "U", "%", "KM", "€", "EUR"):
+        return ""  # metros, horas, unidades, incrementos: ni m3 ni toneladas
+    # 2) Por codigo de concepto (los que en 2026 vienen sin UNIMED)
+    if cod[:1] == "K" or cod[:2] == "MK" or cod in ("MCU", "M25", "M16", "916"):
+        return "m3"
+    if cod in ("TNL", "TMS", "908", "930", "933", "966", "904", "907"):
+        return "t"
+    # 3) Por el texto del concepto (el m3 se mira antes que el porte para no confundir hormigon con arido)
+    if "M3" in con or "M³" in con or "CUBICO" in con or "CÚBICO" in con:
+        return "m3"
+    if "TONELADA" in con:
+        return "t"
+    if con.startswith("PORTE DE MATERIAL"):
+        return "t"
+    return ""  # PORTES NACIONALES (P), OBRA UTE ARZUA, incrementos... unidad sin verificar: no se suma
 
 
 def cat_gasto(con):
@@ -213,7 +292,7 @@ def leer_margen(base, empresa, desde, hasta):
     return list(agg.values())
 
 
-def leer_sociedad(base, empresa, desde, hasta, override, pend):
+def leer_sociedad(base, empresa, desde, hasta, override, pend, gps=None):
     # maestro de clientes: codigo -> nombre (mascli.dbf)
     clientes = {}
     mc = abrir(base, "mascli.dbf")
@@ -241,8 +320,8 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend):
         if v is not None:
             matr[str(v)] = {"mat": (vj.get(r, "MATRI1") or "").strip(), "cho": (vj.get(r, "CHOFER1") or "").strip()}
     vj.cerrar()
-    # lugares: codigo -> provincia, localidad (maestro combinado puntos + puntcd)
-    lugar = cargar_lugares(base)
+    # lugares: codigo -> provincia, localidad (maestro combinado puntos + puntcd + GPS de la flota)
+    lugar = cargar_lugares(base, empresa, gps)
 
     def rprov(code):  # el CSV de Roberto manda; si no, el maestro de lugares
         ov = override.get(code)
@@ -252,12 +331,19 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend):
         ov = override.get(code)
         return (ov and ov.get("loc")) or lugar.get(code, {}).get("loc", "")
 
-    def apuntar_pendiente(code):  # punto usado sin provincia -> a la lista para que Roberto la escriba
-        if code and not rprov(code):
-            p = pend.setdefault(code, {"punto": "", "viajes": 0})
+    def rnom(code):  # el PUNTO concreto (planta, cantera, obra): su nombre en el maestro, o su código
+        return lugar.get(code, {}).get("nom", "") or (code or "")
+
+    def apuntar_pendiente(code):  # punto usado sin provincia o sin localidad -> a la lista para que Roberto lo complete
+        if not code:
+            return
+        sin_p, sin_l = not rprov(code), not rloc(code)
+        if sin_p or sin_l:
+            p = pend.setdefault(code, {"punto": "", "viajes": 0, "falta": ""})
             p["viajes"] += 1
             if not p["punto"]:
                 p["punto"] = lugar.get(code, {}).get("nom", "") or code
+            p["falta"] = "provincia y localidad" if (sin_p and sin_l) else ("provincia" if sin_p else "localidad")
 
     # lineas: agregacion por (viaje, cantera) = viaje real
     ln = abrir(base, "lineas.dbf")
@@ -273,26 +359,23 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend):
             continue
         cant = str(c1).strip()
         key = (v, cant)
-        um = (ln.get(r, "UNIMED") or "").strip().upper()
-        cod = (ln.get(r, "CODCON") or "").strip()
-        horm = um == "M3" or cod[:1] == "K"
+        unidad = clasificar_unidad(ln.get(r, "UNIMED"), ln.get(r, "CODCON"), ln.get(r, "CONCEP"))
         t = trips.get(key)
         if t is None:
             o, dest = (ln.get(r, "ORIGEN") or "").strip(), (ln.get(r, "DESTINO") or "").strip()
             apuntar_pendiente(o); apuntar_pendiente(dest)
             t = trips[key] = {"c": empresa, "v": v, "cant": cant, "mat": matr.get(v, {}).get("mat", ""), "cho": matr.get(v, {}).get("cho", ""), "mes": d.isoformat()[:7],
                               "cli": c["cliente"] if c else "", "o": o, "d": dest,
-                              "op": rprov(o), "ol": rloc(o),
-                              "dp": rprov(dest), "dl": rloc(dest),
+                              "op": rprov(o), "ol": rloc(o), "on": rnom(o),
+                              "dp": rprov(dest), "dl": rloc(dest), "dn": rnom(dest),
                               "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "horm": False}
         t["imp"] += ln.get(r, "IMPORT") or 0
         cr = ln.get(r, "CANTIDREAL") or ln.get(r, "CANTID") or 0
-        if um == "M3":
+        if unidad == "m3":
             t["m3"] += cr; t["horm"] = True
-        elif um in ("TN", "TM", "T", "TON"):
+            t["km"] += limpio_km(ln.get(r, "CAMPO2"))   # «Km. Viaje» solo tiene sentido en hormigon; el arido se triangula
+        elif unidad == "t":
             t["t"] += cr
-        if horm:
-            t["km"] += limpio_km(ln.get(r, "CAMPO2")); t["horm"] = True
     ln.cerrar()
     return list(trips.values())
 
@@ -304,9 +387,16 @@ def main():
     ap.add_argument("--from-date", default="2025-01-01")
     ap.add_argument("--to-date", default="")
     ap.add_argument("--lugares", default="", help="CSV editable donde Roberto escribe provincia/localidad de los puntos")
+    ap.add_argument("--gps", default="", help="JSON con el municipio real de cada punto segun las paradas GPS de la flota")
     a = ap.parse_args()
     hasta = a.to_date or (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
     override, previos = cargar_override(a.lugares)
+    gps = {}
+    if a.gps and os.path.isfile(a.gps):
+        try:
+            gps = json.load(open(a.gps, encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print("Aviso: no se pudo leer --gps %s: %s" % (a.gps, e), file=sys.stderr)
     pend = {}
     rows = []
     margen = []
@@ -315,7 +405,7 @@ def main():
         if not os.path.isdir(base):
             print("Aviso: no esta %s" % base, file=sys.stderr)
             continue
-        rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend))
+        rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend, gps))
         margen.extend(leer_margen(base, empresa, a.from_date, hasta))
     for t in rows:
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)

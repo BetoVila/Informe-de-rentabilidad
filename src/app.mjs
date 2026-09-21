@@ -1,6 +1,8 @@
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const nf=(v,n=0)=>v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('es-ES',{minimumFractionDigits:n,maximumFractionDigits:n}).format(v);
+// useGrouping 'always': el formato español del navegador NO separa los miles con cuatro cifras («5576» junto a «16.071»).
+const _nf={};
+const nf=(v,n=0)=>v==null||!Number.isFinite(v)?'—':(_nf[n]||(_nf[n]=new Intl.NumberFormat('es-ES',{minimumFractionDigits:n,maximumFractionDigits:n,useGrouping:'always'}))).format(v);
 const eur=v=>v==null?'—':nf(v,2)+' €';
 const pct=v=>v==null?'—':nf(v*100,1)+' %';
 const short=v=>new Intl.NumberFormat('es-ES',{notation:'compact',maximumFractionDigits:1}).format(v);
@@ -10,7 +12,7 @@ const numberCol=(label,key,n=0)=>({label,key,format:v=>nf(v,n),numeric:true});
 const percentCol=(label,key)=>({label,key,format:pct,numeric:true});
 let D,M,state,selection,current,baseline=null,tableState={page:0,query:'',sort:'',asc:false},tableDefinition;
 const slicerDefs=[['plates','Vehículo','plate','plateLabel'],['clients','Cliente','clientId','client'],['categories','Tipo de vehículo','category','category'],['loads','Carga','load','load'],['concepts','Concepto de facturación','concept','concept']];
-let slicerOptions={},ledgerCtx={},zoneMode='salida';
+let slicerOptions={},ledgerCtx={},zoneMode='salida',zonasAbiertas=new Set(),zonasVista={zonas:[],total:0};
 const hasFilters=()=>Boolean(state.plates.length||state.clients.length||state.categories.length||state.loads.length||state.concepts.length);
 const monthName=m=>new Intl.DateTimeFormat('es',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(m+'-01T12:00:00Z'));
 const monthShort=m=>new Intl.DateTimeFormat('es',{month:'short',year:'2-digit',timeZone:'UTC'}).format(new Date(m+'-01T12:00:00Z'));
@@ -278,11 +280,29 @@ function activityChart(byMonth){
  const bars=months.map((r,i)=>{const x=left+step*(i+.5);return `<rect x="${x-bw/2}" y="${y(r.viajes)}" width="${bw}" height="${Math.max(.5,base-y(r.viajes))}" fill="#2868dd" rx="2"><title>${esc(monthName(r.key)+' · '+nf(r.viajes)+' viajes · '+nf(r.m3,0)+' m³ · '+nf(r.t,0)+' t · '+eur(r.imp))}</title></rect><text x="${x}" y="${h-12}" text-anchor="middle">${esc(monthShort(r.key))}</text>`;}).join('');
  return `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Viajes reales por mes; los valores exactos están en la tabla mensual">${grid}${bars}</svg>`;
 }
-// Provincias como desplegables; dentro, sus localidades.
-function zonesBlock(zones){
- const cols=[{label:'Localidad',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')];
- return `<div class="zonelist">${zones.map(z=>`<details class="zone"><summary style="display:flex;justify-content:space-between;gap:12px;cursor:pointer;padding:9px 10px;border-bottom:1px solid #eef2f7"><b>${esc(z.key)}</b><span class="hint" style="white-space:nowrap">${nf(z.viajes)} viajes · ${nf(z.m3,0)} m³ · ${nf(z.t,0)} t · ${eur(z.imp)}</span></summary><div style="padding:6px 10px 14px">${simpleTable(cols,z.locs.slice(0,30))}${z.locs.length>30?`<p class="hint">+${z.locs.length-30} localidades más</p>`:''}</div></details>`).join('')}</div>`;
+// Árbol de zonas en UNA tabla: provincia ▸ localidad (pueblo) ▸ punto (planta, cantera u obra).
+// Se despliega sin repintar el resto de la pestaña y recuerda lo abierto al cambiar de periodo o de modo.
+function zonaFila(n,nivel,clave,total,abierta,conHijos){
+ const tog=conHijos?`<button class="ztog" data-ztoggle="${esc(clave)}" aria-expanded="${abierta}" aria-label="${abierta?'Plegar':'Desplegar'} ${esc(n.key)}">${abierta?'▾':'▸'}</button>`:'<span class="ztog"></span>';
+ const nombre=/^\(sin /.test(n.key)?`<span class="zsin">${esc(n.key)}</span>`:esc(n.key);
+ const o=v=>v?nf(v,0):'—';   // en nacional no hay m³ ni toneladas: guion en vez de un cero que no dice nada
+ return `<tr class="z${nivel}"><td>${tog}${nombre}</td><td class="num">${nf(n.viajes)}</td><td class="num">${pct(total?n.viajes/total:null)}</td><td class="num">${o(n.m3)}</td><td class="num">${o(n.t)}</td><td class="num">${o(n.km)}</td><td class="num">${eur(n.imp)}</td></tr>`;
 }
+function zonasTabla(zonas,total){
+ let filas='';
+ for(const z of zonas){
+  const kz='P|'+z.key,az=zonasAbiertas.has(kz);
+  filas+=zonaFila(z,1,kz,total,az,z.hijos.length>0);
+  if(!az)continue;
+  for(const l of z.hijos){
+   const kl='L|'+z.key+'|'+l.key,al=zonasAbiertas.has(kl);
+   filas+=zonaFila(l,2,kl,total,al,(l.hijos||[]).length>0);
+   if(al)for(const q of l.hijos)filas+=zonaFila(q,3,'',total,false,false);
+  }
+ }
+ return `<div class="ztree-wrap"><table class="ztree"><thead><tr><th class="plain">Zona</th><th class="plain num">Viajes</th><th class="plain num">% de los viajes</th><th class="plain num">m³</th><th class="plain num">Toneladas</th><th class="plain num">Km hormigón</th><th class="plain num">Importe</th></tr></thead><tbody>${filas}</tbody></table></div>`;
+}
+function zonesBlock(zonas,total){zonasVista={zonas,total};return `<p class="ztip">Pulsa ▸ para desplegar: provincia → localidad (el pueblo) → punto (planta, cantera u obra).</p><div id="zonasTabla">${zonasTabla(zonas,total)}</div>`;}
 // Fila de un árbol de costes (cascada).
 function treeRow(l,v,strong,soft,hint){return `<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 2px;border-bottom:1px solid #eef2f7;${strong?'font-weight:700;':''}${soft?'color:#6b7a90;':''}"><span>${l}${hint?` <small style="color:#6b7a90">${hint}</small>`:''}</span><b>${eur(v)}</b></div>`;}
 // Árbol de costes / cascada del P&L operativo de GesRuta (inggas).
@@ -323,7 +343,7 @@ function activityTab(){
  const modes=[['salida','Salida (origen)'],['llegada','Llegada (destino)'],['ambos','Ambos extremos']];
  const toggle=`<div class="segmented" style="margin-bottom:10px">${modes.map(([m,l])=>`<button data-zmode="${m}" aria-pressed="${zoneMode===m}" class="${zoneMode===m?'selected':''}">${esc(l)}</button>`).join('')}</div>`;
  const zset=zoneMode==='llegada'?v.zonasLlegada:zoneMode==='ambos'?v.zonasAmbos:v.zonasSalida;
- const zonas=panel('Actividad por zona (provincia → localidad)','Provincias ordenadas por viajes; despliega cada una para ver sus localidades. «Salida» cuenta por la provincia de origen; «Llegada», por la de destino; «Ambos», el viaje suma en las dos.',toggle+zonesBlock(zset));
+ const zonas=panel('Actividad por zona (provincia → localidad → punto)','Ordenado por viajes. «Salida» cuenta por el origen; «Llegada», por el destino; «Ambos», por los dos extremos (un viaje que sale y llega en la misma zona cuenta una sola vez en ella).',toggle+zonesBlock(zset,t.viajes));
  const rutas=panel('Rutas principales (origen → destino)','Primeras 20 combinaciones de provincia de origen y destino por número de viajes.',simpleTable([{label:'Ruta',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')],v.rutas.slice(0,20)));
  const veh=panel('Por vehículo (primeros 15 por viajes)','Viajes reales, km, m³ e importe por camión.',simpleTable([{label:'Matrícula',key:'key'},{label:'Viajes',key:'viajes',numeric:true,format:x=>nf(x)},{label:'Km',key:'km',numeric:true,format:x=>nf(x,0)},{label:'m³',key:'m3',numeric:true,format:x=>nf(x,0)},{label:'Importe',key:'imp',numeric:true,format:eur}],v.byVeh.slice(0,15)));
  // Cliente: producción (cantera) + P&L operativo (inggas), unidos por nombre del maestro.
@@ -437,6 +457,7 @@ function bind(){
   if(b.dataset.page){tableState.page+=Number(b.dataset.page);drawTable();}
   if(b.dataset.period){const [from,to]=b.dataset.period.split('|');$('from').value=from;$('to').value=to;tableState.page=0;update();}
   if(b.dataset.zmode){zoneMode=b.dataset.zmode;renderContent();}
+  if(b.dataset.ztoggle){const k=b.dataset.ztoggle;if(zonasAbiertas.has(k))zonasAbiertas.delete(k);else zonasAbiertas.add(k);const c=$('zonasTabla');if(c)c.innerHTML=zonasTabla(zonasVista.zonas,zonasVista.total);}
  });
  document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='personalKey')unlockPersonal();});
  document.addEventListener('change',e=>{

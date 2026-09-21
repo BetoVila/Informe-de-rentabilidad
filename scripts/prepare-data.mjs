@@ -146,7 +146,8 @@ const sources=[
 // ---- Actividad operativa (GesRuta): un viaje real = albarán de cantera; km/m³/t/importe por viaje. El nombre del cliente
 // ya viene resuelto por el maestro (mascli). Los textos se internan en diccionarios (cliente/matrícula/provincia/localidad)
 // y cada viaje es una fila POSICIONAL de índices, para no inflar el HTML con 65k filas de texto repetido.
-// Fila: [empresa, mes, cliente, matrícula, provOrigen, provDestino, locOrigen, locDestino, km, m³, t, importe, hormigón]
+// Fila: [empresa, mes, cliente, matrícula, provOrigen, provDestino, locOrigen, locDestino, km, m³, t, importe, hormigón,
+//        puntoOrigen, puntoDestino]   (localidad = pueblo; punto = planta/cantera/obra concreta)
 let actividad=null;
 if(actividadSrc?.metadata?.disponible){
  const co=['Razo','Agetrans'];
@@ -155,6 +156,7 @@ if(actividadSrc?.metadata?.disponible){
  const mat=[''],matIx=new Map([['',0]]);
  const prov=['(sin provincia)'],provIx=new Map([['',0]]);
  const loc=['(sin localidad)'],locIx=new Map([['',0]]);
+ const pt=['(sin punto)'],ptIx=new Map([['',0]]);
  const intern=(arr,ix,val)=>{let i=ix.get(val);if(i===undefined){i=arr.length;arr.push(val);ix.set(val,i);}return i;};
  const rows=actividadSrc.rows.map(r=>{
   const c=r.c==='Agetrans'?1:0;
@@ -163,7 +165,8 @@ if(actividadSrc?.metadata?.disponible){
   const mti=intern(mat,matIx,(r.mat&&String(r.mat).trim())||'');
   const oi=intern(prov,provIx,r.op||''),di=intern(prov,provIx,r.dp||'');
   const li=intern(loc,locIx,r.ol||''),ld=intern(loc,locIx,r.dl||'');
-  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0];
+  const po=intern(pt,ptIx,r.on||''),pd=intern(pt,ptIx,r.dn||'');
+  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd];
  });
  // Margen operativo de GesRuta (inggas): P&L por mes×cliente. Antes del coste real de flota/personal/indirectos.
  let margen=null;
@@ -171,7 +174,7 @@ if(actividadSrc?.metadata?.disponible){
   margen={rows:actividadSrc.margen.map(a=>({c:a.c==='Agetrans'?1:0,m:a.m,cli:(a.cli&&String(a.cli).trim())||'(sin cliente)',
    i:a.ing||0,ma:a.materiales||0,s:a.subcontratacion||0,g:a.gasoil||0,p:a.peajes||0,ad:a.adblue||0}))};
  }
- actividad={meta:{fuente:actividadSrc.metadata.fuente,desde:actividadSrc.metadata.desde,hasta:actividadSrc.metadata.hasta,viajes:rows.length,leido:actividadSrc.metadata.leido},co,mo,cli,mat,prov,loc,rows,margen};
+ actividad={meta:{fuente:actividadSrc.metadata.fuente,desde:actividadSrc.metadata.desde,hasta:actividadSrc.metadata.hasta,viajes:rows.length,leido:actividadSrc.metadata.leido},co,mo,cli,mat,prov,loc,pt,rows,margen};
 }
 const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,solredResumen:[...coverageResumen],naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,locatel,actividad,definitions:[
  'Contabilidad: gastos (grupo 6) e ingresos (grupo 7) reales de CxConta por sociedad, mes y cuenta, sin asientos de cierre ni apertura. El resultado contable es la referencia de rentabilidad; el coste de los partes de Access solo recoge una parte del gasto real (ver el puente en Conciliación). Un mes se compara solo cuando está cerrado; el mes en curso queda fuera.',

@@ -164,4 +164,15 @@ footer{font-size:11.5px;color:var(--muted);margin-top:24px;border-top:1px solid 
 .ic-row.sub{background:var(--soft);font-weight:600}
 .ic-row.gap{color:var(--amber);font-weight:600}
 .ic-note{font-size:12.5px;color:var(--muted);line-height:1.6;margin:6px 0 0}
+/* Árbol de zonas: provincia > localidad > punto en UNA tabla, columnas alineadas y sin scroll interno */
+.ztree-wrap{border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+.ztree td:first-child{max-width:none;white-space:normal;min-width:260px}
+.ztree tr.z1 td{font-weight:700;background:#fbfcfe;border-top:1px solid #e6ecf4}
+.ztree tr.z2 td:first-child{padding-left:36px}
+.ztree tr.z3 td{color:var(--muted);font-size:12.5px;padding-top:7px;padding-bottom:7px}
+.ztree tr.z3 td:first-child{padding-left:62px}
+.ztog{border:0;background:none;padding:0;margin-right:6px;cursor:pointer;font:inherit;color:var(--blue);width:16px;display:inline-block;text-align:center}
+span.ztog{cursor:default}
+.zsin{color:var(--muted);font-style:italic;font-weight:400}
+.ztip{font-size:12px;color:var(--muted);margin:0 0 10px}
 @media print{.filters,.periodbar,.quickrow,.tabs,.tabletools,.pager,.sources-strip{display:none}body{background:#fff}.masthead{color:#000;background:#fff;border-bottom:2px solid #000}.brand small,.brand strong span,.fresh{color:#333}main{padding:0}}
