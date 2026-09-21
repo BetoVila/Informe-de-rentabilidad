@@ -14,7 +14,8 @@ $copy = Join-Path (Split-Path -Parent $OutputPath) ('access-personal-'+[guid]::N
 Copy-Item -LiteralPath $SourcePath -Destination $copy -Force
 $conn = $null
 foreach ($prov in 'Microsoft.ACE.OLEDB.12.0','Microsoft.ACE.OLEDB.16.0') {
-  try { $c = New-Object System.Data.OleDb.OleDbConnection "Provider=$prov;Data Source=$copy;Mode=Read;Persist Security Info=False;"; $c.Open(); $conn = $c; break } catch { }
+  # OLE DB Services=-4: sin pool de conexiones, para que al cerrar se suelte el fichero y la copia (con datos de personal) se borre.
+  try { $c = New-Object System.Data.OleDb.OleDbConnection "Provider=$prov;Data Source=$copy;Mode=Read;Persist Security Info=False;OLE DB Services=-4;"; $c.Open(); $conn = $c; break } catch { }
 }
 if ($null -eq $conn) { Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue; throw 'No hay proveedor Access (ACE) instalado.' }
 $ntilde = [char]0xF1
@@ -51,4 +52,10 @@ try {
   $ids = @{}; foreach ($e in $emps) { $ids[$e.id] = $true }
   $enLista = @($parts | Where-Object { $_.emp -and $ids.ContainsKey($_.emp) }).Count
   Write-Output ("Personal: partes=$($parts.Count); con responsable=$conResp; responsables que existen en la lista de empleados=$enLista; empleados=$($emps.Count); vigentes=" + @($emps | Where-Object { $_.vigente }).Count + "; Output=$OutputPath")
-} finally { if ($conn) { $conn.Close() }; Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue }
+} finally {
+  # La copia lleva datos de personal: se borra siempre, reintentando hasta que el controlador suelte el fichero.
+  if ($conn) { $conn.Close(); $conn.Dispose() }
+  [System.Data.OleDb.OleDbConnection]::ReleaseObjectPool(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+  for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath $copy); $i++) { try { Remove-Item -LiteralPath $copy -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 500 } }
+  Remove-Item -LiteralPath ($copy -replace '\.accdb$', '.laccdb') -Force -ErrorAction SilentlyContinue
+}

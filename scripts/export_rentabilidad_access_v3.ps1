@@ -5,7 +5,8 @@ $ErrorActionPreference = 'Stop'
 $modified = (Get-Item -LiteralPath $SourcePath).LastWriteTimeUtc.ToString('o')
 $copy = Join-Path (Split-Path -Parent $OutputPath) ('access-copia-'+[guid]::NewGuid().ToString('N')+'.accdb')
 Copy-Item -LiteralPath $SourcePath -Destination $copy -Force
-$conn = New-Object System.Data.OleDb.OleDbConnection "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=$copy;Mode=Read;Persist Security Info=False;"
+# OLE DB Services=-4: sin pool de conexiones, para que al cerrar se suelte de verdad el fichero y la copia se pueda borrar.
+$conn = New-Object System.Data.OleDb.OleDbConnection "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=$copy;Mode=Read;Persist Security Info=False;OLE DB Services=-4;"
 $conn.Open()
 function Read-Rows([string]$sql) {
   $cmd = $conn.CreateCommand(); $cmd.CommandText = $sql
@@ -49,4 +50,10 @@ try {
   $json = ConvertTo-Json -InputObject $out -Depth 8 -Compress
   [System.IO.File]::WriteAllText($outputPath,$json,(New-Object System.Text.UTF8Encoding($false)))
   Write-Output "Partes=$($parts.Count); Maquinas=$($machines.Count); Output=$outputPath"
-} finally { $conn.Close(); Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue }
+} finally {
+  # La copia lleva datos de personal: se borra siempre, reintentando hasta que el controlador suelte el fichero.
+  if ($conn) { $conn.Close(); $conn.Dispose() }
+  [System.Data.OleDb.OleDbConnection]::ReleaseObjectPool(); [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+  for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath $copy); $i++) { try { Remove-Item -LiteralPath $copy -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 500 } }
+  Remove-Item -LiteralPath ($copy -replace '\.accdb$', '.laccdb') -Force -ErrorAction SilentlyContinue
+}

@@ -103,6 +103,8 @@ try{
     $lock.Dispose()
     # Datos personales (nombres y sueldos): fuera del disco en cuanto termina la ejecución, salga bien o mal.
     foreach($f in 'nomina_detalle.json','personal_v1.json','personal_private.json'){Remove-Item -LiteralPath (Join-Path $run $f) -Force -ErrorAction SilentlyContinue}
+    # Red de seguridad: las copias de Access (llevan datos de personal) las borra cada extractor; si alguna quedo, fuera aqui.
+    if(Test-Path -LiteralPath $run){Get-ChildItem -LiteralPath $run -File | Where-Object {$_.Name -match '^access-(copia|personal)-[a-f0-9]{32}\.(accdb|laccdb)$'} | Remove-Item -Force -ErrorAction SilentlyContinue}
     # Solo se limpian ejecuciones propias antiguas, con rutas absolutas comprobadas.
     $limit=(Get-Date).AddDays(-14)
     $baseFull=[IO.Path]::GetFullPath($workRoot).TrimEnd('\')+'\'
