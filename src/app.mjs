@@ -283,10 +283,20 @@ function zonesBlock(zones){
  const cols=[{label:'Localidad',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')];
  return `<div class="zonelist">${zones.map(z=>`<details class="zone"><summary style="display:flex;justify-content:space-between;gap:12px;cursor:pointer;padding:9px 10px;border-bottom:1px solid #eef2f7"><b>${esc(z.key)}</b><span class="hint" style="white-space:nowrap">${nf(z.viajes)} viajes · ${nf(z.m3,0)} m³ · ${nf(z.t,0)} t · ${eur(z.imp)}</span></summary><div style="padding:6px 10px 14px">${simpleTable(cols,z.locs.slice(0,30))}${z.locs.length>30?`<p class="hint">+${z.locs.length-30} localidades más</p>`:''}</div></details>`).join('')}</div>`;
 }
+// Fila de un árbol de costes (cascada).
+function treeRow(l,v,strong,soft,hint){return `<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 2px;border-bottom:1px solid #eef2f7;${strong?'font-weight:700;':''}${soft?'color:#6b7a90;':''}"><span>${l}${hint?` <small style="color:#6b7a90">${hint}</small>`:''}</span><b>${eur(v)}</b></div>`;}
 // Árbol de costes / cascada del P&L operativo de GesRuta (inggas).
 function costTree(t){
- const r=(l,v,strong,soft,hint)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 2px;border-bottom:1px solid #eef2f7;${strong?'font-weight:700;':''}${soft?'color:#6b7a90;':''}"><span>${l}${hint?` <small style="color:#6b7a90">${hint}</small>`:''}</span><b>${eur(v)}</b></div>`;
- return `<div style="max-width:660px">${r('Ingresos (GesRuta)',t.ing,1)}${r('− Materiales (áridos comprados)',-t.materiales)}${r('− Subcontratación (portes)',-t.subcontratacion)}${r('= Coste directo comprado',-t.directos,1)}${r('− Gasoil declarado en GesRuta',-t.gasoil,0,1)}${r('− Peajes y AdBlue',-(t.peajes+t.adblue),0,1)}${r('= Margen operativo',t.margen,1,0,pct(t.margenPct))}</div>`;
+ return `<div style="max-width:660px">${treeRow('Ingresos (GesRuta)',t.ing,1)}${treeRow('− Materiales (áridos comprados)',-t.materiales)}${treeRow('− Subcontratación (portes)',-t.subcontratacion)}${treeRow('= Coste directo comprado',-t.directos,1)}${treeRow('− Gasoil declarado en GesRuta',-t.gasoil,0,1)}${treeRow('− Peajes y AdBlue',-(t.peajes+t.adblue),0,1)}${treeRow('= Margen operativo',t.margen,1,0,pct(t.margenPct))}</div>`;
+}
+// Árbol NETO desde la contabilidad real (reconcilia con el resultado): Directos comprados → contribución → Flota → Indirectos.
+function netTree(lv){
+ const by=Object.fromEntries(lv.expenseCategories.map(c=>[c.id,c.amount])),g=id=>by[id]||0;
+ const directos=g('aridos')+g('subcontratacion');
+ const flotaOtros=g('amortizacion')+g('reparaciones')+g('seguros')+g('repuestos')+g('peajes')+g('alquileres')+g('dietas');
+ const flota=g('combustible')+g('personal')+flotaOtros;
+ const indirectos=lv.expenses-directos-flota;
+ return `<div style="max-width:660px">${treeRow('Ingresos contables',lv.income,1)}${treeRow('− Áridos comprados',-g('aridos'))}${treeRow('− Subcontratación',-g('subcontratacion'))}${treeRow('= Margen de contribución',lv.income-directos,1)}${treeRow('− Combustible (diésel real)',-g('combustible'),0,1)}${treeRow('− Personal',-g('personal'),0,1)}${treeRow('− Amortización, reparaciones, seguros, neumáticos…',-flotaOtros,0,1)}${treeRow('− Indirectos (estructura, tributos, financieros…)',-indirectos,0,1)}${treeRow('= Resultado real',lv.result,1,0,pct(lv.marginPct))}</div>`;
 }
 function activityTab(){
  const v=M.activityView(state);
@@ -296,7 +306,9 @@ function activityTab(){
  const eco=mv?[['Ingreso (GesRuta)',eur(mv.tot.ing),'inggas, todos los conceptos'],['Coste directo',eur(mv.tot.directos),'áridos + subcontratación'],['Margen operativo',eur(mv.tot.margen),pct(mv.tot.margenPct)+' · antes de flota y personal']]:[];
  const card=([l,x,h])=>`<article class="card"><span class="label">${l}</span><div class="value">${x}</div><div class="hint">${h}</div></article>`;
  const cards=`<section class="cards" style="margin-bottom:16px">${prod.map(card).join('')}</section>`+(eco.length?`<section class="cards" style="margin-bottom:16px">${eco.map(card).join('')}</section>`:'');
- const arbol=mv?panel('Margen operativo (GesRuta)','P&L que registra GesRuta por viaje (inggas): ingresos menos el coste directo comprado (material y subcontratación) y los gastos de circulación. Es ANTES del coste real de flota (diésel Solred+Access), personal (nómina) e indirectos, que se restan en la pestaña Resumen.',costTree(mv.tot)):'';
+ const arbol=mv?panel('Margen operativo (GesRuta)','P&L que registra GesRuta por viaje (inggas): ingresos menos el coste directo comprado (material y subcontratación) y los gastos de circulación. Es ANTES del coste real de flota (diésel Solred+Access), personal (nómina) e indirectos.',costTree(mv.tot)):'';
+ const lv=ledgerCtx.lv;
+ const neto=(lv&&lv.months.length&&!hasFilters())?panel('Resultado real (contabilidad)','La contabilidad real de los meses cerrados ('+monthRange(lv.months)+(lv.consolidado?', consolidada':'')+'): del ingreso a lo que queda de verdad tras TODOS los costes. El margen operativo de arriba se come casi entero con el coste real de la flota, el personal y los indirectos — esto es el margen NETO.',netTree(lv)+`<p class="sub" style="margin-top:10px">Reconcilia con la pestaña Resumen. El margen operativo (GesRuta) y este resultado miden cosas distintas: aquel es por viaje y antes de la flota; este es el resultado contable real del grupo.</p>`):'';
  const trend=panel('Evolución de viajes','Viajes reales por mes; pasa el ratón por cada barra para ver volumen e importe.',activityChart(v.byMonth));
  const mes=v.byMonth.map(m=>({label:monthName(m.key),viajes:m.viajes,m3:m.m3,t:m.t,km:m.km,imp:m.imp}));
  const mensual=panel('Evolución mes a mes','Viajes reales, volumen e importe por mes.',simpleTable([{label:'Mes',key:'label'},{label:'Viajes',key:'viajes',numeric:true,format:x=>nf(x)},{label:'m³',key:'m3',numeric:true,format:x=>nf(x,0)},{label:'Toneladas',key:'t',numeric:true,format:x=>nf(x,0)},{label:'Km hormigón',key:'km',numeric:true,format:x=>nf(x,0)},{label:'Importe',key:'imp',numeric:true,format:eur}],mes));
@@ -312,7 +324,7 @@ function activityTab(){
  if(mv)for(const [k,x] of mv.byClient){const c=cmap.get(k)||{key:k,viajes:0,m3:0,t:0};c.ing=x.ing;c.directos=x.directos;c.margen=x.margen;c.margenPct=x.margenPct;cmap.set(k,c);}
  const clientRows=[...cmap.values()].sort((a,b)=>(b.margen||0)-(a.margen||0));
  const cli=setTable('Cliente: actividad y margen','Producción (viajes, m³, t) y P&L operativo de GesRuta (ingreso − coste directo comprado). El margen es antes del coste real de flota y personal. Ordenable y con búsqueda.',clientRows,[{label:'Cliente',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),moneyCol('Ingreso','ing'),moneyCol('Coste directo','directos'),moneyCol('Margen op','margen'),percentCol('% margen','margenPct')]);
- return `<div class="info">Viaje real = cada entrega con <b>albarán de cantera</b>. Producción (viajes, m³/t, km) de las líneas de albarán. <b>Margen operativo</b> del P&L por viaje de GesRuta (inggas): ingreso − material − subcontratación − circulación; es <b>antes</b> del diésel real, el personal y los indirectos (esos, en Resumen).</div>`+cards+arbol+trend+mensual+zonas+rutas+veh+cli;
+ return `<div class="info">Viaje real = cada entrega con <b>albarán de cantera</b>. Producción (viajes, m³/t, km) de las líneas de albarán. <b>Margen operativo</b> del P&L por viaje de GesRuta (inggas): ingreso − material − subcontratación − circulación, <b>antes</b> del coste real de flota. Debajo, el <b>resultado real</b> de la contabilidad tras diésel, personal e indirectos.</div>`+cards+arbol+neto+trend+mensual+zonas+rutas+veh+cli;
 }
 function renderContent(){
  tableDefinition=null;let html='';
