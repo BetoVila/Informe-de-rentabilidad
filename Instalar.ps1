@@ -57,7 +57,7 @@ try{
         if(Test-Path -LiteralPath $o[1]){$config.optional[$o[0]]=$o[1]}else{Write-Output ('Aviso: no se encuentra '+$o[1]+'; esa fuente opcional quedara sin leer.')}
     }
     # Contabilidad real: la trae el ERP a su base en Docker (solo en el PC de Roberto).
-    if($Modo -eq 'Pc' -and (Get-Command docker -ErrorAction SilentlyContinue)){$config.optional['contabilidad']=$true;$config.optional['movertis']=$true}
+    if($Modo -eq 'Pc' -and (Get-Command docker -ErrorAction SilentlyContinue)){$config.optional['contabilidad']=$true;$config.optional['movertis']=$true;$config.optional['locatel']=$true}
     [IO.File]::WriteAllText($configPath,($config|ConvertTo-Json -Depth 5),$utf8)
     $ps=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     Write-Output 'Lectura completa y controles. Puede tardar un minuto.'

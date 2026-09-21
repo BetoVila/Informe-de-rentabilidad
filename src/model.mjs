@@ -155,6 +155,25 @@ export function createModel(data) {
     const partial=months.length>0&&(f.from.slice(0,7)===months[0]&&f.from.slice(8)!=='01'||(f.to.slice(0,7)===months[months.length-1]&&f.to<monthEnd(months[months.length-1])));
     return {income,expenses,result:income-expenses,marginPct:divide(income-expenses,income),months,excludedMonths,partial,expenseCategories:cat('g'),incomeCategories:cat('i'),byMonth,byCompany,lastClosed:closed,consolidado:con,intragrupo};
   }
+  // Coste de personal ACUMULADO por tramo (sección de la nómina) en el periodo y sociedades elegidos. Agregado, sin
+  // nombres: suma el coste de empresa de la gestoría por tipo de trabajo (conductor hormigonera/nacional/bañera,
+  // administración, taller…). Sirve para el acumulado y para comparar un periodo con otro.
+  function personnelByTramo(f){
+    if(!payroll)return null;
+    const from=f.from.slice(0,7),to=f.to.slice(0,7);
+    const names=Object.keys(sections||{}),wanted=f.companies?.length?f.companies:(names.length?names:['Razo','Agetrans']);
+    const rows=payroll.rows.filter(r=>r.period>=from&&r.period<=to&&wanted.includes(r.company));
+    const map=new Map();
+    for(const r of rows){
+      const s=sections[r.company]?.[String(r.section)],type=s?.type||'otros';
+      const x=map.get(type)||{type,label:payroll.typeLabels?.[type]||type,driver:!!s?.driver,unsure:false,cost:0,months:new Set()};
+      x.cost+=r.cost||0;x.months.add(r.period);if(s?.porConfirmar)x.unsure=true;
+      map.set(type,x);
+    }
+    const items=[...map.values()].map(x=>({type:x.type,label:x.label,driver:x.driver,unsure:x.unsure,cost:x.cost,months:x.months.size})).sort((a,b)=>b.cost-a.cost);
+    const total=items.reduce((s,x)=>s+x.cost,0),monthsAll=[...new Set(rows.map(r=>r.period))].sort();
+    return {items,total,months:monthsAll.length,monthList:monthsAll,driverCost:items.filter(x=>x.driver).reduce((s,x)=>s+x.cost,0),structureCost:items.filter(x=>!x.driver).reduce((s,x)=>s+x.cost,0)};
+  }
   // Puente: lo que dice la contabilidad frente a lo que captan los partes de Access, por concepto (mismos meses y sociedades).
   function bridge(f){
     const view=ledgerView(f);if(!view)return null;
@@ -194,5 +213,5 @@ export function createModel(data) {
     const plateRows=[...byPlate.values()].map(x=>({...x,consumption:divide(x.litres*100,x.kmFuel),pctWithoutPart:divide(x.daysWithoutPart,x.activeDays)})).sort((a,b)=>b.kmWithoutPart-a.kmWithoutPart);
     return {from,to,km:sum(active,'km'),litres,kmFuel,consumption:divide(litres*100,kmFuel),activeDays:active.length,daysWithoutPart:without.length,pctWithoutPart:divide(without.length,active.length),kmWithoutPart:sum(without,'km'),kmWithPart:kmWith,ratio:divide(partKmSame,kmWith),plates:byPlate.size,plateRows};
   }
-  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,reconcileFuel,ledgerView,bridge,societyOf,telemetryView};
+  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,telemetryView};
 }

@@ -42,6 +42,7 @@ Si falla una fuente opcional el informe sale igual y lo dice arriba. **Nunca se 
 4. Sin claves en ficheros ni en el chat: Movertis/Locatel = variables de entorno de usuario (`WIALON_TOKEN`, `LOCATEL_USUARIO`, `LOCATEL_CLAVE`); la clave del apartado de personal la teclea Roberto en su ventana (`CLAVE DEL PERSONAL.cmd`, DPAPI del usuario).
 5. Con filtros de vehículo/cliente solo se ve el coste imputable y se avisa de que no es el resultado real.
 6. **Facturación consolidada**: el selector «Suma de empresas / Consolidada» elimina el intragrupo Razo↔Agetrans, medido en el libro por la cuenta de empresas del grupo (clientes 433-436 → ingreso 7xx; proveedores 403-406 → gasto 6xx; la 552 cta. cte. es tesorería y se excluye), sin cablear cuentas. 2026 ene-ago: 924k de ingreso y 758k de gasto intragrupo; el margen del grupo pasa de 10,7 % (suma) a 9,5 % (consolidado) y un panel enseña los 166k sin casar por timing. Solo meses cerrados.
+7. **Costes de personal por tramo**: en Conciliación, el coste de empresa de la nómina de la gestoría se acumula por tramo de la plantilla (conductor hormigonera/nacional/bañera, administración, taller) y se compara con el periodo elegido en «Comparar con». Agregado, **sin nombres** (los datos por persona siguen cifrados en la pestaña Personal).
 
 ## Cómo se trabaja
 
@@ -62,7 +63,7 @@ powershell -File scripts\package.ps1 -ReleaseName release-rN
 ## Pendiente (20/09/2026)
 
 - Roberto: elegir la clave del apartado «Personal» (icono) y bajar de Mi Solred, con la cuenta de Agetrans, los `Operaciones` en **texto** (no Excel) a `Z:\A CARBURANTES\1 DEJAR AQUI`.
-- Locatel (informe de emisiones, CANbus) y km de Movertis anteriores al 20/08/2026; cuando exista `razo_km_historico` en la copia local del ERP, leerlo (filtrando `descartada = False`).
+- Locatel (km/consumo CANbus): el extractor ya lee `razo_locatel_emision` del ERP y el informe muestra Locatel como fuente; hoy esa tabla está **VACÍA en la copia local** (el agente del ERP la llena en producción), así que aún no hay km de Locatel y el chip dice «sin datos». En cuanto lleguen a la copia local se usan solos, sin tocar nada. Igual con el histórico de Movertis anterior al 20/08/2026 y `razo_km_historico` (filtrando `descartada = False`).
 - Repartir con criterio subcontratación, áridos y generales por vehículo/cliente (la contabilidad ya trae cuentas por actividad y amortización por matrícula).
 - Rentabilidad por cliente y viaje: aplicar también ahí la eliminación intragrupo (en la vista contable ya está) y, del marco de Tactio (referencia, no plantilla), el margen de contribución por unidad de negocio alimentado con dato real, no con % fijos.
 - Copia nocturna de GesproWin desde PC AUXILIAR (parada desde el 06/08).

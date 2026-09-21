@@ -11,7 +11,7 @@ const optional=async(f)=>{try{return JSON.parse(await readText(f));}catch(e){if(
 const aText=await readText('rentabilidad_access_v3.json'),gText=await readText('rentabilidad_gesruta_v3.json');
 const a=JSON.parse(aText),g=JSON.parse(gText);
 const solred=await optional('solred_v2.json'),gespro=await optional('gespro_v1.json'),nomina=await optional('nomina_v1.json');
-const nominaDetalle=await optional('nomina_detalle.json'),personal=await optional('personal_v1.json'),contab=await optional('contabilidad_v1.json'),movertis=await optional('movertis_v1.json'),solredVeh=await optional('solred_vehiculos_v1.json');
+const nominaDetalle=await optional('nomina_detalle.json'),personal=await optional('personal_v1.json'),contab=await optional('contabilidad_v1.json'),movertis=await optional('movertis_v1.json'),locatelSrc=await optional('locatel_v1.json'),solredVeh=await optional('solred_vehiculos_v1.json');
 const cuentasCfg=JSON.parse(await fs.readFile(new URL('../config/cuentas-contables.json',import.meta.url),'utf8'));
 const cfg=JSON.parse(await fs.readFile(new URL('../config/secciones-nomina.json',import.meta.url),'utf8'));
 const index=(rows)=>new Map(rows.map(r=>[String(r.id),r]));
@@ -94,6 +94,14 @@ if(movertis?.metadata?.disponible){
  telemetry={meta:{fuente:movertis.metadata.fuente,desde:movertis.metadata.desde,hasta:movertis.metadata.hasta,diasCamion:movertis.metadata.diasCamion,diasFiables:movertis.metadata.diasFiables,diasDescartados:movertis.metadata.diasDescartados,unidades:movertis.metadata.unidades,leido:movertis.metadata.leido},rows};
 }
 
+// ---- Locatel (CANbus, vía el ERP): km y consumo reales por matrícula y tramo. Hoy la copia local puede no tener aún estas
+// emisiones (el agente del ERP corre en producción); en ese caso queda null y el informe lo dice, sin inventar dato.
+let locatel=null;
+if(locatelSrc?.metadata?.disponible){
+ const rows=locatelSrc.rows.map(r=>({plate:plateKey(r.p),from:r.from,to:r.to,km:r.km,litres:r.litres,co2e:r.co2e,estimado:r.estimado,fuel:r.fuel})).filter(r=>r.plate&&r.km>0);
+ if(rows.length)locatel={meta:{fuente:locatelSrc.metadata.fuente,desde:locatelSrc.metadata.desde,hasta:locatelSrc.metadata.hasta,registros:rows.length,estimados:rows.filter(r=>r.estimado).length,unidades:new Set(rows.map(r=>r.plate)).size,leido:locatelSrc.metadata.leido},rows};
+}
+
 // ---- estado de cada fuente (lo que ve Roberto arriba)
 const lastPeriod=payroll?Object.values(payroll.meta.periodos).map(p=>p[p.length-1]).sort().pop():null;
 const litresBy=(pred)=>parts.filter(p=>pred(p)&&p.litres>0&&(!naveIds.includes(p.station))).reduce((s,p)=>s+p.litres,0);
@@ -131,10 +139,10 @@ const sources=[
  {id:'nomina',name:'Nómina',state:payroll?'ok':'sin',to:lastPeriod,note:payroll?'Resumen mensual de la gestoría; el último mes llega ~10 días después de cerrar.':'Sin resúmenes de nómina.'},
  {id:'contabilidad',name:'Contabilidad',state:ledger?'ok':'sin',to:ledger?.meta.lastClosed||null,note:ledger?'Gastos e ingresos reales de CxConta (traspasados al ERP cada noche). Cerrada hasta '+ledger.meta.lastClosed+'; el mes en curso no se compara.':'Sin contabilidad: el gasto que se ve es solo el de los partes de Access, que no es el real.'},
  {id:'movertis',name:'Movertis',state:telemetry?'parcial':'pendiente',to:telemetry?.meta.hasta||null,note:telemetry?'Km y litros medidos por el camión, leídos del ERP (que ya los baja de Movertis). Solo hay datos desde '+telemetry.meta.desde+': el histórico anterior aún no está cargado. '+telemetry.meta.diasDescartados+' días-camión sin lectura fiable no se cuentan.':'Kilómetros y consumo medidos por el camión: sin lectura en esta pasada.'},
- {id:'locatel',name:'Locatel',state:'pendiente',to:null,note:'Kilómetros y consumo (CANbus) por GPS: falta el acceso automático.'}
+ {id:'locatel',name:'Locatel',state:locatel?'ok':(locatelSrc?.metadata?'sin':'pendiente'),to:locatel?.meta.hasta||null,note:locatel?('Km y consumo (CANbus) medidos por el camión, leídos del ERP (que los baja de Locatel): '+locatel.meta.registros+' tramos de '+locatel.meta.unidades+' vehículos.'):(locatelSrc?.metadata?'Conectado al ERP, pero sus emisiones de Locatel aún no están en la copia local del ERP (0 registros). En cuanto lleguen, se usan sin tocar nada.':'Kilómetros y consumo (CANbus) por GPS: falta el acceso automático.')}
 ];
 
-const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,solredResumen:[...coverageResumen],naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,definitions:[
+const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,solredResumen:[...coverageResumen],naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,locatel,definitions:[
  'Contabilidad: gastos (grupo 6) e ingresos (grupo 7) reales de CxConta por sociedad, mes y cuenta, sin asientos de cierre ni apertura. El resultado contable es la referencia de rentabilidad; el coste de los partes de Access solo recoge una parte del gasto real (ver el puente en Conciliación). Un mes se compara solo cuando está cerrado; el mes en curso queda fuera.',
  'Ingresos sin IVA: líneas de GesRuta, excluidos suplidos, más diferencias explícitas con la base de cabecera. Las facturas anuladas y filas borradas no se incluyen.',
  'Fecha de factura: FECFAC. Fecha de línea: FECHA de linfaclib, con FECFAC como respaldo si no consta. La fecha del parte gobierna siempre los costes.',

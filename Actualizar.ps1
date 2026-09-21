@@ -65,6 +65,8 @@ try{
     if($opt.contabilidad){Invoke-Opcional 'Contabilidad' {& $py (Join-Path $root 'scripts\export_rentabilidad_contabilidad_v1.py') --output (Join-Path $run 'contabilidad_v1.json') --from-date $config.from --to-date $hasta}}
     # Km y litros medidos por Movertis: se leen del ERP (que ya los baja y valida); aqui no se abre sesion en Movertis.
     if($opt.movertis){Invoke-Opcional 'Movertis' {& $py (Join-Path $root 'scripts\export_rentabilidad_movertis_v1.py') --output (Join-Path $run 'movertis_v1.json') --from-date $config.from --to-date $hasta}}
+    # Locatel: el ERP lo baja a razo_locatel_emision; aqui solo se lee. Hoy puede venir vacio (sale disponible:false y sigue).
+    if($opt.locatel){Invoke-Opcional 'Locatel' {& $py (Join-Path $root 'scripts\export_rentabilidad_locatel_v1.py') --output (Join-Path $run 'locatel_v1.json') --from-date $config.from --to-date $hasta}}
     if($clave){Invoke-Opcional 'Enlace parte-conductor' {
         $pa=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'scripts\export_rentabilidad_personal_v1.ps1'),'-Desde',$config.from,'-Hasta',$hasta,'-SourcePath',(Join-Path $config.sourceRoot 'PartesTrabajo\Partes 7.0.accdb'),'-OutputPath',(Join-Path $run 'personal_v1.json'))
         & $ps64 @pa

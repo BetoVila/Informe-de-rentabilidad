@@ -11,6 +11,8 @@ Regla de trabajo (Roberto, 20/09/2026): la rentabilidad por cliente y por viaje 
 | 20/09/2026 | «prepárate para futuras correcciones» | — | Este fichero + confianza por cifra + reglas editables |
 | 20/09/2026 | «facturación consolidada… haz las dos facturaciones, un selector» | Al sumar las dos empresas la cifra de negocio del grupo cuenta dos veces la facturación Razo→Agetrans (~924k) | Selector «Suma de empresas / Consolidada»; el intragrupo se mide en el libro por la cuenta de empresas del grupo y se elimina de ingresos y gastos; el margen del grupo baja de 10,7 % a 9,5 % |
 | 20/09/2026 | «lo de tactio es para que lo estudies y aprendas» | Tactio es referencia, no plantilla; su reparto de combustible/peajes/personal es por % fijos a mano | Del marco de Tactio se toma la idea (consolidada, margen por unidad, TAM, umbral); el dato se alimenta medido y cruzado, nunca con % inventados |
+| 21/09/2026 | «faltan los costes de personal acumulados y comparados por tramos» | — | Panel «Costes de personal por tramo» en Conciliación: coste de empresa acumulado por sección (conductor hormigonera/nacional/bañera, administración, taller), con comparación por «Comparar con». Agregado, sin nombres |
+| 21/09/2026 | «los km reales de Movertis y Locatel» | Movertis ya estaba integrado; Locatel no tenía extractor | Movertis sigue (razo_movertis_dia). Locatel: extractor nuevo que lee `razo_locatel_emision` del ERP; hoy esa tabla está VACÍA en la copia local (el agente corre en producción) → el informe muestra «Locatel · sin datos» y se rellena solo cuando lleguen |
 
 ## Hallazgos de método que evitan errores repetidos
 - `LINEAS` (GesRuta) se une con `ALBARA` por **(VIAJE, ALBARA↔ALBARA.NUMERO)**; `LINEAS.NUMERO` es un id global de línea.
