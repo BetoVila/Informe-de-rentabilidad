@@ -11,7 +11,7 @@ const optional=async(f)=>{try{return JSON.parse(await readText(f));}catch(e){if(
 const aText=await readText('rentabilidad_access_v3.json'),gText=await readText('rentabilidad_gesruta_v3.json');
 const a=JSON.parse(aText),g=JSON.parse(gText);
 const solred=await optional('solred_v2.json'),gespro=await optional('gespro_v1.json'),nomina=await optional('nomina_v1.json');
-const nominaDetalle=await optional('nomina_detalle.json'),personal=await optional('personal_v1.json'),contab=await optional('contabilidad_v1.json'),movertis=await optional('movertis_v1.json'),locatelSrc=await optional('locatel_v1.json'),solredVeh=await optional('solred_vehiculos_v1.json');
+const nominaDetalle=await optional('nomina_detalle.json'),personal=await optional('personal_v1.json'),contab=await optional('contabilidad_v1.json'),movertis=await optional('movertis_v1.json'),locatelSrc=await optional('locatel_v1.json'),actividadSrc=await optional('actividad_v1.json'),solredVeh=await optional('solred_vehiculos_v1.json');
 const cuentasCfg=JSON.parse(await fs.readFile(new URL('../config/cuentas-contables.json',import.meta.url),'utf8'));
 const cfg=JSON.parse(await fs.readFile(new URL('../config/secciones-nomina.json',import.meta.url),'utf8'));
 const index=(rows)=>new Map(rows.map(r=>[String(r.id),r]));
@@ -143,7 +143,31 @@ const sources=[
  {id:'locatel',name:'Locatel',state:locatel?'ok':(locatelSrc?.metadata?'sin':'pendiente'),to:locatel?.meta.hasta||null,note:locatel?('Km y consumo (CANbus) medidos por el camión, leídos del ERP (que los baja de Locatel): '+locatel.meta.registros+' tramos de '+locatel.meta.unidades+' vehículos.'):(locatelSrc?.metadata?'Conectado al ERP, pero sus emisiones de Locatel aún no están en la copia local del ERP (0 registros). En cuanto lleguen, se usan sin tocar nada.':'Kilómetros y consumo (CANbus) por GPS: falta el acceso automático.')}
 ];
 
-const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,solredResumen:[...coverageResumen],naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,locatel,definitions:[
+// ---- Actividad operativa (GesRuta): un viaje real = albarán de cantera; km/m³/t/importe por viaje. El nombre del cliente
+// ya viene resuelto por el maestro (mascli). Los textos se internan en diccionarios (cliente/matrícula/provincia/localidad)
+// y cada viaje es una fila POSICIONAL de índices, para no inflar el HTML con 65k filas de texto repetido.
+// Fila: [empresa, mes, cliente, matrícula, provOrigen, provDestino, locOrigen, locDestino, km, m³, t, importe, hormigón]
+let actividad=null;
+if(actividadSrc?.metadata?.disponible){
+ const co=['Razo','Agetrans'];
+ const mo=[],moIx=new Map();
+ const cli=['(sin asignar)'],cliIx=new Map([['(sin asignar)',0]]);
+ const mat=[''],matIx=new Map([['',0]]);
+ const prov=['(sin provincia)'],provIx=new Map([['',0]]);
+ const loc=['(sin localidad)'],locIx=new Map([['',0]]);
+ const intern=(arr,ix,val)=>{let i=ix.get(val);if(i===undefined){i=arr.length;arr.push(val);ix.set(val,i);}return i;};
+ const rows=actividadSrc.rows.map(r=>{
+  const c=r.c==='Agetrans'?1:0;
+  let mi=moIx.get(r.mes);if(mi===undefined){mi=mo.length;mo.push(r.mes);moIx.set(r.mes,mi);}
+  const ci=intern(cli,cliIx,(r.cli&&String(r.cli).trim())||'(sin asignar)');
+  const mti=intern(mat,matIx,(r.mat&&String(r.mat).trim())||'');
+  const oi=intern(prov,provIx,r.op||''),di=intern(prov,provIx,r.dp||'');
+  const li=intern(loc,locIx,r.ol||''),ld=intern(loc,locIx,r.dl||'');
+  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0];
+ });
+ actividad={meta:{fuente:actividadSrc.metadata.fuente,desde:actividadSrc.metadata.desde,hasta:actividadSrc.metadata.hasta,viajes:rows.length,leido:actividadSrc.metadata.leido},co,mo,cli,mat,prov,loc,rows};
+}
+const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,solredResumen:[...coverageResumen],naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,locatel,actividad,definitions:[
  'Contabilidad: gastos (grupo 6) e ingresos (grupo 7) reales de CxConta por sociedad, mes y cuenta, sin asientos de cierre ni apertura. El resultado contable es la referencia de rentabilidad; el coste de los partes de Access solo recoge una parte del gasto real (ver el puente en Conciliación). Un mes se compara solo cuando está cerrado; el mes en curso queda fuera.',
  'Ingresos sin IVA: líneas de GesRuta, excluidos suplidos, más diferencias explícitas con la base de cabecera. Las facturas anuladas y filas borradas no se incluyen.',
  'Fecha de factura: FECFAC. Fecha de línea: FECHA de linfaclib, con FECFAC como respaldo si no consta. La fecha del parte gobierna siempre los costes.',

@@ -235,5 +235,32 @@ export function createModel(data) {
     const sensorInv={motor:motor.length,conSensor:motor.filter(r=>r.sensor).length,sinSensor:motorNoSensor.length,sinSensorPlates:motorNoSensor.map(r=>r.label),remolques:trailers.length,otros:otros.length,rows:motor.slice().sort((a,b)=>b.km-a.km)};
     return {from,to,km:sum(active,'km'),litres,kmFuel,consumption:divide(litres*100,kmFuel),activeDays:active.length,daysWithoutPart:without.length,pctWithoutPart:divide(without.length,active.length),kmWithoutPart:sum(without,'km'),kmWithPart:kmWith,ratio:divide(partKmSame,kmWith),plates:byPlate.size,plateRows,sensorInv};
   }
-  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView};
+  // ---- Actividad operativa (GesRuta): viajes reales (albarán de cantera), km, m³/t e importe, por mes/cliente/vehículo.
+  const activity=data.actividad||null;
+  function activityView(f){
+    if(!activity)return null;
+    const A=activity;                                    // filas posicionales [c,m,ci,mi,oi,di,li,ld,km,m3,t,imp,h]
+    const C=0,M=1,CI=2,MI=3,OI=4,DI=5,LI=6,LD=7,KM=8,M3=9,T=10,IMP=11;
+    const from=f.from.slice(0,7),to=f.to.slice(0,7),wanted=f.companies?.length?f.companies:['Razo','Agetrans'];
+    const wc=new Set(wanted.map(w=>A.co.indexOf(w)).filter(i=>i>=0));
+    const rows=A.rows.filter(r=>{const m=A.mo[r[M]];return m>=from&&m<=to&&wc.has(r[C]);});
+    if(!rows.length)return null;
+    const blank=k=>({key:k,viajes:0,km:0,m3:0,t:0,imp:0});
+    const add=(x,r)=>{x.viajes++;x.km+=r[KM];x.m3+=r[M3];x.t+=r[T];x.imp+=r[IMP];};
+    const tot=blank('');for(const r of rows)add(tot,r);
+    const mMap=new Map();for(const r of rows){const k=A.mo[r[M]];let x=mMap.get(k);if(!x){x=blank(k);mMap.set(k,x);}add(x,r);}
+    const byMonth=[...mMap.values()].sort((a,b)=>a.key<b.key?-1:1);
+    const grp=(fn)=>{const map=new Map();for(const r of rows){const k=fn(r)||'(sin asignar)';let x=map.get(k);if(!x){x=blank(k);map.set(k,x);}add(x,r);}return [...map.values()].sort((a,b)=>b.viajes-a.viajes);};
+    // Zonas anidadas provincia -> localidad. Cada provincia lleva el desglose de sus localidades.
+    const zona=(pi,li)=>{const map=new Map();for(const r of rows){const p=A.prov[r[pi]];let z=map.get(p);if(!z){z=blank(p);z.locs=new Map();map.set(p,z);}add(z,r);const lc=A.loc[r[li]];let l=z.locs.get(lc);if(!l){l=blank(lc);z.locs.set(lc,l);}add(l,r);}
+      return [...map.values()].map(z=>({...z,locs:[...z.locs.values()].sort((a,b)=>b.viajes-a.viajes)})).sort((a,b)=>b.viajes-a.viajes);};
+    // Ambos: cada viaje cuenta en su provincia de salida Y en la de llegada.
+    const amb=new Map();const addAmb=(pi,li,r)=>{const p=A.prov[pi];let z=amb.get(p);if(!z){z=blank(p);z.locs=new Map();amb.set(p,z);}add(z,r);const lc=A.loc[li];let l=z.locs.get(lc);if(!l){l=blank(lc);z.locs.set(lc,l);}add(l,r);};
+    for(const r of rows){addAmb(r[OI],r[LI],r);addAmb(r[DI],r[LD],r);}
+    const zonasAmbos=[...amb.values()].map(z=>({...z,locs:[...z.locs.values()].sort((a,b)=>b.viajes-a.viajes)})).sort((a,b)=>b.viajes-a.viajes);
+    const rutas=grp(r=>A.prov[r[OI]]+' → '+A.prov[r[DI]]);
+    return {tot,byMonth,byClient:grp(r=>A.cli[r[CI]]),byVeh:grp(r=>A.mat[r[MI]]||'(sin matrícula)'),
+            zonasSalida:zona(OI,LI),zonasLlegada:zona(DI,LD),zonasAmbos,rutas,months:byMonth.map(m=>m.key),from,to};
+  }
+  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView};
 }

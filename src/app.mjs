@@ -10,7 +10,7 @@ const numberCol=(label,key,n=0)=>({label,key,format:v=>nf(v,n),numeric:true});
 const percentCol=(label,key)=>({label,key,format:pct,numeric:true});
 let D,M,state,selection,current,baseline=null,tableState={page:0,query:'',sort:'',asc:false},tableDefinition;
 const slicerDefs=[['plates','Vehículo','plate','plateLabel'],['clients','Cliente','clientId','client'],['categories','Tipo de vehículo','category','category'],['loads','Carga','load','load'],['concepts','Concepto de facturación','concept','concept']];
-let slicerOptions={},ledgerCtx={};
+let slicerOptions={},ledgerCtx={},zoneMode='salida';
 const hasFilters=()=>Boolean(state.plates.length||state.clients.length||state.categories.length||state.loads.length||state.concepts.length);
 const monthName=m=>new Intl.DateTimeFormat('es',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(m+'-01T12:00:00Z'));
 const monthShort=m=>new Intl.DateTimeFormat('es',{month:'short',year:'2-digit',timeZone:'UTC'}).format(new Date(m+'-01T12:00:00Z'));
@@ -268,6 +268,43 @@ function drawTable(){
  $('tableArea').innerHTML=count?`<div class="tablewrap"><table><thead><tr>${def.columns.map(c=>`<th scope="col" aria-sort="${tableState.sort===c.key?(tableState.asc?'ascending':'descending'):'none'}"><button data-sort="${c.key}">${esc(c.label)} ${tableState.sort===c.key?(tableState.asc?'↑':'↓'):'↕'}</button></th>`).join('')}</tr></thead><tbody>${view.map(r=>`<tr>${def.columns.map((c,i)=>`<td class="${c.numeric?'num':''} ${c.numeric&&r[c.key]<0?'neg':''}" title="${esc(c.format?c.format(r[c.key]):r[c.key])}">${i===0&&def.drill?`<button class="tablelink" data-drill="${def.drill}" data-key="${esc(r.key)}">${esc(r[c.key])} ↗</button>`:esc(c.format?c.format(r[c.key]):r[c.key])}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="pager"><span>${tableState.page*50+1}–${Math.min((tableState.page+1)*50,count)} de ${nf(count)} · todas las filas están disponibles</span><div><button data-page="-1" ${tableState.page===0?'disabled':''}>← Anterior</button><button data-page="1" ${(tableState.page+1)*50>=count?'disabled':''}>Siguiente →</button></div></div>`:`<div class="empty">No hay datos para esta combinación. Cambie los filtros o el texto de búsqueda.</div>`;
 }
 function partRows(){const map=new Map();for(const r of selection.costs){if(!map.has(r.id))map.set(r.id,{...r,allocation:0,allocated:0});const x=map.get(r.id);x.allocation+=r.share;x.allocated+=(state.costMode==='recalculated'?r.recalculated:r.stored)*r.share;}return [...map.values()].sort((a,b)=>b.date.localeCompare(a.date));}
+// Barras de viajes reales por mes (una serie), con todos los volúmenes en el tooltip.
+function activityChart(byMonth){
+ const map=new Map(byMonth.map(r=>[r.key,r]));
+ let mth=state.from.slice(0,7);const months=[];
+ while(mth<=state.to.slice(0,7)&&months.length<36){months.push(map.get(mth)||{key:mth,viajes:0,m3:0,t:0,km:0,imp:0});const d=new Date(mth+'-01T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+1);mth=d.toISOString().slice(0,7);}
+ const w=760,h=240,left=48,right=15,top=15,bottom=40,inner=h-top-bottom,base=top+inner,max=Math.max(1,...months.map(r=>r.viajes)),y=v=>top+(max-v)/max*inner,step=(w-left-right)/Math.max(1,months.length),bw=Math.min(30,step*.55);
+ const grid=Array.from({length:5},(_,i)=>{const v=max*i/4;return `<line x1="${left}" x2="${w-right}" y1="${y(v)}" y2="${y(v)}" stroke="#e6ecf4"/><text x="${left-8}" y="${y(v)+4}" text-anchor="end">${esc(short(v))}</text>`;}).join('');
+ const bars=months.map((r,i)=>{const x=left+step*(i+.5);return `<rect x="${x-bw/2}" y="${y(r.viajes)}" width="${bw}" height="${Math.max(.5,base-y(r.viajes))}" fill="#2868dd" rx="2"><title>${esc(monthName(r.key)+' · '+nf(r.viajes)+' viajes · '+nf(r.m3,0)+' m³ · '+nf(r.t,0)+' t · '+eur(r.imp))}</title></rect><text x="${x}" y="${h-12}" text-anchor="middle">${esc(monthShort(r.key))}</text>`;}).join('');
+ return `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Viajes reales por mes; los valores exactos están en la tabla mensual">${grid}${bars}</svg>`;
+}
+// Provincias como desplegables; dentro, sus localidades.
+function zonesBlock(zones){
+ const cols=[{label:'Localidad',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')];
+ return `<div class="zonelist">${zones.map(z=>`<details class="zone"><summary style="display:flex;justify-content:space-between;gap:12px;cursor:pointer;padding:9px 10px;border-bottom:1px solid #eef2f7"><b>${esc(z.key)}</b><span class="hint" style="white-space:nowrap">${nf(z.viajes)} viajes · ${nf(z.m3,0)} m³ · ${nf(z.t,0)} t · ${eur(z.imp)}</span></summary><div style="padding:6px 10px 14px">${simpleTable(cols,z.locs.slice(0,30))}${z.locs.length>30?`<p class="hint">+${z.locs.length-30} localidades más</p>`:''}</div></details>`).join('')}</div>`;
+}
+function activityTab(){
+ const v=M.activityView(state);
+ if(!v)return panel('Actividad','Viajes reales de GesRuta (cada entrega con albarán de cantera).','<div class="info">No hay actividad de GesRuta en el periodo o empresa elegidos.</div>');
+ const t=v.tot;
+ const cards=`<section class="cards" style="margin-bottom:16px">${[
+   ['Viajes reales',nf(t.viajes),'cada entrega con albarán de cantera'],
+   ['Metros cúbicos',nf(t.m3,0),'hormigón'],
+   ['Toneladas',nf(t.t,0),'áridos'],
+   ['Facturación',eur(t.imp),'importe de las líneas · km hormigón '+nf(t.km,0)]
+ ].map(([l,x,h])=>`<article class="card"><span class="label">${l}</span><div class="value">${x}</div><div class="hint">${h}</div></article>`).join('')}</section>`;
+ const trend=panel('Evolución de viajes','Viajes reales por mes; pasa el ratón por cada barra para ver volumen e importe.',activityChart(v.byMonth));
+ const mes=v.byMonth.map(m=>({label:monthName(m.key),viajes:m.viajes,m3:m.m3,t:m.t,km:m.km,imp:m.imp}));
+ const mensual=panel('Evolución mes a mes','Viajes reales, volumen e importe por mes.',simpleTable([{label:'Mes',key:'label'},{label:'Viajes',key:'viajes',numeric:true,format:x=>nf(x)},{label:'m³',key:'m3',numeric:true,format:x=>nf(x,0)},{label:'Toneladas',key:'t',numeric:true,format:x=>nf(x,0)},{label:'Km hormigón',key:'km',numeric:true,format:x=>nf(x,0)},{label:'Importe',key:'imp',numeric:true,format:eur}],mes));
+ const modes=[['salida','Salida (origen)'],['llegada','Llegada (destino)'],['ambos','Ambos extremos']];
+ const toggle=`<div class="segmented" style="margin-bottom:10px">${modes.map(([m,l])=>`<button data-zmode="${m}" aria-pressed="${zoneMode===m}" class="${zoneMode===m?'selected':''}">${esc(l)}</button>`).join('')}</div>`;
+ const zset=zoneMode==='llegada'?v.zonasLlegada:zoneMode==='ambos'?v.zonasAmbos:v.zonasSalida;
+ const zonas=panel('Actividad por zona (provincia → localidad)','Provincias ordenadas por viajes; despliega cada una para ver sus localidades. «Salida» cuenta por la provincia de origen; «Llegada», por la de destino; «Ambos», el viaje suma en las dos.',toggle+zonesBlock(zset));
+ const rutas=panel('Rutas principales (origen → destino)','Primeras 20 combinaciones de provincia de origen y destino por número de viajes.',simpleTable([{label:'Ruta',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')],v.rutas.slice(0,20)));
+ const veh=panel('Por vehículo (primeros 15 por viajes)','Viajes reales, km, m³ e importe por camión.',simpleTable([{label:'Matrícula',key:'key'},{label:'Viajes',key:'viajes',numeric:true,format:x=>nf(x)},{label:'Km',key:'km',numeric:true,format:x=>nf(x,0)},{label:'m³',key:'m3',numeric:true,format:x=>nf(x,0)},{label:'Importe',key:'imp',numeric:true,format:eur}],v.byVeh.slice(0,15)));
+ const cli=setTable('Actividad por cliente','Viajes reales, m³, toneladas, km e importe por cliente. Ordenable y con búsqueda.',v.byClient,[{label:'Cliente',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')]);
+ return `<div class="info">Viaje real = cada entrega con <b>albarán de cantera</b> (no el «viaje» de GesRuta, que agrupa). Km de hormigón del campo «Km. Viaje». Importe de las líneas de albarán. Cliente resuelto por el maestro de GesRuta; zonas por origen/destino del albarán.</div>`+cards+trend+mensual+zonas+rutas+veh+cli;
+}
 function renderContent(){
  tableDefinition=null;let html='';
  if(state.tab==='summary'&&ledgerCtx.ledgerOn){
@@ -293,6 +330,7 @@ function renderContent(){
    html=setTable('Partes y composición del coste','El coste origen es íntegro; el coste en selección aplica la cuota comercial. Un mismo parte puede contribuir a varios clientes. No se modifica el dato de Access.',partRows(),[{label:'Parte Access',key:'id'},{label:'Fecha',key:'date'},{label:'Matrícula',key:'plateLabel'},{label:'Tipo vehículo',key:'category'},{label:'Titular actual',key:'owner'},{label:'Cliente del parte',key:'partClient'},moneyCol('Coste origen','stored'),percentCol('Cuota en selección','allocation'),moneyCol('Coste en selección','allocated'),moneyCol('Recalculado origen','recalculated'),moneyCol('Descuadre directo','residual'),...D.costFields.filter(([k])=>k!=='residual').map(([k,l])=>moneyCol(l,k)),numberCol('Km origen','km'),numberCol('Horas origen','hours',2),numberCol('Viajes Access origen','trips')]);
  }else if(state.tab==='audit')html=audit();
  else if(state.tab==='personal')html=personalView();
+ else if(state.tab==='actividad')html=activityTab();
  else html=method();
  $('content').innerHTML=html;drawTable();
 }
@@ -369,6 +407,7 @@ function bind(){
   if(b.dataset.sort){tableState.asc=tableState.sort===b.dataset.sort?!tableState.asc:true;tableState.sort=b.dataset.sort;drawTable();}
   if(b.dataset.page){tableState.page+=Number(b.dataset.page);drawTable();}
   if(b.dataset.period){const [from,to]=b.dataset.period.split('|');$('from').value=from;$('to').value=to;tableState.page=0;update();}
+  if(b.dataset.zmode){zoneMode=b.dataset.zmode;renderContent();}
  });
  document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='personalKey')unlockPersonal();});
  document.addEventListener('change',e=>{
@@ -389,7 +428,7 @@ async function boot(){
  M=createModel(D);state={from:D.metadata.defaultFrom,to:D.metadata.defaultTo,dateBasis:'invoice',costMode:D.payroll?'real':'stored',consolidado:false,tab:'summary',companies:[],plates:[],clients:[],categories:[],loads:[],concepts:[]};
  if(!D.payroll)$('costMode').querySelector('option[value="real"]').remove();
  if(!D.ledger?.intragrupo?.length)$('billing').closest('label').hidden=true;
- $('costMode').value=state.costMode;$('billing').value='suma';renderSources();$('personalTab').hidden=!PERSONAL_BLOB;
+ $('costMode').value=state.costMode;$('billing').value='suma';renderSources();$('personalTab').hidden=!PERSONAL_BLOB;$('actividadTab').hidden=!D.actividad;
  for(const id of ['from','to','compareFrom','compareTo']){$(id).min=D.metadata.from;$(id).max=D.metadata.to;}
  $('from').value=state.from;$('to').value=state.to;$('compareFrom').value=priorYear(state.from);$('compareTo').value=priorYear(state.to);
  $('fresh').textContent='Lectura '+new Date(D.metadata.accessReadAt).toLocaleString('es-ES',{timeZone:'Europe/Madrid'})+' · datos hasta '+date(D.metadata.to);

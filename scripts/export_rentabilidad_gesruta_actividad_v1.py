@@ -22,7 +22,27 @@ def limpio_km(v):
         return 0.0
 
 
+def norm_prov(s):
+    # Provincia como NOMBRE en puntcd; se unifican variantes obvias del mismo territorio.
+    p = (s or "").strip().upper()
+    if not p:
+        return ""
+    if p in ("LA CORUNA", "LA CORUÑA", "A CORUNA", "CORUNA", "CORUÑA", "LA CORUÑA."):
+        return "A CORUÑA"
+    if p in ("ORENSE",):
+        return "OURENSE"
+    return p
+
+
 def leer_sociedad(base, empresa, desde, hasta):
+    # maestro de clientes: codigo -> nombre (mascli.dbf)
+    clientes = {}
+    mc = abrir(base, "mascli.dbf")
+    for r in mc.registros():
+        cod = (mc.get(r, "CODIGO") or "").strip()
+        if cod:
+            clientes[cod] = (mc.get(r, "NOMBRE") or "").strip()
+    mc.cerrar()
     # fecha de servicio + cliente por (viaje, albaran)
     alb = abrir(base, "albara.dbf")
     cab = {}
@@ -30,7 +50,9 @@ def leer_sociedad(base, empresa, desde, hasta):
         v, n = alb.get(r, "VIAJE"), alb.get(r, "NUMERO")
         if v is None or n is None:
             continue
-        cab[(str(v), str(n))] = {"fecha": alb.get(r, "DESDEF") or alb.get(r, "FECHA"), "cliente": (alb.get(r, "CLIENT") or "").strip()}
+        cod = (alb.get(r, "CLIENT") or "").strip()
+        cab[(str(v), str(n))] = {"fecha": alb.get(r, "DESDEF") or alb.get(r, "FECHA"),
+                                 "cliente": clientes.get(cod, cod)}
     alb.cerrar()
     # matricula por viaje
     vj = abrir(base, "viaje.dbf")
@@ -46,7 +68,10 @@ def leer_sociedad(base, empresa, desde, hasta):
     for r in pc.registros():
         c = (pc.get(r, "CODIGO") or "").strip()
         if c:
-            lugar[c] = {"pro": (pc.get(r, "PROVIN") or "").strip(), "loc": (pc.get(r, "LOCALI") or "").strip(), "nom": (pc.get(r, "NOMBRE") or "").strip()}
+            loc = (pc.get(r, "LOCALI") or "").strip()
+            nom = (pc.get(r, "NOMBRE") or "").strip()
+            # Cuando el punto no trae localidad (canteras/plantas del histórico), su nombre es la mejor etiqueta.
+            lugar[c] = {"pro": norm_prov(pc.get(r, "PROVIN") or ""), "loc": loc or nom, "nom": nom}
     pc.cerrar()
     # lineas: agregacion por (viaje, cantera) = viaje real
     ln = abrir(base, "lineas.dbf")
@@ -70,8 +95,8 @@ def leer_sociedad(base, empresa, desde, hasta):
             o, dest = (ln.get(r, "ORIGEN") or "").strip(), (ln.get(r, "DESTINO") or "").strip()
             t = trips[key] = {"c": empresa, "v": v, "cant": cant, "mat": matr.get(v, {}).get("mat", ""), "cho": matr.get(v, {}).get("cho", ""), "mes": d.isoformat()[:7],
                               "cli": c["cliente"] if c else "", "o": o, "d": dest,
-                              "op": lugar.get(o, {}).get("pro", ""), "ol": lugar.get(o, {}).get("loc", ""),
-                              "dp": lugar.get(dest, {}).get("pro", ""), "dl": lugar.get(dest, {}).get("loc", ""),
+                              "op": norm_prov(lugar.get(o, {}).get("pro", "")), "ol": lugar.get(o, {}).get("loc", "").strip(),
+                              "dp": norm_prov(lugar.get(dest, {}).get("pro", "")), "dl": lugar.get(dest, {}).get("loc", "").strip(),
                               "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "horm": False}
         t["imp"] += ln.get(r, "IMPORT") or 0
         cr = ln.get(r, "CANTIDREAL") or ln.get(r, "CANTID") or 0
