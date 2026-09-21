@@ -157,6 +157,62 @@ def cargar_lugares(base):
     return lugar
 
 
+def cat_gasto(con):
+    # Categoria de un gasto de inggas por su CONCEPTO (unica senal fiable; CODCUENTA/PROTRAN van vacios).
+    c = (con or "").strip().upper()
+    if c == "GASOIL":
+        return "gasoil"
+    if c == "ADBLUE":
+        return "adblue"
+    if c.startswith("AUTOPISTA") or "PEAJE" in c:
+        return "peajes"
+    if c.startswith("PORTE") or "TONELADAS SERVIDAS" in c:
+        return "subcontratacion"
+    return "materiales"  # aridos y demas compras directas al proveedor
+
+
+def leer_margen(base, empresa, desde, hasta):
+    # P&L operativo por viaje desde inggas.dbf: ingreso (TIPO I) y gasto (TIPO G) por concepto, agregado por (mes, cliente).
+    # Es el margen que ve GesRuta, ANTES del coste real de flota (diesel Solred+Access), personal (nomina) e indirectos.
+    clientes = {}
+    mc = abrir(base, "mascli.dbf")
+    for r in mc.registros():
+        cod = (mc.get(r, "CODIGO") or "").strip()
+        if cod:
+            clientes[cod] = (mc.get(r, "NOMBRE") or "").strip()
+    mc.cerrar()
+    vcli = {}
+    alb = abrir(base, "albara.dbf")
+    for r in alb.registros():
+        v = alb.get(r, "VIAJE")
+        if v is None:
+            continue
+        vcli.setdefault(str(v), clientes.get((alb.get(r, "CLIENT") or "").strip(), ""))
+    alb.cerrar()
+    ig = abrir(base, "inggas.dbf")
+    agg = {}  # (mes, cli) -> dict de importes
+    for r in ig.registros():
+        f = ig.get(r, "FECHA")
+        if not f or f.isoformat() < desde or f.isoformat() > hasta:
+            continue
+        tp = (ig.get(r, "TIPO") or "").strip().upper()
+        cli = vcli.get(str(ig.get(r, "VIAJE")), "") or "(sin cliente)"
+        key = (f.isoformat()[:7], cli)
+        a = agg.get(key)
+        if a is None:
+            a = agg[key] = {"c": empresa, "m": key[0], "cli": cli, "ing": 0.0,
+                            "materiales": 0.0, "subcontratacion": 0.0, "gasoil": 0.0, "peajes": 0.0, "adblue": 0.0}
+        if tp == "I":
+            a["ing"] += ig.get(r, "IMPORTEH") or 0
+        elif tp == "G":
+            a[cat_gasto(ig.get(r, "CONCEPTO"))] += ig.get(r, "IMPORTED") or 0
+    ig.cerrar()
+    for a in agg.values():
+        for k in ("ing", "materiales", "subcontratacion", "gasoil", "peajes", "adblue"):
+            a[k] = round(a[k], 2)
+    return list(agg.values())
+
+
 def leer_sociedad(base, empresa, desde, hasta, override, pend):
     # maestro de clientes: codigo -> nombre (mascli.dbf)
     clientes = {}
@@ -253,17 +309,19 @@ def main():
     override, previos = cargar_override(a.lugares)
     pend = {}
     rows = []
+    margen = []
     for carpeta, empresa in (("EMPTR21", "Razo"), ("EMPAG21", "Agetrans")):
         base = os.path.join(a.root, carpeta)
         if not os.path.isdir(base):
             print("Aviso: no esta %s" % base, file=sys.stderr)
             continue
         rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend))
+        margen.extend(leer_margen(base, empresa, a.from_date, hasta))
     for t in rows:
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
     out = {"metadata": {"disponible": True, "fuente": "GesRuta operativo (lineas de albaran con cantera + inggas)",
                         "desde": a.from_date, "hasta": hasta, "viajes": len(rows),
-                        "leido": datetime.datetime.now().isoformat(timespec="seconds")}, "rows": rows}
+                        "leido": datetime.datetime.now().isoformat(timespec="seconds")}, "rows": rows, "margen": margen}
     with open(a.output, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
     lug = {"total": 0, "pendientes": 0}
@@ -277,8 +335,13 @@ def main():
     for t in rows:
         x = porEmp.setdefault(t["c"], {"v": 0, "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0})
         x["v"] += 1; x["km"] += t["km"]; x["m3"] += t["m3"]; x["t"] += t["t"]; x["imp"] += t["imp"]
+    mrg = {}
+    for a in margen:
+        x = mrg.setdefault(a["c"], {"ing": 0.0, "gasto": 0.0})
+        x["ing"] += a["ing"]; x["gasto"] += a["materiales"] + a["subcontratacion"] + a["gasoil"] + a["peajes"] + a["adblue"]
     print(json.dumps({"disponible": True, "viajes": len(rows), "lugares": lug,
-                      "porEmpresa": {k: {kk: round(vv) for kk, vv in v.items()} for k, v in porEmp.items()}}, ensure_ascii=False))
+                      "porEmpresa": {k: {kk: round(vv) for kk, vv in v.items()} for k, v in porEmp.items()},
+                      "margen": {k: {"ing": round(v["ing"]), "gasto": round(v["gasto"]), "op": round(v["ing"] - v["gasto"])} for k, v in mrg.items()}}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

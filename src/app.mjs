@@ -283,16 +283,20 @@ function zonesBlock(zones){
  const cols=[{label:'Localidad',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')];
  return `<div class="zonelist">${zones.map(z=>`<details class="zone"><summary style="display:flex;justify-content:space-between;gap:12px;cursor:pointer;padding:9px 10px;border-bottom:1px solid #eef2f7"><b>${esc(z.key)}</b><span class="hint" style="white-space:nowrap">${nf(z.viajes)} viajes · ${nf(z.m3,0)} m³ · ${nf(z.t,0)} t · ${eur(z.imp)}</span></summary><div style="padding:6px 10px 14px">${simpleTable(cols,z.locs.slice(0,30))}${z.locs.length>30?`<p class="hint">+${z.locs.length-30} localidades más</p>`:''}</div></details>`).join('')}</div>`;
 }
+// Árbol de costes / cascada del P&L operativo de GesRuta (inggas).
+function costTree(t){
+ const r=(l,v,strong,soft,hint)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 2px;border-bottom:1px solid #eef2f7;${strong?'font-weight:700;':''}${soft?'color:#6b7a90;':''}"><span>${l}${hint?` <small style="color:#6b7a90">${hint}</small>`:''}</span><b>${eur(v)}</b></div>`;
+ return `<div style="max-width:660px">${r('Ingresos (GesRuta)',t.ing,1)}${r('− Materiales (áridos comprados)',-t.materiales)}${r('− Subcontratación (portes)',-t.subcontratacion)}${r('= Coste directo comprado',-t.directos,1)}${r('− Gasoil declarado en GesRuta',-t.gasoil,0,1)}${r('− Peajes y AdBlue',-(t.peajes+t.adblue),0,1)}${r('= Margen operativo',t.margen,1,0,pct(t.margenPct))}</div>`;
+}
 function activityTab(){
  const v=M.activityView(state);
  if(!v)return panel('Actividad','Viajes reales de GesRuta (cada entrega con albarán de cantera).','<div class="info">No hay actividad de GesRuta en el periodo o empresa elegidos.</div>');
- const t=v.tot;
- const cards=`<section class="cards" style="margin-bottom:16px">${[
-   ['Viajes reales',nf(t.viajes),'cada entrega con albarán de cantera'],
-   ['Metros cúbicos',nf(t.m3,0),'hormigón'],
-   ['Toneladas',nf(t.t,0),'áridos'],
-   ['Facturación',eur(t.imp),'importe de las líneas · km hormigón '+nf(t.km,0)]
- ].map(([l,x,h])=>`<article class="card"><span class="label">${l}</span><div class="value">${x}</div><div class="hint">${h}</div></article>`).join('')}</section>`;
+ const t=v.tot,mv=M.marginView(state);
+ const prod=[['Viajes reales',nf(t.viajes),'cada entrega con albarán de cantera'],['Metros cúbicos',nf(t.m3,0),'hormigón'],['Toneladas',nf(t.t,0),'áridos'],['Km hormigón',nf(t.km,0),'campo «Km. Viaje»']];
+ const eco=mv?[['Ingreso (GesRuta)',eur(mv.tot.ing),'inggas, todos los conceptos'],['Coste directo',eur(mv.tot.directos),'áridos + subcontratación'],['Margen operativo',eur(mv.tot.margen),pct(mv.tot.margenPct)+' · antes de flota y personal']]:[];
+ const card=([l,x,h])=>`<article class="card"><span class="label">${l}</span><div class="value">${x}</div><div class="hint">${h}</div></article>`;
+ const cards=`<section class="cards" style="margin-bottom:16px">${prod.map(card).join('')}</section>`+(eco.length?`<section class="cards" style="margin-bottom:16px">${eco.map(card).join('')}</section>`:'');
+ const arbol=mv?panel('Margen operativo (GesRuta)','P&L que registra GesRuta por viaje (inggas): ingresos menos el coste directo comprado (material y subcontratación) y los gastos de circulación. Es ANTES del coste real de flota (diésel Solred+Access), personal (nómina) e indirectos, que se restan en la pestaña Resumen.',costTree(mv.tot)):'';
  const trend=panel('Evolución de viajes','Viajes reales por mes; pasa el ratón por cada barra para ver volumen e importe.',activityChart(v.byMonth));
  const mes=v.byMonth.map(m=>({label:monthName(m.key),viajes:m.viajes,m3:m.m3,t:m.t,km:m.km,imp:m.imp}));
  const mensual=panel('Evolución mes a mes','Viajes reales, volumen e importe por mes.',simpleTable([{label:'Mes',key:'label'},{label:'Viajes',key:'viajes',numeric:true,format:x=>nf(x)},{label:'m³',key:'m3',numeric:true,format:x=>nf(x,0)},{label:'Toneladas',key:'t',numeric:true,format:x=>nf(x,0)},{label:'Km hormigón',key:'km',numeric:true,format:x=>nf(x,0)},{label:'Importe',key:'imp',numeric:true,format:eur}],mes));
@@ -302,8 +306,13 @@ function activityTab(){
  const zonas=panel('Actividad por zona (provincia → localidad)','Provincias ordenadas por viajes; despliega cada una para ver sus localidades. «Salida» cuenta por la provincia de origen; «Llegada», por la de destino; «Ambos», el viaje suma en las dos.',toggle+zonesBlock(zset));
  const rutas=panel('Rutas principales (origen → destino)','Primeras 20 combinaciones de provincia de origen y destino por número de viajes.',simpleTable([{label:'Ruta',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')],v.rutas.slice(0,20)));
  const veh=panel('Por vehículo (primeros 15 por viajes)','Viajes reales, km, m³ e importe por camión.',simpleTable([{label:'Matrícula',key:'key'},{label:'Viajes',key:'viajes',numeric:true,format:x=>nf(x)},{label:'Km',key:'km',numeric:true,format:x=>nf(x,0)},{label:'m³',key:'m3',numeric:true,format:x=>nf(x,0)},{label:'Importe',key:'imp',numeric:true,format:eur}],v.byVeh.slice(0,15)));
- const cli=setTable('Actividad por cliente','Viajes reales, m³, toneladas, km e importe por cliente. Ordenable y con búsqueda.',v.byClient,[{label:'Cliente',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),moneyCol('Importe','imp')]);
- return `<div class="info">Viaje real = cada entrega con <b>albarán de cantera</b> (no el «viaje» de GesRuta, que agrupa). Km de hormigón del campo «Km. Viaje». Importe de las líneas de albarán. Cliente resuelto por el maestro de GesRuta; zonas por origen/destino del albarán.</div>`+cards+trend+mensual+zonas+rutas+veh+cli;
+ // Cliente: producción (cantera) + P&L operativo (inggas), unidos por nombre del maestro.
+ const cmap=new Map();
+ for(const r of v.byClient)cmap.set(r.key,{key:r.key,viajes:r.viajes,m3:r.m3,t:r.t,ing:0,directos:0,margen:0,margenPct:null});
+ if(mv)for(const [k,x] of mv.byClient){const c=cmap.get(k)||{key:k,viajes:0,m3:0,t:0};c.ing=x.ing;c.directos=x.directos;c.margen=x.margen;c.margenPct=x.margenPct;cmap.set(k,c);}
+ const clientRows=[...cmap.values()].sort((a,b)=>(b.margen||0)-(a.margen||0));
+ const cli=setTable('Cliente: actividad y margen','Producción (viajes, m³, t) y P&L operativo de GesRuta (ingreso − coste directo comprado). El margen es antes del coste real de flota y personal. Ordenable y con búsqueda.',clientRows,[{label:'Cliente',key:'key'},numberCol('Viajes','viajes'),numberCol('m³','m3'),numberCol('Toneladas','t'),moneyCol('Ingreso','ing'),moneyCol('Coste directo','directos'),moneyCol('Margen op','margen'),percentCol('% margen','margenPct')]);
+ return `<div class="info">Viaje real = cada entrega con <b>albarán de cantera</b>. Producción (viajes, m³/t, km) de las líneas de albarán. <b>Margen operativo</b> del P&L por viaje de GesRuta (inggas): ingreso − material − subcontratación − circulación; es <b>antes</b> del diésel real, el personal y los indirectos (esos, en Resumen).</div>`+cards+arbol+trend+mensual+zonas+rutas+veh+cli;
 }
 function renderContent(){
  tableDefinition=null;let html='';

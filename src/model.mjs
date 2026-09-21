@@ -262,5 +262,21 @@ export function createModel(data) {
     return {tot,byMonth,byClient:grp(r=>A.cli[r[CI]]),byVeh:grp(r=>A.mat[r[MI]]||'(sin matrícula)'),
             zonasSalida:zona(OI,LI),zonasLlegada:zona(DI,LD),zonasAmbos,rutas,months:byMonth.map(m=>m.key),from,to};
   }
-  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView};
+  function marginView(f){
+    if(!activity||!activity.margen)return null;                 // P&L operativo de GesRuta (inggas): ingreso - gasto directo por viaje
+    const A=activity,from=f.from.slice(0,7),to=f.to.slice(0,7),wanted=f.companies?.length?f.companies:['Razo','Agetrans'];
+    const wc=new Set(wanted.map(w=>A.co.indexOf(w)).filter(i=>i>=0));
+    const rows=A.margen.rows.filter(r=>r.m>=from&&r.m<=to&&wc.has(r.c));
+    if(!rows.length)return null;
+    const blank=k=>({key:k,ing:0,materiales:0,subcontratacion:0,gasoil:0,peajes:0,adblue:0});
+    const add=(x,r)=>{x.ing+=r.i;x.materiales+=r.ma;x.subcontratacion+=r.s;x.gasoil+=r.g;x.peajes+=r.p;x.adblue+=r.ad;};
+    const cerrar=x=>{x.directos=x.materiales+x.subcontratacion;x.gasto=x.directos+x.gasoil+x.peajes+x.adblue;x.margen=x.ing-x.gasto;x.margenPct=x.ing?x.margen/x.ing:null;return x;};
+    const tot=blank('');for(const r of rows)add(tot,r);cerrar(tot);
+    const cMap=new Map();for(const r of rows){let x=cMap.get(r.cli);if(!x){x=blank(r.cli);cMap.set(r.cli,x);}add(x,r);}
+    const byClient=new Map();for(const [k,x] of cMap){byClient.set(k,cerrar(x));}
+    const mMap=new Map();for(const r of rows){let x=mMap.get(r.m);if(!x){x=blank(r.m);mMap.set(r.m,x);}add(x,r);}
+    const byMonth=[...mMap.values()].map(cerrar).sort((a,b)=>a.key<b.key?-1:1);
+    return {tot,byClient,byMonth};
+  }
+  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView};
 }
