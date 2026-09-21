@@ -9,12 +9,14 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $inv = [Globalization.CultureInfo]::InvariantCulture
+# Access es un documento VIVO (se usa a diario): se COPIA y se lee la COPIA (foto estable). Nunca se abre el que usa la gente.
+$copy = Join-Path (Split-Path -Parent $OutputPath) ('access-personal-'+[guid]::NewGuid().ToString('N')+'.accdb')
+Copy-Item -LiteralPath $SourcePath -Destination $copy -Force
 $conn = $null
 foreach ($prov in 'Microsoft.ACE.OLEDB.12.0','Microsoft.ACE.OLEDB.16.0') {
-  try { $c = New-Object System.Data.OleDb.OleDbConnection "Provider=$prov;Data Source=$SourcePath;Mode=Read;Persist Security Info=False;"; $c.Open(); $conn = $c; break } catch { }
+  try { $c = New-Object System.Data.OleDb.OleDbConnection "Provider=$prov;Data Source=$copy;Mode=Read;Persist Security Info=False;"; $c.Open(); $conn = $c; break } catch { }
 }
-if ($null -eq $conn) { throw 'No hay proveedor Access (ACE) instalado.' }
-$before = (Get-Item -LiteralPath $SourcePath).LastWriteTimeUtc.ToString('o')
+if ($null -eq $conn) { Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue; throw 'No hay proveedor Access (ACE) instalado.' }
 $ntilde = [char]0xF1
 function Fecha-Nula($v) { if ($v -is [System.DBNull] -or $null -eq $v) { return $null } else { return ([datetime]$v).ToString('yyyy-MM-dd') } }
 function Num-Nulo($v) { if ($v -is [System.DBNull] -or $null -eq $v) { return $null } else { return [double]$v } }
@@ -43,12 +45,10 @@ try {
     })
   }
   $rd.Close()
-  $after = (Get-Item -LiteralPath $SourcePath).LastWriteTimeUtc.ToString('o')
-  if ($before -ne $after) { throw 'Access cambio durante la lectura; repita la extraccion.' }
   $out = [ordered]@{ metadata=[ordered]@{ desde=$Desde; hasta=$Hasta; read_at=(Get-Date).ToString('o'); aviso='DATOS PERSONALES: solo capa cifrada' }; parts=$parts.ToArray(); employees=$emps.ToArray() }
   [IO.File]::WriteAllText($OutputPath, (ConvertTo-Json -InputObject $out -Depth 8 -Compress), (New-Object Text.UTF8Encoding($false)))
   $conResp = @($parts | Where-Object { $_.emp }).Count
   $ids = @{}; foreach ($e in $emps) { $ids[$e.id] = $true }
   $enLista = @($parts | Where-Object { $_.emp -and $ids.ContainsKey($_.emp) }).Count
   Write-Output ("Personal: partes=$($parts.Count); con responsable=$conResp; responsables que existen en la lista de empleados=$enLista; empleados=$($emps.Count); vigentes=" + @($emps | Where-Object { $_.vigente }).Count + "; Output=$OutputPath")
-} finally { $conn.Close() }
+} finally { if ($conn) { $conn.Close() }; Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue }

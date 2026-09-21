@@ -91,7 +91,8 @@ if(contab?.metadata?.disponible){
 let telemetry=null;
 if(movertis?.metadata?.disponible){
  const rows=movertis.rows.map(r=>({plate:plateKey(r.p),date:r.d,km:r.km,litres:r.l})).filter(r=>r.plate);
- telemetry={meta:{fuente:movertis.metadata.fuente,desde:movertis.metadata.desde,hasta:movertis.metadata.hasta,diasCamion:movertis.metadata.diasCamion,diasFiables:movertis.metadata.diasFiables,diasDescartados:movertis.metadata.diasDescartados,unidades:movertis.metadata.unidades,leido:movertis.metadata.leido},rows};
+ const clases=Object.fromEntries(Object.entries(movertis.clases||{}).map(([m,c])=>[plateKey(m),c]).filter(([k])=>k));
+ telemetry={meta:{fuente:movertis.metadata.fuente,desde:movertis.metadata.desde,hasta:movertis.metadata.hasta,diasCamion:movertis.metadata.diasCamion,diasFiables:movertis.metadata.diasFiables,diasDescartados:movertis.metadata.diasDescartados,unidades:movertis.metadata.unidades,leido:movertis.metadata.leido},clases,rows};
 }
 
 // ---- Locatel (CANbus, vía el ERP): km y consumo reales por matrícula y tramo. Hoy la copia local puede no tener aún estas

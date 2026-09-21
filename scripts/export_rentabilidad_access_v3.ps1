@@ -1,7 +1,11 @@
 ﻿param([string]$Desde='2025-01-01',[string]$Hasta=(Get-Date).AddDays(-1).ToString('yyyy-MM-dd'),[Parameter(Mandatory=$true)][string]$SourcePath,[Parameter(Mandatory=$true)][string]$OutputPath)
 $ErrorActionPreference = 'Stop'
-$conn = New-Object System.Data.OleDb.OleDbConnection "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=$sourcePath;Mode=Read;Persist Security Info=False;"
-$before = (Get-Item -LiteralPath $sourcePath).LastWriteTimeUtc.ToString('o')
+# Access (Partes 7.0) es un documento VIVO: se usa a diario. Para no fallar ni leer datos a medias mientras alguien lo edita,
+# se COPIA el fichero y se lee la COPIA (una foto estable). Nunca se abre ni se modifica el Access que usa la gente.
+$modified = (Get-Item -LiteralPath $SourcePath).LastWriteTimeUtc.ToString('o')
+$copy = Join-Path (Split-Path -Parent $OutputPath) ('access-copia-'+[guid]::NewGuid().ToString('N')+'.accdb')
+Copy-Item -LiteralPath $SourcePath -Destination $copy -Force
+$conn = New-Object System.Data.OleDb.OleDbConnection "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=$copy;Mode=Read;Persist Security Info=False;"
 $conn.Open()
 function Read-Rows([string]$sql) {
   $cmd = $conn.CreateCommand(); $cmd.CommandText = $sql
@@ -41,10 +45,8 @@ try {
   # Solo id y nombre de la estacion: la tabla trae usuario y clave del portal de cada estacion y NO se leen.
   $stations = Read-Rows 'SELECT IdEstacionServicio AS id, NombreEstacion AS nombre FROM EstacionServicio'
   $controls = Read-Rows "SELECT Count(*) AS partes, Sum(TotalCostesDirectos) AS directo, Sum(CosteEstructura) AS estructura, Sum(FacturacionDiariaTotal) AS ingreso, Sum(KmRecorridos) AS km FROM PartesTrabajo WHERE Fecha >= #$start# AND Fecha < #$endExclusive#"
-  $after = (Get-Item -LiteralPath $sourcePath).LastWriteTimeUtc.ToString('o')
-  if($before -ne $after) { throw 'Access cambio durante la lectura; repita la extraccion.' }
-  $out = [ordered]@{metadata=@{source=$sourcePath;read_at=(Get-Date).ToString('o');modified=$after;desde=$Desde;hasta=$Hasta;query=$partQuery};controls=$controls;parts=$parts;machines=$machines;categories=$categories;companies=$companies;clients=$clients;plants=$plants;stations=$stations}
+  $out = [ordered]@{metadata=@{source=$SourcePath;read_at=(Get-Date).ToString('o');modified=$modified;desde=$Desde;hasta=$Hasta;query=$partQuery};controls=$controls;parts=$parts;machines=$machines;categories=$categories;companies=$companies;clients=$clients;plants=$plants;stations=$stations}
   $json = ConvertTo-Json -InputObject $out -Depth 8 -Compress
   [System.IO.File]::WriteAllText($outputPath,$json,(New-Object System.Text.UTF8Encoding($false)))
   Write-Output "Partes=$($parts.Count); Maquinas=$($machines.Count); Output=$outputPath"
-} finally { $conn.Close() }
+} finally { $conn.Close(); Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue }

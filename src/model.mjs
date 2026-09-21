@@ -218,12 +218,22 @@ export function createModel(data) {
     const partKmSame=withPart.reduce((s,r)=>s+partKm.get(r.plate+'|'+r.date),0);
     const byPlate=new Map();
     for(const r of active){
-      const x=byPlate.get(r.plate)||{key:r.plate,label:r.plate,activeDays:0,daysWithoutPart:0,km:0,kmWithoutPart:0,litres:0,kmFuel:0};
-      x.activeDays++;x.km+=r.km;if(!has(r)){x.daysWithoutPart++;x.kmWithoutPart+=r.km;}if(r.litres>0){x.litres+=r.litres;x.kmFuel+=r.km;}
+      const x=byPlate.get(r.plate)||{key:r.plate,label:r.plate,activeDays:0,daysWithoutPart:0,km:0,kmWithoutPart:0,litres:0,kmFuel:0,daysFuel:0};
+      x.activeDays++;x.km+=r.km;if(!has(r)){x.daysWithoutPart++;x.kmWithoutPart+=r.km;}if(r.litres>0){x.litres+=r.litres;x.kmFuel+=r.km;x.daysFuel++;}
       byPlate.set(r.plate,x);
     }
-    const plateRows=[...byPlate.values()].map(x=>({...x,consumption:divide(x.litres*100,x.kmFuel),pctWithoutPart:divide(x.daysWithoutPart,x.activeDays)})).sort((a,b)=>b.kmWithoutPart-a.kmWithoutPart);
-    return {from,to,km:sum(active,'km'),litres,kmFuel,consumption:divide(litres*100,kmFuel),activeDays:active.length,daysWithoutPart:without.length,pctWithoutPart:divide(without.length,active.length),kmWithoutPart:sum(without,'km'),kmWithPart:kmWith,ratio:divide(partKmSame,kmWith),plates:byPlate.size,plateRows};
+    const plateRows=[...byPlate.values()].map(x=>({...x,sensor:x.litres>0,consumption:x.litres>0?divide(x.litres*100,x.kmFuel):null,pctWithoutPart:divide(x.daysWithoutPart,x.activeDays)})).sort((a,b)=>b.kmWithoutPart-a.kmWithoutPart);
+    // Sensor de consumo (litros por CANbus): NO lo llevan todos. Solo los vehículos CON MOTOR (tractora, rígido) pueden
+    // tenerlo; un remolque no gasta gasoil. Se clasifica por el tipo del ERP (razo_clase), no por la matrícula. El inventario
+    // se hace sobre TODAS las matrículas medidas en el periodo (no solo las que superan 30 km/día), que es la flota real.
+    const clases=telemetry.clases||{},inv=new Map();
+    for(const r of rows){const x=inv.get(r.plate)||{plate:r.plate,clase:clases[r.plate]||'',km:0,litres:0,kmFuel:0};x.km+=r.km;if(r.litres>0){x.litres+=r.litres;x.kmFuel+=r.km;}inv.set(r.plate,x);}
+    const motorClases=['tractora','rigido','camion','furgoneta'];
+    const invRows=[...inv.values()].map(x=>({label:x.plate,clase:x.clase||'',motor:motorClases.includes(x.clase)||x.litres>0,sensor:x.litres>0,km:x.km,litres:x.litres,consumption:x.litres>0?divide(x.litres*100,x.kmFuel):null}));
+    const motor=invRows.filter(r=>r.motor),trailers=invRows.filter(r=>r.clase==='remolque'),otros=invRows.filter(r=>!r.motor&&r.clase!=='remolque');
+    const motorNoSensor=motor.filter(r=>!r.sensor).sort((a,b)=>b.km-a.km);
+    const sensorInv={motor:motor.length,conSensor:motor.filter(r=>r.sensor).length,sinSensor:motorNoSensor.length,sinSensorPlates:motorNoSensor.map(r=>r.label),remolques:trailers.length,otros:otros.length,rows:motor.slice().sort((a,b)=>b.km-a.km)};
+    return {from,to,km:sum(active,'km'),litres,kmFuel,consumption:divide(litres*100,kmFuel),activeDays:active.length,daysWithoutPart:without.length,pctWithoutPart:divide(without.length,active.length),kmWithoutPart:sum(without,'km'),kmWithPart:kmWith,ratio:divide(partKmSame,kmWith),plates:byPlate.size,plateRows,sensorInv};
   }
   return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView};
 }

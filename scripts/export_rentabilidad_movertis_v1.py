@@ -40,6 +40,12 @@ def main():
         "ORDER BY d.fecha, e.matricula" % (a.from_date, hasta))
     if not filas:
         raise RuntimeError('El ERP no tiene ningun dia de Movertis en el periodo')
+    # Tipo de carroceria de cada matricula (tractora / rigido / remolque). El sensor de consumo (litros) solo lo llevan los
+    # vehiculos CON MOTOR (tractora, rigido); un remolque no gasta gasoil. Sirve para detallar que camiones miden consumo.
+    clases_rows = consulta(docker, a.contenedor, a.base, a.usuario,
+        "SELECT DISTINCT e.matricula AS p, COALESCE(fv.razo_clase,'') AS clase FROM razo_movertis_enlace e "
+        "LEFT JOIN fleet_vehicle fv ON fv.id = e.vehicle_id WHERE e.matricula IS NOT NULL")
+    clases = {r['p']: r['clase'] for r in clases_rows if r['p']}
     validas, descartadas, sin_matricula = [], 0, 0
     for r in filas:
         if r['x'] == 't' or r['km'] == '':
@@ -52,7 +58,7 @@ def main():
     out = {'metadata': {'disponible': True, 'fuente': 'Movertis (razo_movertis_dia del ERP)', 'desde': fechas[0], 'hasta': fechas[-1],
                         'diasCamion': len(filas), 'diasFiables': len(validas), 'diasDescartados': descartadas,
                         'unidades': len({r['p'] for r in validas}), 'leido': datetime.datetime.now().isoformat(timespec='seconds')},
-           'rows': validas}
+           'clases': clases, 'rows': validas}
     with open(a.output, 'w', encoding='utf-8') as f:
         json.dump(out, f, ensure_ascii=False)
     print(json.dumps(out['metadata'], ensure_ascii=False))
