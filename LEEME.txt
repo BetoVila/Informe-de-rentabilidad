@@ -50,6 +50,13 @@ pestana "Personal" en el informe: pide la clave, descifra en el navegador (AES-2
 y no guarda nada. Sin la clave, los nombres y sueldos ni se leen ni salen en el fichero.
 Si se olvida, se elige otra y en la lectura siguiente se vuelve a cifrar.
 
+SAL DE CONDUCTORES (HORAS REALES DEL TACOGRAFO)
+Las horas reales de cada conductor se enlazan con su ficha por el DNI que lleva la tarjeta
+del tacografo. Ese DNI nunca se guarda: se guarda un codigo que depende de una "sal"
+secreta. SAL DE CONDUCTORES.cmd la crea una sola vez, al azar; no hay que escribir ni
+apuntar nada y queda cifrada para el usuario de Windows de este PC. Si se pierde, se crea
+otra y en la lectura siguiente se recalcula todo.
+
 LO DECLARADO NO ES LO REAL
 Los gastos y el consumo (litros/km) que traen los partes de Access los declara quien
 los rellena: son DECLARADOS, no reales, y estan incompletos (faltan partes en muchos

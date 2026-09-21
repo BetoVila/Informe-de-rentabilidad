@@ -14,10 +14,10 @@ foreach($f in (@(Get-ChildItem -LiteralPath $root -Filter '*.ps1' -File)+@(Get-C
     [IO.File]::WriteAllText($f.FullName,$t,$bom)
 }
 # Nada privado ni de pruebas viaja en el paquete: solo el programa.
-$items=@('src','scripts','runtime','vendor','config','Actualizar.ps1','Poner-clave-personal.ps1','LEEME.txt')|ForEach-Object{Join-Path $root $_}
+$items=@('src','scripts','runtime','vendor','config','Actualizar.ps1','Poner-clave-personal.ps1','Poner-sal-conductores.ps1','LEEME.txt')|ForEach-Object{Join-Path $root $_}
 Compress-Archive -LiteralPath $items -DestinationPath $archive -CompressionLevel Optimal
 $hash=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
 [IO.File]::WriteAllText((Join-Path $release 'programa.sha256'),$hash,(New-Object Text.UTF8Encoding($false)))
-Copy-Item -LiteralPath (Join-Path $root 'Instalar.ps1'),(Join-Path $root 'ACTIVAR EN SERVIDOR.cmd'),(Join-Path $root 'INSTALAR EN ESTE PC.cmd'),(Join-Path $root 'CLAVE DEL PERSONAL.cmd'),(Join-Path $root 'LEEME.txt') -Destination $release
+Copy-Item -LiteralPath (Join-Path $root 'Instalar.ps1'),(Join-Path $root 'ACTIVAR EN SERVIDOR.cmd'),(Join-Path $root 'INSTALAR EN ESTE PC.cmd'),(Join-Path $root 'CLAVE DEL PERSONAL.cmd'),(Join-Path $root 'SAL DE CONDUCTORES.cmd'),(Join-Path $root 'LEEME.txt') -Destination $release
 Write-Output ('Paquete: '+$archive)
 Write-Output ('SHA256: '+$hash)
