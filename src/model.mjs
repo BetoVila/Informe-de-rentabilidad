@@ -132,6 +132,18 @@ export function createModel(data) {
   // ---- Contabilidad real (CxConta): la referencia de rentabilidad. Por sociedad y mes; solo meses cerrados.
   const ledger=data.ledger||null;
   const societyOf=(owner)=>{const up=String(owner||'').toUpperCase();for(const [k,v] of Object.entries(ledger?.titularASociedad||{}))if(up.includes(k))return v;return null;};
+  // Cada matrícula, ¿de qué sociedad es? (por mayoría de sus partes de Access). Sirve para separar los viajes hechos con
+  // NUESTROS camiones de los subcontratados: un viaje facturado con una matrícula que no es de la sociedad es subcontratado
+  // (para Agetrans, un viaje con camión de Razo es subcontratado a Razo; a nivel grupo, un camión de Razo sí es propio).
+  const plateSociety=(()=>{const cnt=new Map();for(const p of data.parts){if(!p.plate)continue;const s=societyOf(p.owner);if(!s)continue;const m=cnt.get(p.plate)||{};m[s]=(m[s]||0)+1;cnt.set(p.plate,m);}const out=new Map();for(const [pl,m] of cnt)out.set(pl,Object.entries(m).sort((a,b)=>b[1]-a[1])[0][0]);return out;})();
+  function ownFleet(f){
+    const names=ledger?Object.values(ledger.sociedades):['Razo','Agetrans'],wanted=f.companies?.length?f.companies:names;
+    const own=new Set();for(const [pl,s] of plateSociety)if(wanted.includes(s))own.add(pl);
+    const from=f.from.slice(0,7),to=f.to.slice(0,7);
+    let total=0,ownRev=0,noPlate=0,other=0;
+    for(const l of data.lines){const m=(l.invoiceDate||'').slice(0,7);if(m<from||m>to)continue;if(!wanted.includes(l.company))continue;const r=l.revenue||0;total+=r;if(!l.plate)noPlate+=r;else if(own.has(l.plate))ownRev+=r;else other+=r;}
+    return {total,own:ownRev,sub:total-ownRev,noPlate,otherSoc:other,fraction:total>0?ownRev/total:null};
+  }
   const monthList=(from,to)=>{const out=[];let [y,m]=from.slice(0,7).split('-').map(Number);const [ye,me]=to.slice(0,7).split('-').map(Number);while(y<ye||(y===ye&&m<=me)){out.push(y+'-'+String(m).padStart(2,'0'));if(++m>12){m=1;y++;}}return out;};
   const monthEnd=(month)=>{const [y,m]=month.split('-').map(Number);return month+'-'+String(new Date(Date.UTC(y,m,0)).getUTCDate()).padStart(2,'0');};
   function ledgerView(f){
@@ -213,5 +225,5 @@ export function createModel(data) {
     const plateRows=[...byPlate.values()].map(x=>({...x,consumption:divide(x.litres*100,x.kmFuel),pctWithoutPart:divide(x.daysWithoutPart,x.activeDays)})).sort((a,b)=>b.kmWithoutPart-a.kmWithoutPart);
     return {from,to,km:sum(active,'km'),litres,kmFuel,consumption:divide(litres*100,kmFuel),activeDays:active.length,daysWithoutPart:without.length,pctWithoutPart:divide(without.length,active.length),kmWithoutPart:sum(without,'km'),kmWithPart:kmWith,ratio:divide(partKmSame,kmWith),plates:byPlate.size,plateRows};
   }
-  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,telemetryView};
+  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView};
 }
