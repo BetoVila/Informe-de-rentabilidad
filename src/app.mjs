@@ -289,14 +289,22 @@ function treeRow(l,v,strong,soft,hint){return `<div style="display:flex;justify-
 function costTree(t){
  return `<div style="max-width:660px">${treeRow('Ingresos (GesRuta)',t.ing,1)}${treeRow('− Materiales (áridos comprados)',-t.materiales)}${treeRow('− Subcontratación (portes)',-t.subcontratacion)}${treeRow('= Coste directo comprado',-t.directos,1)}${treeRow('− Gasoil declarado en GesRuta',-t.gasoil,0,1)}${treeRow('− Peajes y AdBlue',-(t.peajes+t.adblue),0,1)}${treeRow('= Margen operativo',t.margen,1,0,pct(t.margenPct))}</div>`;
 }
+// Línea desplegable del árbol: la suma como cabecera y, dentro, cada cuenta de la contabilidad.
+function treeGroup(label,subs){
+ const items=subs.filter(s=>Math.abs(s.amount)>0.5).sort((a,b)=>b.amount-a.amount);
+ const total=items.reduce((s,x)=>s+x.amount,0);
+ const body=items.map(s=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 2px 5px 20px;color:#6b7a90;border-bottom:1px solid #f3f6fa"><span>${esc(s.label)}</span><span>${eur(-s.amount)}</span></div>`).join('');
+ return `<details><summary style="display:flex;justify-content:space-between;gap:12px;padding:7px 2px;border-bottom:1px solid #eef2f7;color:#6b7a90;cursor:pointer;list-style:none"><span>− ${label} <small style="color:#9aa7b8">▸ desglose</small></span><b>${eur(-total)}</b></summary>${body}</details>`;
+}
 // Árbol NETO desde la contabilidad real (reconcilia con el resultado): Directos comprados → contribución → Flota → Indirectos.
+const NETO_DIRECTOS=['aridos','subcontratacion'],NETO_FLOTA=['combustible','personal','amortizacion','reparaciones','seguros','repuestos','alquileres','dietas','peajes'];
 function netTree(lv){
  const by=Object.fromEntries(lv.expenseCategories.map(c=>[c.id,c.amount])),g=id=>by[id]||0;
+ const sub=ids=>lv.expenseCategories.filter(c=>ids.includes(c.id)).map(c=>({label:c.label,amount:c.amount}));
  const directos=g('aridos')+g('subcontratacion');
- const flotaOtros=g('amortizacion')+g('reparaciones')+g('seguros')+g('repuestos')+g('peajes')+g('alquileres')+g('dietas');
- const flota=g('combustible')+g('personal')+flotaOtros;
- const indirectos=lv.expenses-directos-flota;
- return `<div style="max-width:660px">${treeRow('Ingresos contables',lv.income,1)}${treeRow('− Áridos comprados',-g('aridos'))}${treeRow('− Subcontratación',-g('subcontratacion'))}${treeRow('= Margen de contribución',lv.income-directos,1)}${treeRow('− Combustible (diésel real)',-g('combustible'),0,1)}${treeRow('− Personal',-g('personal'),0,1)}${treeRow('− Amortización, reparaciones, seguros, neumáticos…',-flotaOtros,0,1)}${treeRow('− Indirectos (estructura, tributos, financieros…)',-indirectos,0,1)}${treeRow('= Resultado real',lv.result,1,0,pct(lv.marginPct))}</div>`;
+ const flotaOtrosSubs=sub(NETO_FLOTA.filter(id=>id!=='combustible'&&id!=='personal'));
+ const indirectosSubs=lv.expenseCategories.filter(c=>!NETO_DIRECTOS.includes(c.id)&&!NETO_FLOTA.includes(c.id)).map(c=>({label:c.label,amount:c.amount}));
+ return `<div style="max-width:660px">${treeRow('Ingresos contables',lv.income,1)}${treeRow('− Áridos comprados',-g('aridos'))}${treeRow('− Subcontratación',-g('subcontratacion'))}${treeRow('= Margen de contribución',lv.income-directos,1)}${treeRow('− Combustible (diésel real)',-g('combustible'),0,1)}${treeRow('− Personal',-g('personal'),0,1)}${treeGroup('Otros de flota (amortización, talleres, seguros, neumáticos…)',flotaOtrosSubs)}${treeGroup('Indirectos y estructura',indirectosSubs)}${treeRow('= Resultado real',lv.result,1,0,pct(lv.marginPct))}</div>`;
 }
 function activityTab(){
  const v=M.activityView(state);
