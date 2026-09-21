@@ -172,21 +172,22 @@ function fuelPersonnelPanel(){
  const {lv}=ledgerCtx;if(!lv||!(lv.income>0))return '';
  const fuel=lv.expenseCategories.find(c=>c.id==='combustible')?.amount||0,pers=lv.expenseCategories.find(c=>c.id==='personal')?.amount||0;
  if(fuel<=0&&pers<=0)return '';
- const income=lv.income,base=lv.result,both=fuel+pers;
- const steps=[-0.10,-0.05,0,0.05,0.10],res=(df,dp)=>base-fuel*df-pers*dp;
- let maxAbs=0;for(const df of steps)for(const dp of steps)maxAbs=Math.max(maxAbs,Math.abs(res(df,dp)-base));
- const color=(v)=>{const d=v-base;if(Math.abs(d)<1||maxAbs<1)return '';const a=(0.10+0.30*Math.min(1,Math.abs(d)/maxAbs)).toFixed(2);return `background:${d>0?`rgba(14,148,136,${a})`:`rgba(193,57,75,${a})`}`;};
- const dl=(d)=>(d>0?'+':'')+Math.round(d*100)+' %';
- const header=`<tr><th class="plain">Combustible ↓ / Personal →</th>${steps.map(dp=>`<th class="plain num">${dl(dp)}</th>`).join('')}</tr>`;
- const body=steps.map(df=>`<tr><th class="plain">${dl(df)}</th>${steps.map(dp=>{const v=res(df,dp),b=df===0&&dp===0;return `<td class="num${b?' total':''}" style="${color(v)}" title="Combustible ${dl(df)}, personal ${dl(dp)} → resultado ${eur(v)} (margen ${pct(v/income)})">${eur(v)}</td>`;}).join('')}</tr>`).join('');
+ const income=lv.income,base=lv.result,both=fuel+pers,res=(df,dp)=>base-fuel*df-pers*dp;
  const of=M.ownFleet({...state,from:lv.months[0]+'-01',to:monthEndOf(lv.months[lv.months.length-1])});
  const frac=of&&of.fraction!=null?of.fraction:null,ownInc=frac!=null?income*frac:null;
- const split=`<div class="ic-grid"><div class="ic-row"><span>Facturación total (contabilidad)</span><b>${eur(income)}</b></div>`+(frac!=null?`<div class="ic-row sub"><span>De nuestros camiones (viajes propios)</span><b>${eur(ownInc)} · ${pct(frac)} del total</b></div><div class="ic-row"><span>Subcontratada / otros</span><b>${eur(income-ownInc)} · ${pct(1-frac)}</b></div>`:'')+`<div class="ic-row"><span>Resultado actual</span><b>${eur(base)} · margen ${pct(base/income)}</b></div></div>`;
- const wcols=[{label:'Coste',key:'label'},{label:'Importe',key:'v',numeric:true,format:eur},{label:'% s/ facturación total',key:'pt',numeric:true,format:pct}];
- if(frac!=null)wcols.push({label:'% s/ viajes propios',key:'pp',numeric:true,format:dash(pct)});
- const wrows=[{label:'Combustible',v:fuel,pt:fuel/income,pp:ownInc?fuel/ownInc:null},{label:'Personal',v:pers,pt:pers/income,pp:ownInc?pers/ownInc:null},{label:'Los dos juntos',v:both,pt:both/income,pp:ownInc?both/ownInc:null,total:true}];
- const note=`<p class="ic-note">El combustible y el personal son costes de <b>nuestra flota</b>: pesan sobre la facturación de <b>los viajes que hacen nuestros camiones</b>, no sobre el total (que incluye lo subcontratado).${frac!=null?' Por eso el combustible es '+pct(fuel/income)+' del total pero <b>'+pct(fuel/ownInc)+'</b> de los viajes propios.':''} El reparto propio/subcontratado sale de GesRuta (matrícula = camión de la sociedad), deducido. Cada 1 % que sube el combustible se lleva <b>${eur(fuel/100)}</b> de resultado; cada 1 % de personal, <b>${eur(pers/100)}</b>. En la matriz, la fila y la columna del 0 % son cada coste por separado; el resto, los dos a la vez (verde mejora, rojo empeora).</p>`;
- return panel('El resultado según el combustible y el personal',`Sobre la contabilidad real (${monthRange(lv.months)}${lv.consolidado?', consolidada':''}). Combustible = cuenta 628; personal = cuentas 640-649. Su peso sobre el total y sobre los viajes propios, y cuánto mueven el resultado.`,split+simpleTable(wcols,wrows)+note+`<div class="tablewrap"><table><thead>${header}</thead><tbody>${body}</tbody></table></div>`);
+ // 1) De dónde sale la facturación
+ const split=`<div class="ic-grid"><div class="ic-row"><span>Lo que facturas en total</span><b>${eur(income)}</b></div>`+(frac!=null?`<div class="ic-row sub"><span>Lo mueven nuestros camiones (viajes propios)</span><b>${eur(ownInc)} · ${pct(frac)}</b></div><div class="ic-row"><span>Lo hacen otros (subcontratado)</span><b>${eur(income-ownInc)} · ${pct(1-frac)}</b></div>`:'')+`<div class="ic-row"><span>Resultado</span><b>${eur(base)} · margen ${pct(base/income)}</b></div></div>`;
+ // 2) Cuánto pesan el gasoil y el personal (sobre el total y sobre los viajes propios)
+ const wcols=[{label:'Coste',key:'label'},{label:'Cuánto cuesta',key:'v',numeric:true,format:eur},{label:'% de la facturación total',key:'pt',numeric:true,format:pct}];
+ if(frac!=null)wcols.push({label:'% de los viajes propios',key:'pp',numeric:true,format:dash(pct)});
+ const wrows=[{label:'Combustible (gasoil)',v:fuel,pt:fuel/income,pp:ownInc?fuel/ownInc:null},{label:'Personal',v:pers,pt:pers/income,pp:ownInc?pers/ownInc:null},{label:'Los dos juntos',v:both,pt:both/income,pp:ownInc?both/ownInc:null,total:true}];
+ const wnote=`<p class="ic-note">El gasoil y el personal solo los pone <b>nuestra flota</b>, así que lo que de verdad cuenta es su peso sobre <b>los viajes que hacen nuestros camiones</b>, no sobre el total (que incluye lo subcontratado, donde no ponemos ni gasoil ni conductores).${frac!=null?' Por eso el gasoil parece un '+pct(fuel/income)+' del total, pero es un <b>'+pct(fuel/ownInc)+'</b> de tus viajes propios.':''} El reparto propio/subcontratado sale de la matrícula de cada factura.</p>`;
+ // 3) Qué pasa si suben esos costes (frases claras en vez de matriz)
+ const scen=[['Si el gasoil sube un 5 %',res(0.05,0)],['Si el gasoil sube un 10 %',res(0.10,0)],['Si el personal sube un 5 %',res(0,0.05)],['Si el personal sube un 10 %',res(0,0.10)],['Si suben los dos un 5 %',res(0.05,0.05)],['Si suben los dos un 10 %',res(0.10,0.10)]];
+ const scols=[{label:'Escenario',key:'label'},{label:'El resultado quedaría en',key:'v',numeric:true,format:eur},{label:'Cambio',key:'d',numeric:true,format:eur,tone:r=>r.d<-1?'neg':''}];
+ const srows=scen.map(([l,v])=>({label:l,v,d:v-base}));
+ const snote=`<p class="ic-note">Hoy el resultado es <b>${eur(base)}</b>. Por cada 1 % que sube el gasoil pierdes <b>${eur(fuel/100)}</b>; por cada 1 % que sube el personal, <b>${eur(pers/100)}</b>. Al revés funciona igual: si esos costes bajan, el resultado sube esos mismos importes.</p>`;
+ return panel('El resultado según el combustible y el personal',`Sobre la contabilidad real (${monthRange(lv.months)}${lv.consolidado?', consolidada':''}). Cuánto pesan el gasoil y el personal, y qué le pasaría al resultado si cambian.`,split+`<h3>Cuánto pesan el gasoil y el personal</h3>`+simpleTable(wcols,wrows)+wnote+`<h3>Qué pasaría si suben esos costes</h3>`+simpleTable(scols,srows)+snote);
 }
 function bridgePanel(){
  const {br,lv}=ledgerCtx;if(!br||!lv?.months.length)return '';
