@@ -326,7 +326,7 @@ export function createModel(data) {
     const R=_reparto(f);if(!R)return null;
     const {A,rows,cost,ix}=R,{CI,OI,IMP,TRM}=ix;
     const blank=k=>({key:k,viajes:0,ingreso:0,coste:0,medido:0});
-    const add=(x,r)=>{x.viajes++;x.ingreso+=r[IMP]||0;x.coste+=cost(r);if(r[TRM]===0)x.medido+=r[IMP]||0;};
+    const add=(x,r)=>{x.viajes++;x.ingreso+=r[IMP]||0;x.coste+=cost(r);if(r[TRM]<=1)x.medido+=r[IMP]||0;};   // medido o repartido = respaldado por localizador
     const cerrar=x=>{x.coste=Math.round(x.coste);x.ingreso=Math.round(x.ingreso);x.margen=x.ingreso-x.coste;x.margenPct=x.ingreso?x.margen/x.ingreso:null;x.fiable=x.ingreso?x.medido/x.ingreso:0;return x;};
     const grp=fn=>{const m=new Map();for(const r of rows){const k=fn(r)||'(sin asignar)';let x=m.get(k);if(!x){x=blank(k);m.set(k,x);}add(x,r);}return [...m.values()].map(cerrar).sort((a,b)=>b.ingreso-a.ingreso);};
     const tot=blank('');for(const r of rows)add(tot,r);cerrar(tot);

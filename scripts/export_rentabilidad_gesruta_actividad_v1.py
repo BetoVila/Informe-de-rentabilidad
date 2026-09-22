@@ -73,6 +73,11 @@ def limpio_km(v):
         return 0.0
 
 
+def norm_mat(m):
+    # Matricula comparable (para cruzar con la tabla de horas del localizador): solo letras y numeros, en mayuscula.
+    return re.sub(r"[^0-9A-Z]", "", (m or "").upper())
+
+
 def norm_prov(s):
     # Provincia como NOMBRE; se unifican variantes obvias del mismo territorio.
     p = (s or "").strip().upper()
@@ -390,6 +395,7 @@ def main():
     ap.add_argument("--lugares", default="", help="CSV editable donde Roberto escribe provincia/localidad de los puntos")
     ap.add_argument("--gps", default="", help="JSON con el municipio real de cada punto segun las paradas GPS de la flota")
     ap.add_argument("--triangulado", default="", help="triangulado_v1.json: km/litros/duracion reales por viaje (bases de reparto del coste)")
+    ap.add_argument("--horas", default="", help="horas_vehiculo_mes.json: minutos MEDIDOS por matricula|mes (para dar horas reales al hormigon)")
     a = ap.parse_args()
     hasta = a.to_date or (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
     override, previos = cargar_override(a.lugares)
@@ -415,6 +421,12 @@ def main():
                 Lp100 = round(litt / kmt * 100, 2)   # consumo medio real de la flota (para el hormigon sin litros)
         except (OSError, ValueError) as e:
             print("Aviso: no se pudo leer --triangulado %s: %s" % (a.triangulado, e), file=sys.stderr)
+    horas = {}
+    if a.horas and os.path.isfile(a.horas):
+        try:
+            horas = json.load(open(a.horas, encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print("Aviso: no se pudo leer --horas %s: %s" % (a.horas, e), file=sys.stderr)
     pend = {}
     rows = []
     margen = []
@@ -425,8 +437,15 @@ def main():
             continue
         rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend, lugar))
         margen.extend(leer_margen(base, empresa, a.from_date, hasta))
-    # Pegar a cada viaje su km/litros/horas REALES (bases de reparto). En aridos/nacional vienen de la triangulacion;
-    # en hormigon el km es el nativo (CAMPO2) y litros/horas se estiman (consumo medio y ciclo) marcando la fuente en 'trm'.
+    # Pegar a cada viaje su km/litros/horas REALES (bases de reparto). Aridos/nacional: de la triangulacion. Hormigon:
+    # km nativo (CAMPO2) y HORAS REALES del localizador (jornadas por matricula/mes, repartidas por km entre los viajes de
+    # hormigon de ese vehiculo) cuando las hay; si no, estimadas. La fuente queda en 'trm'.
+    hormKm = {}
+    if horas:
+        for t in rows:
+            if not tri.get((t["c"], t["v"], t["cant"])) and t["km"] > 0:
+                k = (norm_mat(t["mat"]), t["mes"])
+                hormKm[k] = hormKm.get(k, 0.0) + t["km"]
     for t in rows:
         tr = tri.get((t["c"], t["v"], t["cant"]))
         if tr and (tr.get("km") or 0) > 0:
@@ -438,8 +457,14 @@ def main():
         else:
             t["kmr"] = round(t["km"], 1)                                  # hormigon: km nativo (Km. Viaje)
             t["lit"] = round(t["kmr"] * Lp100 / 100, 1) if t["kmr"] else 0.0
-            t["dur"] = round(40 + t["kmr"] / 22.0 * 60, 0) if t["kmr"] else None
-            t["trm"] = "hormigon" if t["horm"] else "sin"
+            hm = horas.get(norm_mat(t["mat"]) + "|" + t["mes"]) if horas else None
+            tk = hormKm.get((norm_mat(t["mat"]), t["mes"]), 0.0)
+            if hm and tk > 0 and t["km"] > 0:
+                t["dur"] = round(hm * t["km"] / tk, 0)                    # horas MEDIDAS del vehiculo, repartidas por km
+                t["trm"] = "repartido"
+            else:
+                t["dur"] = round(40 + t["kmr"] / 22.0 * 60, 0) if t["kmr"] else None
+                t["trm"] = "hormigon" if t["horm"] else "sin"
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
     out = {"metadata": {"disponible": True, "fuente": "GesRuta operativo (lineas de albaran con cantera + inggas)",
                         "desde": a.from_date, "hasta": hasta, "viajes": len(rows),
