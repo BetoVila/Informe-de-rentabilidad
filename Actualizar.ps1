@@ -69,8 +69,28 @@ try{
     # Se leen de ahi los km por matricula y dia (sin conectarse a Locatel) y se acumulan en una cache propia, que sobrevive
     # a las lecturas (el fichero del agente solo cubre ~2 semanas).
     if($opt.locatel){Invoke-Opcional 'Locatel' {& $py (Join-Path $root 'scripts\export_rentabilidad_locatel_v2.py') --cache (Join-Path $root 'cache\locatel_km_dia.json') --output (Join-Path $run 'locatel_v1.json') --from-date $config.from --to-date $hasta}}
+    # Triangulado v2: cada viaje real de aridos/nacional <-> la traza del localizador y el tacografo (hora real de inicio y fin,
+    # conductor, minutos de conduccion/espera, fecha real de servicio). Lee las trazas asentadas en historicos\ (se bajan aparte,
+    # poco a poco). Opcional: si falla, el informe sigue con el ultimo triangulado de cache (v2 anterior, o v1).
+    $hist=Join-Path $root 'historicos'
+    $tri2=Join-Path $root 'cache\triangulado_v2.json'
+    Invoke-Opcional 'Triangulado v2' {
+        & $py (Join-Path $root 'scripts\demanda_triangular_v2.py') --root (Join-Path $config.sourceRoot 'Gesruta') --from-date $config.from --to-date $hasta --plates (Join-Path $hist 'movertis_plates.txt') --salida (Join-Path $run 'demanda_triangular.json')
+        if($LASTEXITCODE -ne 0){throw 'demanda'}
+        & $py (Join-Path $root 'scripts\triangular_v2.py') --demanda (Join-Path $run 'demanda_triangular.json') --wialon (Join-Path $hist 'wialon_hist') --locatel (Join-Path $hist 'locatel_hist') --sensores (Join-Path $hist 'sensores_erp.json') --geocode (Join-Path $hist 'coords_lugares_por_casa.json') --plates (Join-Path $hist 'movertis_plates.txt') --conductores (Join-Path $hist 'conductores_hash_codigo.json') --ancla (Join-Path $config.sourceRoot '_TARIFAS\export\viajes-ancla-razo.json.gz') --salida (Join-Path $run 'triangulado_v2.json') --diag (Join-Path $run 'triangulado_v2_diag.json')
+        if($LASTEXITCODE -ne 0){throw 'triangular'}
+        Copy-Item -LiteralPath (Join-Path $run 'triangulado_v2.json') -Destination $tri2 -Force
+        # Publicacion en P: (esquema aditivo acordado con el ERP y tarifas): sustitucion atomica, nunca se trunca el vigente.
+        $pub=Join-Path $config.publicPath 'triangulado_v2.json';$tmp=$pub+'.tmp'
+        Copy-Item -LiteralPath (Join-Path $run 'triangulado_v2.json') -Destination $tmp -Force
+        if(Test-Path -LiteralPath $pub){[IO.File]::Replace($tmp,$pub,$null)}else{[IO.File]::Move($tmp,$pub)}
+        # El dia de cada camion en el mapa (compacto), junto al informe: dias\<MATRICULA>_<fecha>.html ("ver dia" en Por cliente).
+        & $py (Join-Path $root 'scripts\ver_dia_mapa.py') --v2 (Join-Path $run 'triangulado_v2.json') --diag (Join-Path $run 'triangulado_v2_diag.json') --wialon (Join-Path $hist 'wialon_hist') --locatel (Join-Path $hist 'locatel_hist') --todos --salida-dir (Join-Path $config.publicPath 'dias')
+        if($LASTEXITCODE -ne 0){throw 'mapas de dias'}
+    }
+    $triArg=if(Test-Path -LiteralPath $tri2){$tri2}else{Join-Path $root 'cache\triangulado_v1.json'}
     # Actividad operativa de GesRuta: viajes reales (albaran de cantera), km, m3/t por viaje. Opcional (si falla, sigue sin la pestana).
-    Invoke-Opcional 'Actividad GesRuta' {& $py (Join-Path $root 'scripts\export_rentabilidad_gesruta_actividad_v1.py') --root (Join-Path $config.sourceRoot 'Gesruta') --output (Join-Path $run 'actividad_v1.json') --from-date $config.from --to-date $hasta --lugares (Join-Path $config.publicPath 'lugares-provincias.csv') --gps (Join-Path $root 'cache\lugares_gps.json') --triangulado (Join-Path $root 'cache\triangulado_v1.json') --horas (Join-Path $root 'cache\horas_vehiculo_mes.json')}
+    Invoke-Opcional 'Actividad GesRuta' {& $py (Join-Path $root 'scripts\export_rentabilidad_gesruta_actividad_v1.py') --root (Join-Path $config.sourceRoot 'Gesruta') --output (Join-Path $run 'actividad_v1.json') --from-date $config.from --to-date $hasta --lugares (Join-Path $config.publicPath 'lugares-provincias.csv') --gps (Join-Path $root 'cache\lugares_gps.json') --triangulado $triArg --horas (Join-Path $root 'cache\horas_vehiculo_mes.json')}
     if($clave){Invoke-Opcional 'Enlace parte-conductor' {
         $pa=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'scripts\export_rentabilidad_personal_v1.ps1'),'-Desde',$config.from,'-Hasta',$hasta,'-SourcePath',(Join-Path $config.sourceRoot 'PartesTrabajo\Partes 7.0.accdb'),'-OutputPath',(Join-Path $run 'personal_v1.json'))
         & $ps64 @pa

@@ -423,11 +423,22 @@ def main():
             print("Aviso: no se pudo leer --gps %s: %s" % (a.gps, e), file=sys.stderr)
     lugar = cargar_lugares_global(a.root, gps)   # maestro de lugares GLOBAL (Razo+Agetrans), una sola vez
     # triangulacion: km/litros/duracion reales por (empresa,viaje,cantera) -> bases de reparto del coste
-    tri, Lp100 = {}, 40.0
+    tri, Lp100, tri_resumen = {}, 40.0, None
     if a.triangulado and os.path.isfile(a.triangulado):
         try:
             td = json.load(open(a.triangulado, encoding="utf-8"))
             trows = td if isinstance(td, list) else (td.get("rows") or td.get("viajes") or next((x for x in td.values() if isinstance(x, list)), []))
+            if isinstance(td, dict) and td.get("resumen"):
+                rs, mt = td["resumen"], td.get("meta") or {}
+                tri_resumen = {"version": mt.get("version"), "generado": mt.get("generado"), "viajes": rs.get("viajes"),
+                               "medido": (rs.get("medido_por_viaje") or {}).get("viajes"), "pct": (rs.get("medido_por_viaje") or {}).get("pct"),
+                               "aridos_pct": (rs.get("medido_por_viaje") or {}).get("aridos_pct"),
+                               "alta": (rs.get("confianza_medidos") or {}).get("alta"), "media": (rs.get("confianza_medidos") or {}).get("media"),
+                               "taco": rs.get("horas_del_tacografo"), "chofer_ok": (rs.get("chofer_coincide_gesruta") or {}).get("True"),
+                               "chofer_no": (rs.get("chofer_coincide_gesruta") or {}).get("False"),
+                               "nocturnas": (rs.get("jornadas") or {}).get("nocturnas"), "sin_ciclo": rs.get("viajes_sin_ciclo"),
+                               "sobrantes_h": rs.get("horas_sobrantes_sin_viaje"), "largas": rs.get("larga_distancia_pendiente_pasada_2"),
+                               "repetidas": rs.get("cantera_repetida_error_grabacion"), "sin_traza": sum((rs.get("sin_traza_por_motivo") or {}).values())}
             kmt = litt = 0.0
             for r in trows:
                 tri[(r.get("empresa"), str(r.get("viaje")), str(r.get("cantera")))] = r
@@ -473,6 +484,15 @@ def main():
             dur = tr.get("duracion_min")
             t["dur"] = round(dur, 0) if dur else (round(40 + t["kmr"] / 22.0 * 60, 0) if t["kmr"] else None)
             t["trm"] = "repartido" if tr.get("repartido") else "medido"
+        if tr and tr.get("t_ini"):
+            # triangulado v2: hora real de inicio/fin, orden del dia, desglose de minutos (tacografo o traza), metodo,
+            # confianza, chofer que llevaba el camion (tacografo) y jornada nocturna. TODO VISIBLE en el informe.
+            t["tini"] = tr.get("t_ini"); t["tfin"] = tr.get("t_fin"); t["ord"] = tr.get("orden_dia")
+            t["mcon"] = tr.get("min_conduccion"); t["mesp"] = tr.get("min_espera"); t["motr"] = tr.get("min_otros")
+            t["met"] = tr.get("metodo"); t["conf"] = tr.get("confianza"); t["chot"] = tr.get("chofer_tacografo")
+            t["noct"] = bool(tr.get("jornada_nocturna")); t["med"] = bool(tr.get("medido")); t["mfu"] = tr.get("min_fuente")
+        elif tr:
+            t["ord"] = tr.get("orden_dia"); t["met"] = tr.get("metodo"); t["conf"] = tr.get("confianza"); t["med"] = False
         else:
             t["kmr"] = round(t["km"], 1)                                  # hormigon: km nativo (Km. Viaje)
             t["lit"] = round(t["kmr"] * Lp100 / 100, 1) if t["kmr"] else 0.0
@@ -496,7 +516,7 @@ def main():
             coords[nom] = [round(g["lat"], 5), round(g["lon"], 5), g.get("localidad") or "", g.get("provincia") or ""]
     out = {"metadata": {"disponible": True, "fuente": "GesRuta operativo (lineas de albaran: cantera=arido/hormigon, o nacional subcontratado por albaran; coste subcontrata=IMPPRO; inggas)",
                         "desde": a.from_date, "hasta": hasta, "viajes": len(rows),
-                        "improExcluidos": impro_excl, "coords": coords,
+                        "improExcluidos": impro_excl, "coords": coords, "triangulado": tri_resumen,
                         "leido": datetime.datetime.now().isoformat(timespec="seconds")}, "rows": rows, "margen": margen}
     with open(a.output, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)

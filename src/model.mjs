@@ -345,7 +345,11 @@ export function createModel(data) {
     const R=_reparto(f);if(!R)return null;
     const {A,rows,cost,nameOf,dRate,ix}=R,{M,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}=ix;
     const TR=['medido','repartido','estimado','sin traza'];
-    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=!R.sub(r)&&(dRate.get(nameOf(r))||0)>1;return {mes:A.mo[r[M]],dia:(A.dia&&A.dia[r[20]])||A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],carga:A.pt[r[13]]||A.loc[r[6]]||'—',descarga:A.pt[r[14]]||A.loc[r[7]]||'—',mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(R.sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':'')};});
+    const hhmm=s=>s?String(s).slice(11,16):null;
+    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=!R.sub(r)&&(dRate.get(nameOf(r))||0)>1;const x={mes:A.mo[r[M]],dia:(A.dia&&A.dia[r[20]])||A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],carga:A.pt[r[13]]||A.loc[r[6]]||'—',descarga:A.pt[r[14]]||A.loc[r[7]]||'—',mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(R.sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':'')};
+      // triangulado v2 (índices 21..31): hora real de inicio/fin, orden del día, minutos de conducción/espera, método, confianza, chofer del tacógrafo
+      if(r.length>=32){const ti=r[21]||null,tf=r[22]||null;x.tini=hhmm(ti);x.tfin=tf?hhmm(tf)+(ti&&tf.slice(0,10)!==ti.slice(0,10)?' +1':''):null;x.orden=r[23]||null;x.cond=r[24]==null?null:Math.round(r[24]);x.espera=r[25]==null?null:Math.round(r[25]);x.otros=r[26]==null?null:Math.round(r[26]);x.metodo=(A.met&&A.met[r[27]])||null;x.conf=(A.conf&&A.conf[r[28]])||null;x.chofer=(A.chot&&A.chot[r[29]])||null;x.nocturna=!!r[30];x.medido=!!r[31];x.mapaKey=(x.medido&&x.mat&&x.mat!=='—'&&x.dia)?x.mat+'_'+x.dia:null;}
+      return x;});
   }
   // Puntos GEO del periodo elegido (para el MAPA): agrega los viajes filtrados por su punto de origen/destino y une la
   // coordenada real del localizador (paradas GPS de la flota). Respeta periodo y sociedad.
