@@ -389,6 +389,7 @@ def main():
     ap.add_argument("--to-date", default="")
     ap.add_argument("--lugares", default="", help="CSV editable donde Roberto escribe provincia/localidad de los puntos")
     ap.add_argument("--gps", default="", help="JSON con el municipio real de cada punto segun las paradas GPS de la flota")
+    ap.add_argument("--triangulado", default="", help="triangulado_v1.json: km/litros/duracion reales por viaje (bases de reparto del coste)")
     a = ap.parse_args()
     hasta = a.to_date or (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
     override, previos = cargar_override(a.lugares)
@@ -399,6 +400,21 @@ def main():
         except (OSError, ValueError) as e:
             print("Aviso: no se pudo leer --gps %s: %s" % (a.gps, e), file=sys.stderr)
     lugar = cargar_lugares_global(a.root, gps)   # maestro de lugares GLOBAL (Razo+Agetrans), una sola vez
+    # triangulacion: km/litros/duracion reales por (empresa,viaje,cantera) -> bases de reparto del coste
+    tri, Lp100 = {}, 40.0
+    if a.triangulado and os.path.isfile(a.triangulado):
+        try:
+            td = json.load(open(a.triangulado, encoding="utf-8"))
+            trows = td if isinstance(td, list) else (td.get("rows") or td.get("viajes") or next((x for x in td.values() if isinstance(x, list)), []))
+            kmt = litt = 0.0
+            for r in trows:
+                tri[(r.get("empresa"), str(r.get("viaje")), str(r.get("cantera")))] = r
+                kmt += r.get("km") or 0
+                litt += r.get("litros_calibrados") or r.get("litros") or 0
+            if kmt:
+                Lp100 = round(litt / kmt * 100, 2)   # consumo medio real de la flota (para el hormigon sin litros)
+        except (OSError, ValueError) as e:
+            print("Aviso: no se pudo leer --triangulado %s: %s" % (a.triangulado, e), file=sys.stderr)
     pend = {}
     rows = []
     margen = []
@@ -409,7 +425,21 @@ def main():
             continue
         rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend, lugar))
         margen.extend(leer_margen(base, empresa, a.from_date, hasta))
+    # Pegar a cada viaje su km/litros/horas REALES (bases de reparto). En aridos/nacional vienen de la triangulacion;
+    # en hormigon el km es el nativo (CAMPO2) y litros/horas se estiman (consumo medio y ciclo) marcando la fuente en 'trm'.
     for t in rows:
+        tr = tri.get((t["c"], t["v"], t["cant"]))
+        if tr and (tr.get("km") or 0) > 0:
+            t["kmr"] = round(tr.get("km") or 0, 1)
+            t["lit"] = round(tr.get("litros_calibrados") or tr.get("litros") or (t["kmr"] * Lp100 / 100), 1)
+            dur = tr.get("duracion_min")
+            t["dur"] = round(dur, 0) if dur else (round(40 + t["kmr"] / 22.0 * 60, 0) if t["kmr"] else None)
+            t["trm"] = "repartido" if tr.get("repartido") else "medido"
+        else:
+            t["kmr"] = round(t["km"], 1)                                  # hormigon: km nativo (Km. Viaje)
+            t["lit"] = round(t["kmr"] * Lp100 / 100, 1) if t["kmr"] else 0.0
+            t["dur"] = round(40 + t["kmr"] / 22.0 * 60, 0) if t["kmr"] else None
+            t["trm"] = "hormigon" if t["horm"] else "sin"
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
     out = {"metadata": {"disponible": True, "fuente": "GesRuta operativo (lineas de albaran con cantera + inggas)",
                         "desde": a.from_date, "hasta": hasta, "viajes": len(rows),

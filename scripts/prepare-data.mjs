@@ -158,6 +158,7 @@ if(actividadSrc?.metadata?.disponible){
  const loc=['(sin localidad)'],locIx=new Map([['',0]]);
  const pt=['(sin punto)'],ptIx=new Map([['',0]]);
  const intern=(arr,ix,val)=>{let i=ix.get(val);if(i===undefined){i=arr.length;arr.push(val);ix.set(val,i);}return i;};
+ const TRM={medido:0,repartido:1,hormigon:2,sin:3};   // fiabilidad del km/coste del viaje (triangulado / estimado)
  const rows=actividadSrc.rows.map(r=>{
   const c=r.c==='Agetrans'?1:0;
   let mi=moIx.get(r.mes);if(mi===undefined){mi=mo.length;mo.push(r.mes);moIx.set(r.mes,mi);}
@@ -166,7 +167,7 @@ if(actividadSrc?.metadata?.disponible){
   const oi=intern(prov,provIx,r.op||''),di=intern(prov,provIx,r.dp||'');
   const li=intern(loc,locIx,r.ol||''),ld=intern(loc,locIx,r.dl||'');
   const po=intern(pt,ptIx,r.on||''),pd=intern(pt,ptIx,r.dn||'');
-  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd];
+  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3];
  });
  // Margen operativo de GesRuta (inggas): P&L por mes×cliente. Antes del coste real de flota/personal/indirectos.
  let margen=null;

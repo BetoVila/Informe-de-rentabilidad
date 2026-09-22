@@ -293,5 +293,29 @@ export function createModel(data) {
     const byMonth=[...mMap.values()].map(cerrar).sort((a,b)=>a.key<b.key?-1:1);
     return {tot,byClient,byMonth};
   }
-  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView};
+  // Margen NETO por cliente y zona: reparte el coste REAL de la contabilidad a cada viaje por su base (litros→combustible,
+  // horas→personal, km→flota fija, ingreso→directos e indirectos), escalado al ingreso capturado en los viajes. Así el
+  // conjunto cuadra con el margen contable. Marca la fiabilidad (fracción de ingreso con km/horas MEDIDOS por localizador).
+  function netaView(f){
+    if(!activity||!ledger)return null;
+    const lv=ledgerView(f);if(!lv||lv.income<=0)return null;
+    const A=activity,C=0,M=1,CI=2,OI=4,IMP=11,KMR=15,LIT=16,DUR=17,TRM=18;
+    const from=f.from.slice(0,7),to=f.to.slice(0,7),wanted=f.companies?.length?f.companies:['Razo','Agetrans'];
+    const wc=new Set(wanted.map(w=>A.co.indexOf(w)).filter(i=>i>=0));
+    const rows=A.rows.filter(r=>{const m=A.mo[r[M]];return m>=from&&m<=to&&wc.has(r[C]);});
+    if(!rows.length||A.rows[0].length<19)return null;      // hace falta la triangulación (bases por viaje)
+    let SL=0,SD=0,SK=0,SI=0;for(const r of rows){SL+=r[LIT]||0;SD+=r[DUR]||0;SK+=r[KMR]||0;SI+=r[IMP]||0;}
+    const BASE={combustible:'lit',personal:'dur',dietas:'dur',repuestos:'km',reparaciones:'km',seguros:'km',amortizacion:'km',alquileres:'km',peajes:'km',neumaticos:'km'};
+    const bucket={lit:0,dur:0,km:0,imp:0};for(const c of lv.expenseCategories)bucket[BASE[c.id]||'imp']+=c.amount;
+    const S={lit:SL,dur:SD,km:SK,imp:SI},scale=SI/lv.income;   // coste soportado por los viajes = coste × (ingreso capturado / ingreso libro)
+    const coef={};for(const b of ['lit','dur','km','imp'])coef[b]=S[b]?bucket[b]/S[b]*scale:0;
+    const cost=r=>(r[LIT]||0)*coef.lit+(r[DUR]||0)*coef.dur+(r[KMR]||0)*coef.km+(r[IMP]||0)*coef.imp;
+    const blank=k=>({key:k,viajes:0,ingreso:0,coste:0,medido:0});
+    const add=(x,r)=>{x.viajes++;x.ingreso+=r[IMP]||0;x.coste+=cost(r);if(r[TRM]===0)x.medido+=r[IMP]||0;};
+    const cerrar=x=>{x.coste=Math.round(x.coste);x.ingreso=Math.round(x.ingreso);x.margen=x.ingreso-x.coste;x.margenPct=x.ingreso?x.margen/x.ingreso:null;x.fiable=x.ingreso?x.medido/x.ingreso:0;return x;};
+    const grp=fn=>{const m=new Map();for(const r of rows){const k=fn(r)||'(sin asignar)';let x=m.get(k);if(!x){x=blank(k);m.set(k,x);}add(x,r);}return [...m.values()].map(cerrar).sort((a,b)=>b.ingreso-a.ingreso);};
+    const tot=blank('');for(const r of rows)add(tot,r);cerrar(tot);
+    return {tot,byClient:grp(r=>A.cli[r[CI]]),byZona:grp(r=>A.prov[r[OI]]),coef,income:Math.round(lv.income),gasto:Math.round(lv.expenses),margenLibroPct:lv.marginPct,scale,from,to};
+  }
+  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView,netaView};
 }

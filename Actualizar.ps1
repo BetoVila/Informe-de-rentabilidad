@@ -70,7 +70,7 @@ try{
     # a las lecturas (el fichero del agente solo cubre ~2 semanas).
     if($opt.locatel){Invoke-Opcional 'Locatel' {& $py (Join-Path $root 'scripts\export_rentabilidad_locatel_v2.py') --cache (Join-Path $root 'cache\locatel_km_dia.json') --output (Join-Path $run 'locatel_v1.json') --from-date $config.from --to-date $hasta}}
     # Actividad operativa de GesRuta: viajes reales (albaran de cantera), km, m3/t por viaje. Opcional (si falla, sigue sin la pestana).
-    Invoke-Opcional 'Actividad GesRuta' {& $py (Join-Path $root 'scripts\export_rentabilidad_gesruta_actividad_v1.py') --root (Join-Path $config.sourceRoot 'Gesruta') --output (Join-Path $run 'actividad_v1.json') --from-date $config.from --to-date $hasta --lugares (Join-Path $config.publicPath 'lugares-provincias.csv') --gps (Join-Path $root 'cache\lugares_gps.json')}
+    Invoke-Opcional 'Actividad GesRuta' {& $py (Join-Path $root 'scripts\export_rentabilidad_gesruta_actividad_v1.py') --root (Join-Path $config.sourceRoot 'Gesruta') --output (Join-Path $run 'actividad_v1.json') --from-date $config.from --to-date $hasta --lugares (Join-Path $config.publicPath 'lugares-provincias.csv') --gps (Join-Path $root 'cache\lugares_gps.json') --triangulado (Join-Path $root 'cache\triangulado_v1.json')}
     if($clave){Invoke-Opcional 'Enlace parte-conductor' {
         $pa=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'scripts\export_rentabilidad_personal_v1.ps1'),'-Desde',$config.from,'-Hasta',$hasta,'-SourcePath',(Join-Path $config.sourceRoot 'PartesTrabajo\Partes 7.0.accdb'),'-OutputPath',(Join-Path $run 'personal_v1.json'))
         & $ps64 @pa
