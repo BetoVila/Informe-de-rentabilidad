@@ -365,6 +365,12 @@ function activityTab(){
    +'<h3>Por zona (provincia de salida)</h3>'+simpleTable(zonaCols,nv.byZona.slice(0,15))):'';
  return `<div class="info">Viaje real = cada entrega con <b>albarán de cantera</b>. Producción (viajes, m³/t, km) de las líneas de albarán. <b>Margen operativo</b> del P&L por viaje de GesRuta (inggas): ingreso − material − subcontratación − circulación, <b>antes</b> del coste real de flota. Debajo, el <b>resultado real</b> de la contabilidad tras diésel, personal e indirectos.</div>`+cards+arbol+neto+netoDim+trend+mensual+zonas+rutas+veh+cli;
 }
+function viajesTab(){
+ const t=M.netaTrips(state);
+ if(!t)return panel('Margen por viaje','Margen neto de cada viaje real.','<div class="info">Necesita la triangulación (km y horas por viaje) y la contabilidad. No disponible para este periodo o empresa.</div>');
+ const cols=[{label:'Mes',key:'mes'},{label:'Cliente',key:'cliente'},{label:'Ruta',key:'ruta'},{label:'Matrícula',key:'mat'},numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),numberCol('Horas','horas',1),moneyCol('Ingreso','ingreso'),moneyCol('Coste real','coste'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% neto','margenPct'),{label:'Fiabilidad',key:'fiab'}];
+ return `<div class="info">Cada <b>viaje real</b> (entrega con albarán de cantera) con su <b>margen neto</b>: ingreso menos el coste real repartido (combustible, personal, flota, directos e indirectos). Ordena por «Margen neto» para ver los peores, o busca un cliente o matrícula. «Fiabilidad»: <b>medido/repartido</b> = km y horas del localizador; <b>estimado</b> = hormigón (aún sin horas reales).</div>`+setTable('Margen por viaje','Los '+nf(t.length)+' viajes del periodo, ordenables y con búsqueda. Verde gana, rojo pierde.',t,cols);
+}
 function renderContent(){
  tableDefinition=null;let html='';
  if(state.tab==='summary'&&ledgerCtx.ledgerOn){
@@ -391,6 +397,7 @@ function renderContent(){
  }else if(state.tab==='audit')html=audit();
  else if(state.tab==='personal')html=personalView();
  else if(state.tab==='actividad')html=activityTab();
+ else if(state.tab==='viajes')html=viajesTab();
  else html=method();
  $('content').innerHTML=html;drawTable();
 }
@@ -489,7 +496,7 @@ async function boot(){
  M=createModel(D);state={from:D.metadata.defaultFrom,to:D.metadata.defaultTo,dateBasis:'invoice',costMode:D.payroll?'real':'stored',consolidado:false,tab:'summary',companies:[],plates:[],clients:[],categories:[],loads:[],concepts:[]};
  if(!D.payroll)$('costMode').querySelector('option[value="real"]').remove();
  if(!D.ledger?.intragrupo?.length)$('billing').closest('label').hidden=true;
- $('costMode').value=state.costMode;$('billing').value='suma';renderSources();$('personalTab').hidden=!PERSONAL_BLOB;$('actividadTab').hidden=!D.actividad;
+ $('costMode').value=state.costMode;$('billing').value='suma';renderSources();$('personalTab').hidden=!PERSONAL_BLOB;$('actividadTab').hidden=!D.actividad;$('viajesTab').hidden=!D.actividad;
  for(const id of ['from','to','compareFrom','compareTo']){$(id).min=D.metadata.from;$(id).max=D.metadata.to;}
  $('from').value=state.from;$('to').value=state.to;$('compareFrom').value=priorYear(state.from);$('compareTo').value=priorYear(state.to);
  $('fresh').textContent='Lectura '+new Date(D.metadata.accessReadAt).toLocaleString('es-ES',{timeZone:'Europe/Madrid'})+' · datos hasta '+date(D.metadata.to);

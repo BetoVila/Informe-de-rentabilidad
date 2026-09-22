@@ -296,10 +296,10 @@ export function createModel(data) {
   // Margen NETO por cliente y zona: reparte el coste REAL de la contabilidad a cada viaje por su base (litros→combustible,
   // horas→personal, km→flota fija, ingreso→directos e indirectos), escalado al ingreso capturado en los viajes. Así el
   // conjunto cuadra con el margen contable. Marca la fiabilidad (fracción de ingreso con km/horas MEDIDOS por localizador).
-  function netaView(f){
+  function _reparto(f){
     if(!activity||!ledger)return null;
     const lv=ledgerView(f);if(!lv||lv.income<=0)return null;
-    const A=activity,C=0,M=1,CI=2,OI=4,IMP=11,KMR=15,LIT=16,DUR=17,TRM=18;
+    const A=activity,C=0,M=1,CI=2,MI=3,DI=5,OI=4,M3=9,T=10,IMP=11,KMR=15,LIT=16,DUR=17,TRM=18;
     const from=f.from.slice(0,7),to=f.to.slice(0,7),wanted=f.companies?.length?f.companies:['Razo','Agetrans'];
     const wc=new Set(wanted.map(w=>A.co.indexOf(w)).filter(i=>i>=0));
     const rows=A.rows.filter(r=>{const m=A.mo[r[M]];return m>=from&&m<=to&&wc.has(r[C]);});
@@ -312,8 +312,6 @@ export function createModel(data) {
     for(const c of lv.expenseCategories){if(DIR.has(c.id))continue;bucket[BASE[c.id]||'imp']+=c.amount;}
     const S={lit:SL,dur:SD,km:SK,imp:SI},scale=SI/lv.income;   // coste soportado por los viajes = coste × (ingreso capturado / ingreso libro)
     const coef={};for(const b of ['lit','dur','km','imp'])coef[b]=S[b]?bucket[b]/S[b]*scale:0;
-    // Directos (áridos, subcontratación) por CLIENTE según su materiales/subcontratación de inggas, repartidos entre sus
-    // viajes por ingreso. Reconcilia con el total contable de áridos y subcontratación (× la misma escala de captura).
     const nameOf=r=>A.cli[r[CI]];
     const cliIng=new Map(),cliMa=new Map(),cliS=new Map();
     for(const r of rows)cliIng.set(nameOf(r),(cliIng.get(nameOf(r))||0)+(r[IMP]||0));
@@ -322,12 +320,24 @@ export function createModel(data) {
     const fMa=sumMa?catAmt('aridos')*scale/sumMa:0,fS=sumS?catAmt('subcontratacion')*scale/sumS:0;
     const dRate=new Map();for(const [k,ing] of cliIng)if(ing>0)dRate.set(k,((cliMa.get(k)||0)*fMa+(cliS.get(k)||0)*fS)/ing);
     const cost=r=>(r[LIT]||0)*coef.lit+(r[DUR]||0)*coef.dur+(r[KMR]||0)*coef.km+(r[IMP]||0)*(coef.imp+(dRate.get(nameOf(r))||0));
+    return {A,rows,cost,nameOf,coef,income:lv.income,gasto:lv.expenses,margenLibroPct:lv.marginPct,scale,from,to,ix:{C,M,CI,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}};
+  }
+  function netaView(f){
+    const R=_reparto(f);if(!R)return null;
+    const {A,rows,cost,ix}=R,{CI,OI,IMP,TRM}=ix;
     const blank=k=>({key:k,viajes:0,ingreso:0,coste:0,medido:0});
     const add=(x,r)=>{x.viajes++;x.ingreso+=r[IMP]||0;x.coste+=cost(r);if(r[TRM]===0)x.medido+=r[IMP]||0;};
     const cerrar=x=>{x.coste=Math.round(x.coste);x.ingreso=Math.round(x.ingreso);x.margen=x.ingreso-x.coste;x.margenPct=x.ingreso?x.margen/x.ingreso:null;x.fiable=x.ingreso?x.medido/x.ingreso:0;return x;};
     const grp=fn=>{const m=new Map();for(const r of rows){const k=fn(r)||'(sin asignar)';let x=m.get(k);if(!x){x=blank(k);m.set(k,x);}add(x,r);}return [...m.values()].map(cerrar).sort((a,b)=>b.ingreso-a.ingreso);};
     const tot=blank('');for(const r of rows)add(tot,r);cerrar(tot);
-    return {tot,byClient:grp(r=>A.cli[r[CI]]),byZona:grp(r=>A.prov[r[OI]]),coef,income:Math.round(lv.income),gasto:Math.round(lv.expenses),margenLibroPct:lv.marginPct,scale,from,to};
+    return {tot,byClient:grp(r=>A.cli[r[CI]]),byZona:grp(r=>A.prov[r[OI]]),coef:R.coef,income:Math.round(R.income),gasto:Math.round(R.gasto),margenLibroPct:R.margenLibroPct,scale:R.scale,from:R.from,to:R.to};
   }
-  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView,netaView};
+  // Margen NETO por VIAJE individual (tabla paginada en la pestaña «Margen por viaje»): mismo reparto, sin agregar.
+  function netaTrips(f){
+    const R=_reparto(f);if(!R)return null;
+    const {A,rows,cost,nameOf,ix}=R,{M,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}=ix;
+    const TR=['medido','repartido','estimado','sin traza'];
+    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r));return {mes:A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:TR[r[TRM]]||'—'};});
+  }
+  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView,netaView,netaTrips};
 }
