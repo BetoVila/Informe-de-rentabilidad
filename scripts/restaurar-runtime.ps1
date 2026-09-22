@@ -1,4 +1,4 @@
-# Restaura la carpeta runtime\ (Python 3.12 y Node, ~130 MB, no va en git) desde el paquete publicado.
+﻿# Restaura la carpeta runtime\ (Python 3.12 y Node, ~130 MB, no va en git) desde el paquete publicado.
 param([string]$Paquete='P:\_RENTABILIDAD\programa.zip')
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent

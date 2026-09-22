@@ -371,14 +371,34 @@ function viajesTab(){
  const cols=[{label:'Mes',key:'mes'},{label:'Cliente',key:'cliente'},{label:'Ruta',key:'ruta'},{label:'Matrícula',key:'mat'},numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),numberCol('Horas','horas',1),moneyCol('Ingreso','ingreso'),moneyCol('Coste real','coste'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% neto','margenPct'),{label:'Fiabilidad',key:'fiab'}];
  return `<div class="info">Cada <b>viaje real</b> con su <b>margen neto</b>: ingreso menos el coste real (combustible, personal, flota, subcontratación e indirectos). Ordena por «Margen neto» para ver los peores, o busca un cliente o matrícula. «Fiabilidad»: <b>medido/repartido</b> = km y horas del localizador; <b>subcontrata</b> = coste real de la factura del subcontratista (por línea, cuadra con la contabilidad); <b>estimado</b> = hormigón (horas de la traza GPS). El aviso <b>⚠</b> marca algún viaje propio suelto de clientes casi todo subcontratados, donde el reparto de áridos sale inflado — ahí fíate del margen por <b>cliente</b>.</div>`+setTable('Margen por viaje','Los '+nf(t.length)+' viajes del periodo, ordenables y con búsqueda. Verde gana, rojo pierde.',t,cols);
 }
-let _map=null,_mapLayer=null,_mapMetric='viajes';
+let _map=null,_mapLayer=null,_mapMetric='viajes',_mapStyle='carreteras',_tileLayers=[];
+const ESRI='https://server.arcgisonline.com/ArcGIS/rest/services/';
+// Basemaps de Esri SIN CLAVE: funcionan al abrir el informe como archivo local (OSM da 403 sin Referer; CARTO estampa marca de agua sin API key).
+// «satelite» es HÍBRIDO: imagen aérea + capas transparentes de carreteras y rótulos encima.
+const MAP_STYLES={
+ carreteras:[{url:ESRI+'World_Street_Map/MapServer/tile/{z}/{y}/{x}',opt:{maxZoom:19,attribution:'© Esri · © OpenStreetMap'}}],
+ satelite:[
+  {url:ESRI+'World_Imagery/MapServer/tile/{z}/{y}/{x}',opt:{maxZoom:19,attribution:'© Esri · Maxar · Earthstar Geographics'}},
+  {url:ESRI+'Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',opt:{maxZoom:19}},
+  {url:ESRI+'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',opt:{maxZoom:19}}
+ ]
+};
+function setMapStyle(style){
+ if(!_map)return;_mapStyle=MAP_STYLES[style]?style:'carreteras';
+ _tileLayers.forEach(l=>{try{_map.removeLayer(l);}catch(e){}});_tileLayers=[];
+ MAP_STYLES[_mapStyle].forEach((p,idx)=>{
+  const t=L.tileLayer(p.url,p.opt).addTo(_map);_tileLayers.push(t);
+  if(_mapStyle==='carreteras'&&idx===0){let errs=0;t.on('tileerror',()=>{errs++;if(errs>4){try{_map.removeLayer(t);}catch(e){}_tileLayers[0]=L.tileLayer(ESRI+'World_Topo_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri · © OpenStreetMap'}).addTo(_map);}});}
+ });
+}
 const mapNorm=s=>(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase();
 const mapGal=p=>['A CORUNA','LUGO','PONTEVEDRA','OURENSE'].includes(mapNorm(p.prov));
 function mapa(){
  const nv=M.zonasGeo(state);
  if(!nv||!nv.puntos.length)return panel('Mapa de zonas','Dónde trabaja la flota.','<div class="info">No hay puntos con coordenada del localizador en el periodo elegido.</div>');
- return panel('Mapa de zonas','Dónde trabaja la flota, por los puntos GPS reales donde para (planta, cantera u obra), sobre OpenStreetMap. Rueda para acercar/alejar, arrastra para mover, pincha un punto para ver sus datos.',
-  `<div class="mapmetric">Tamaño de cada punto por: ${['viajes','t','m3','ing'].map(m=>`<button class="segbtn${m===_mapMetric?' on':''}" data-mm="${m}">${({viajes:'Viajes',t:'Toneladas',m3:'m³',ing:'Ingreso'})[m]}</button>`).join('')}</div>
+ return panel('Mapa de zonas','Dónde trabaja la flota, por los puntos GPS reales donde para (planta, cantera u obra), sobre el mapa base. Rueda para acercar/alejar, arrastra para mover, pincha un punto para ver sus datos.',
+  `<div class="mapmetric">Vista: ${['carreteras','satelite'].map(s=>`<button class="segbtn${s===_mapStyle?' on':''}" data-ms="${s}">${({carreteras:'Carreteras',satelite:'Satélite'})[s]}</button>`).join('')}</div>
+  <div class="mapmetric">Tamaño de cada punto por: ${['viajes','t','m3','ing'].map(m=>`<button class="segbtn${m===_mapMetric?' on':''}" data-mm="${m}">${({viajes:'Viajes',t:'Toneladas',m3:'m³',ing:'Ingreso'})[m]}</button>`).join('')}</div>
   <div id="mapContainer" class="mapbox"></div>
   <p class="sub" id="mapInfo">${nf(nv.puntos.length)} puntos en el periodo elegido. Pincha uno para ver sus datos.</p>`);
 }
@@ -388,8 +408,9 @@ function mapaRender(){
  const nv=M.zonasGeo(state);if(!nv)return;
  if(_map){try{_map.remove();}catch(e){}_map=null;_mapLayer=null;}
  _map=L.map(el).setView([42.9,-8.1],7);
- L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(_map);
+ setMapStyle(_mapStyle);   // Esri sin clave; «satelite» = híbrido (aérea + carreteras + rótulos). Ver MAP_STYLES.
  drawMapPoints(nv.puntos);
+ document.querySelectorAll('.segbtn[data-ms]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.segbtn[data-ms]').forEach(x=>x.classList.remove('on'));b.classList.add('on');setMapStyle(b.dataset.ms);const z=M.zonasGeo(state);if(z)drawMapPoints(z.puntos);});
  document.querySelectorAll('.segbtn[data-mm]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.segbtn[data-mm]').forEach(x=>x.classList.remove('on'));b.classList.add('on');_mapMetric=b.dataset.mm;const z=M.zonasGeo(state);if(z)drawMapPoints(z.puntos);});
 }
 function drawMapPoints(pts){
@@ -397,8 +418,9 @@ function drawMapPoints(pts){
  if(_mapLayer)_map.removeLayer(_mapLayer);
  _mapLayer=L.layerGroup().addTo(_map);
  const mx=Math.max(...pts.map(p=>p[_mapMetric]||0))||1,bounds=[];
+ const sat=_mapStyle==='satelite';
  for(const p of pts){const v=p[_mapMetric]||0;if(v<=0)continue;const r=6+26*Math.sqrt(v/mx),isGal=mapGal(p);
-  const c=L.circleMarker([p.lat,p.lon],{radius:r,color:'#12233b',weight:1,fillColor:isGal?'#2563eb':'#8a5a2b',fillOpacity:.5});
+  const c=L.circleMarker([p.lat,p.lon],{radius:r,color:sat?'#ffffff':'#12233b',weight:sat?1.5:1,fillColor:isGal?'#2563eb':(sat?'#e0862f':'#8a5a2b'),fillOpacity:sat?.72:.5});
   c.bindTooltip(`<b>${esc(p.name)}</b><br>${esc(p.loc)} (${esc(p.prov)})<br>viajes ${nf(p.viajes)} · t ${nf(p.t)} · m³ ${nf(p.m3)}<br>ingreso ${eur(p.ing)}`,{sticky:true});
   c.on('click',()=>{const mi=$('mapInfo');if(mi)mi.innerHTML=`<b>${esc(p.name)}</b> — ${esc(p.loc)} (${esc(p.prov)}): viajes ${nf(p.viajes)}, toneladas ${nf(p.t)}, m³ ${nf(p.m3)}, ingreso ${eur(p.ing)} · sale ${nf(p.orig)} / llega ${nf(p.dest)}`;});
   c.addTo(_mapLayer);bounds.push([p.lat,p.lon]);}
@@ -422,7 +444,7 @@ function clienteDet(){
  const list=nv.byClient.filter(c=>c.ingreso>0);
  if(!_cliSel||!list.find(c=>c.key===_cliSel))_cliSel=list[0]&&list[0].key;
  const c=list.find(x=>x.key===_cliSel)||list[0];if(!c)return panel('Informe por cliente','','<div class="info">No hay clientes en el periodo.</div>');
- const cr=compareRange(),nvB=cr&&cr.valid?M.netaView({...state,from:cr.from,to:cr.to}):null,cB=nvB&&nvB.byClient.find(x=>x.key===_cliSel);
+ const cr=comparisonRange(),nvB=cr&&cr.valid?M.netaView({...state,from:cr.from,to:cr.to}):null,cB=nvB&&nvB.byClient.find(x=>x.key===_cliSel);
  const trips=M.netaTrips(state).filter(t=>t.cliente===_cliSel),gana=c.margen>=0;
  const listHtml=list.map(x=>`<div class="cli-row${x.key===_cliSel?' sel':''}" data-cli="${esc(x.key)}"><span>${esc(x.key)}</span><span class="${x.margen>=0?'pos':'neg'}" style="font-weight:700;white-space:nowrap">${pcm(x.margenPct)}</span></div>`).join('');
  const cmpHtml=nvB?`<div class="cli-cmp"><div class="cli-box"><div class="t">${date(state.from)} – ${date(state.to)}</div>ingreso ${eur(c.ingreso)} · margen <b class="${gana?'pos':'neg'}">${eur(c.margen)} (${pcm(c.margenPct)})</b> · ${nf(c.viajes)} viajes</div><div class="cli-box"><div class="t">${date(cr.from)} – ${date(cr.to)}</div>${cB?`ingreso ${eur(cB.ingreso)} · margen <b class="${cB.margen>=0?'pos':'neg'}">${eur(cB.margen)} (${pcm(cB.margenPct)})</b> · ${nf(cB.viajes)} viajes`:'<span class="sub">este cliente no tuvo actividad en la comparación</span>'}</div></div>`:'<p class="sub">Elige «Comparar con» en la barra de arriba (año anterior, periodo anterior o fechas a tu gusto) para contrastar dos periodos.</p>';
