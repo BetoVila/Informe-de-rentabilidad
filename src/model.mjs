@@ -305,11 +305,23 @@ export function createModel(data) {
     const rows=A.rows.filter(r=>{const m=A.mo[r[M]];return m>=from&&m<=to&&wc.has(r[C]);});
     if(!rows.length||A.rows[0].length<19)return null;      // hace falta la triangulación (bases por viaje)
     let SL=0,SD=0,SK=0,SI=0;for(const r of rows){SL+=r[LIT]||0;SD+=r[DUR]||0;SK+=r[KMR]||0;SI+=r[IMP]||0;}
+    const catAmt=id=>{const c=lv.expenseCategories.find(x=>x.id===id);return c?c.amount:0;};
     const BASE={combustible:'lit',personal:'dur',dietas:'dur',repuestos:'km',reparaciones:'km',seguros:'km',amortizacion:'km',alquileres:'km',peajes:'km',neumaticos:'km'};
-    const bucket={lit:0,dur:0,km:0,imp:0};for(const c of lv.expenseCategories)bucket[BASE[c.id]||'imp']+=c.amount;
+    const DIR=new Set(['aridos','subcontratacion']);   // DIRECTOS: van por CLIENTE (P&L inggas), no por base de viaje
+    const bucket={lit:0,dur:0,km:0,imp:0};
+    for(const c of lv.expenseCategories){if(DIR.has(c.id))continue;bucket[BASE[c.id]||'imp']+=c.amount;}
     const S={lit:SL,dur:SD,km:SK,imp:SI},scale=SI/lv.income;   // coste soportado por los viajes = coste × (ingreso capturado / ingreso libro)
     const coef={};for(const b of ['lit','dur','km','imp'])coef[b]=S[b]?bucket[b]/S[b]*scale:0;
-    const cost=r=>(r[LIT]||0)*coef.lit+(r[DUR]||0)*coef.dur+(r[KMR]||0)*coef.km+(r[IMP]||0)*coef.imp;
+    // Directos (áridos, subcontratación) por CLIENTE según su materiales/subcontratación de inggas, repartidos entre sus
+    // viajes por ingreso. Reconcilia con el total contable de áridos y subcontratación (× la misma escala de captura).
+    const nameOf=r=>A.cli[r[CI]];
+    const cliIng=new Map(),cliMa=new Map(),cliS=new Map();
+    for(const r of rows)cliIng.set(nameOf(r),(cliIng.get(nameOf(r))||0)+(r[IMP]||0));
+    if(A.margen)for(const g of A.margen.rows){if(!wc.has(g.c)||g.m<from||g.m>to)continue;cliMa.set(g.cli,(cliMa.get(g.cli)||0)+(g.ma||0));cliS.set(g.cli,(cliS.get(g.cli)||0)+(g.s||0));}
+    let sumMa=0,sumS=0;for(const k of cliIng.keys()){sumMa+=cliMa.get(k)||0;sumS+=cliS.get(k)||0;}
+    const fMa=sumMa?catAmt('aridos')*scale/sumMa:0,fS=sumS?catAmt('subcontratacion')*scale/sumS:0;
+    const dRate=new Map();for(const [k,ing] of cliIng)if(ing>0)dRate.set(k,((cliMa.get(k)||0)*fMa+(cliS.get(k)||0)*fS)/ing);
+    const cost=r=>(r[LIT]||0)*coef.lit+(r[DUR]||0)*coef.dur+(r[KMR]||0)*coef.km+(r[IMP]||0)*(coef.imp+(dRate.get(nameOf(r))||0));
     const blank=k=>({key:k,viajes:0,ingreso:0,coste:0,medido:0});
     const add=(x,r)=>{x.viajes++;x.ingreso+=r[IMP]||0;x.coste+=cost(r);if(r[TRM]===0)x.medido+=r[IMP]||0;};
     const cerrar=x=>{x.coste=Math.round(x.coste);x.ingreso=Math.round(x.ingreso);x.margen=x.ingreso-x.coste;x.margenPct=x.ingreso?x.margen/x.ingreso:null;x.fiable=x.ingreso?x.medido/x.ingreso:0;return x;};
