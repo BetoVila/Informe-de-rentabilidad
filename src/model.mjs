@@ -320,7 +320,7 @@ export function createModel(data) {
     const fMa=sumMa?catAmt('aridos')*scale/sumMa:0,fS=sumS?catAmt('subcontratacion')*scale/sumS:0;
     const dRate=new Map();for(const [k,ing] of cliIng)if(ing>0)dRate.set(k,((cliMa.get(k)||0)*fMa+(cliS.get(k)||0)*fS)/ing);
     const cost=r=>(r[LIT]||0)*coef.lit+(r[DUR]||0)*coef.dur+(r[KMR]||0)*coef.km+(r[IMP]||0)*(coef.imp+(dRate.get(nameOf(r))||0));
-    return {A,rows,cost,nameOf,coef,income:lv.income,gasto:lv.expenses,margenLibroPct:lv.marginPct,scale,from,to,ix:{C,M,CI,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}};
+    return {A,rows,cost,nameOf,dRate,coef,income:lv.income,gasto:lv.expenses,margenLibroPct:lv.marginPct,scale,from,to,ix:{C,M,CI,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}};
   }
   function netaView(f){
     const R=_reparto(f);if(!R)return null;
@@ -335,9 +335,9 @@ export function createModel(data) {
   // Margen NETO por VIAJE individual (tabla paginada en la pestaña «Margen por viaje»): mismo reparto, sin agregar.
   function netaTrips(f){
     const R=_reparto(f);if(!R)return null;
-    const {A,rows,cost,nameOf,ix}=R,{M,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}=ix;
+    const {A,rows,cost,nameOf,dRate,ix}=R,{M,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}=ix;
     const TR=['medido','repartido','estimado','sin traza'];
-    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r));return {mes:A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:TR[r[TRM]]||'—'};});
+    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=(dRate.get(nameOf(r))||0)>1;return {mes:A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(TR[r[TRM]]||'—')+(alto?' ⚠':'')};});
   }
   return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView,netaView,netaTrips};
 }
