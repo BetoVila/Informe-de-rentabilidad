@@ -186,3 +186,43 @@ span.ztog{cursor:default}
 .zsin{color:var(--muted);font-style:italic;font-weight:400}
 .ztip{font-size:12px;color:var(--muted);margin:0 0 10px}
 @media print{.filters,.periodbar,.quickrow,.tabs,.tabletools,.pager,.sources-strip{display:none}body{background:#fff}.masthead{color:#000;background:#fff;border-bottom:2px solid #000}.brand small,.brand strong span,.fresh{color:#333}main{padding:0}}
+
+/* Mapa de zonas (Leaflet + OpenStreetMap) */
+.mapbox{height:560px;border:1px solid #e2e9f2;border-radius:12px;overflow:hidden;margin-top:6px}
+.mapmetric{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;font-size:13px;color:#5b6b7f}
+.segbtn{cursor:pointer;font:13px inherit;padding:6px 10px;border:1px solid #e2e9f2;border-radius:8px;background:#fff;color:#1f2b3a}
+.segbtn.on{background:#2563eb;color:#fff;border-color:#2563eb}
+.leaflet-container{font:inherit}
+
+/* Informe por cliente */
+.cli-grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px}
+.cli-grid>div{min-width:0}
+@media(max-width:820px){.cli-grid{grid-template-columns:1fr}}
+.cli-search input{width:100%;padding:8px 10px;border:1px solid #e2e9f2;border-radius:8px;font:14px inherit;margin-bottom:6px}
+.cli-list{max-height:600px;overflow:auto;border:1px solid #e2e9f2;border-radius:10px}
+.cli-row{display:flex;justify-content:space-between;gap:8px;padding:9px 11px;border-bottom:1px solid #eef2f7;cursor:pointer;font-size:13px}
+.cli-row:hover{background:#eef5ff}.cli-row.sel{background:#e7f0ff}
+.cli-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.cli-head h2{margin:0 auto 0 0;font-size:17px}
+.badge-gp{display:inline-block;padding:4px 14px;border-radius:20px;font-weight:700;font-size:13px}
+.badge-gp.g{background:#e7f6ee;color:#0a7f4f}.badge-gp.p{background:#fdecea;color:#c0392b}
+.cli-kpis{margin-bottom:12px}
+.cli-h3{font-size:14px;margin:14px 0 6px}
+.cli-cmp{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+@media(max-width:600px){.cli-cmp{grid-template-columns:1fr}}
+.cli-box{border:1px solid #e2e9f2;border-radius:10px;padding:10px 12px;font-size:13px}
+.cli-box .t{font-size:11px;color:#5b6b7f;text-transform:uppercase;margin-bottom:3px}
+.cli-opshead{margin:14px 0 8px;font-size:13px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.cli-opshead select{padding:5px 8px;border:1px solid #e2e9f2;border-radius:8px;font:13px inherit}
+.cli-grp{border:1px solid #e2e9f2;border-radius:8px;margin-bottom:6px;overflow:hidden}
+.cli-grphead{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;background:#f7fafe;font-size:13px}
+.cli-grphead:hover{background:#eef5ff}
+.cli-grphead .caret{font-size:10px;color:#5b6b7f;display:inline-block;transition:transform .15s}
+.cli-grphead.open .caret{transform:rotate(90deg)}
+.cli-grpsub{margin-left:auto;color:#5b6b7f;font-size:12.5px}
+.cli-tablewrap{overflow-x:auto}
+.cli-optable{width:100%;border-collapse:collapse;font-size:12.6px}
+.cli-optable th,.cli-optable td{padding:6px 9px;border-bottom:1px solid #eef2f7;white-space:nowrap;text-align:left}
+.cli-optable th{background:#eef3fa;text-transform:uppercase;font-size:10px;color:#5b6b7f}
+.cli-optable td.num,.cli-optable th.num{text-align:right;font-variant-numeric:tabular-nums}
+@media print{.cli-grid{grid-template-columns:1fr!important}.cli-list,.cli-search,.cli-opshead select,.noprint{display:none!important}.cli-grpbody{display:block!important}}

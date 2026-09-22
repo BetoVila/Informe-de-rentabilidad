@@ -347,5 +347,18 @@ export function createModel(data) {
     const TR=['medido','repartido','estimado','sin traza'];
     return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=!R.sub(r)&&(dRate.get(nameOf(r))||0)>1;return {mes:A.mo[r[M]],dia:(A.dia&&A.dia[r[20]])||A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],carga:A.pt[r[13]]||A.loc[r[6]]||'—',descarga:A.pt[r[14]]||A.loc[r[7]]||'—',mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(R.sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':'')};});
   }
-  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView,netaView,netaTrips};
+  // Puntos GEO del periodo elegido (para el MAPA): agrega los viajes filtrados por su punto de origen/destino y une la
+  // coordenada real del localizador (paradas GPS de la flota). Respeta periodo y sociedad.
+  function zonasGeo(f){
+    if(!activity||!activity.coords)return null;
+    const A=activity,C=0,M=1,M3=9,T=10,IMP=11,PO=13,PD=14;
+    const from=f.from.slice(0,7),to=f.to.slice(0,7),wanted=f.companies?.length?f.companies:['Razo','Agetrans'];
+    const wc=new Set(wanted.map(w=>A.co.indexOf(w)).filter(i=>i>=0));
+    const rows=A.rows.filter(r=>{const m=A.mo[r[M]];return m>=from&&m<=to&&wc.has(r[C]);});
+    const pts=new Map();
+    const bump=(nameIx,rol,r)=>{const name=A.pt[nameIx];const c=name&&A.coords[name];if(!c)return;let p=pts.get(name);if(!p){p={name,lat:c[0],lon:c[1],loc:c[2],prov:c[3],viajes:0,t:0,m3:0,ing:0,orig:0,dest:0};pts.set(name,p);}p.viajes++;p.t+=r[T]||0;p.m3+=r[M3]||0;p.ing+=r[IMP]||0;p[rol]++;};
+    for(const r of rows){bump(r[PO],'orig',r);bump(r[PD],'dest',r);}
+    return {puntos:[...pts.values()].map(p=>({...p,t:Math.round(p.t),m3:Math.round(p.m3),ing:Math.round(p.ing)})).sort((a,b)=>b.viajes-a.viajes)};
+  }
+  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView,netaView,netaTrips,zonasGeo};
 }

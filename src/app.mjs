@@ -371,6 +371,77 @@ function viajesTab(){
  const cols=[{label:'Mes',key:'mes'},{label:'Cliente',key:'cliente'},{label:'Ruta',key:'ruta'},{label:'Matrícula',key:'mat'},numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),numberCol('Horas','horas',1),moneyCol('Ingreso','ingreso'),moneyCol('Coste real','coste'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% neto','margenPct'),{label:'Fiabilidad',key:'fiab'}];
  return `<div class="info">Cada <b>viaje real</b> con su <b>margen neto</b>: ingreso menos el coste real (combustible, personal, flota, subcontratación e indirectos). Ordena por «Margen neto» para ver los peores, o busca un cliente o matrícula. «Fiabilidad»: <b>medido/repartido</b> = km y horas del localizador; <b>subcontrata</b> = coste real de la factura del subcontratista (por línea, cuadra con la contabilidad); <b>estimado</b> = hormigón (horas de la traza GPS). El aviso <b>⚠</b> marca algún viaje propio suelto de clientes casi todo subcontratados, donde el reparto de áridos sale inflado — ahí fíate del margen por <b>cliente</b>.</div>`+setTable('Margen por viaje','Los '+nf(t.length)+' viajes del periodo, ordenables y con búsqueda. Verde gana, rojo pierde.',t,cols);
 }
+let _map=null,_mapLayer=null,_mapMetric='viajes';
+const mapNorm=s=>(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase();
+const mapGal=p=>['A CORUNA','LUGO','PONTEVEDRA','OURENSE'].includes(mapNorm(p.prov));
+function mapa(){
+ const nv=M.zonasGeo(state);
+ if(!nv||!nv.puntos.length)return panel('Mapa de zonas','Dónde trabaja la flota.','<div class="info">No hay puntos con coordenada del localizador en el periodo elegido.</div>');
+ return panel('Mapa de zonas','Dónde trabaja la flota, por los puntos GPS reales donde para (planta, cantera u obra), sobre OpenStreetMap. Rueda para acercar/alejar, arrastra para mover, pincha un punto para ver sus datos.',
+  `<div class="mapmetric">Tamaño de cada punto por: ${['viajes','t','m3','ing'].map(m=>`<button class="segbtn${m===_mapMetric?' on':''}" data-mm="${m}">${({viajes:'Viajes',t:'Toneladas',m3:'m³',ing:'Ingreso'})[m]}</button>`).join('')}</div>
+  <div id="mapContainer" class="mapbox"></div>
+  <p class="sub" id="mapInfo">${nf(nv.puntos.length)} puntos en el periodo elegido. Pincha uno para ver sus datos.</p>`);
+}
+function mapaRender(){
+ const el=$('mapContainer');if(!el)return;
+ if(typeof L==='undefined'){el.innerHTML='<div class="info" style="padding:16px">No se pudo cargar el mapa de OpenStreetMap (¿sin conexión a internet?). Los datos de los puntos están, pero el mapa de fondo necesita internet.</div>';return;}
+ const nv=M.zonasGeo(state);if(!nv)return;
+ if(_map){try{_map.remove();}catch(e){}_map=null;_mapLayer=null;}
+ _map=L.map(el).setView([42.9,-8.1],7);
+ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(_map);
+ drawMapPoints(nv.puntos);
+ document.querySelectorAll('.segbtn[data-mm]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.segbtn[data-mm]').forEach(x=>x.classList.remove('on'));b.classList.add('on');_mapMetric=b.dataset.mm;const z=M.zonasGeo(state);if(z)drawMapPoints(z.puntos);});
+}
+function drawMapPoints(pts){
+ if(!_map)return;
+ if(_mapLayer)_map.removeLayer(_mapLayer);
+ _mapLayer=L.layerGroup().addTo(_map);
+ const mx=Math.max(...pts.map(p=>p[_mapMetric]||0))||1,bounds=[];
+ for(const p of pts){const v=p[_mapMetric]||0;if(v<=0)continue;const r=6+26*Math.sqrt(v/mx),isGal=mapGal(p);
+  const c=L.circleMarker([p.lat,p.lon],{radius:r,color:'#12233b',weight:1,fillColor:isGal?'#2563eb':'#8a5a2b',fillOpacity:.5});
+  c.bindTooltip(`<b>${esc(p.name)}</b><br>${esc(p.loc)} (${esc(p.prov)})<br>viajes ${nf(p.viajes)} · t ${nf(p.t)} · m³ ${nf(p.m3)}<br>ingreso ${eur(p.ing)}`,{sticky:true});
+  c.on('click',()=>{const mi=$('mapInfo');if(mi)mi.innerHTML=`<b>${esc(p.name)}</b> — ${esc(p.loc)} (${esc(p.prov)}): viajes ${nf(p.viajes)}, toneladas ${nf(p.t)}, m³ ${nf(p.m3)}, ingreso ${eur(p.ing)} · sale ${nf(p.orig)} / llega ${nf(p.dest)}`;});
+  c.addTo(_mapLayer);bounds.push([p.lat,p.lon]);}
+ if(bounds.length)_map.fitBounds(bounds,{padding:[30,30],maxZoom:11});
+}
+// ---- Informe por CLIENTE: lista gana/pierde + ficha (KPIs, comparación de periodos, operaciones agrupables) ----
+let _cliSel=null,_cliGroupBy='mes',_cliGroups=[];
+const pcm=x=>x==null?'—':(x>=0?'+':'')+nf(x*100,1)+' %';
+const CLI_THEAD='<thead><tr><th>Fecha</th><th>Lugar de carga</th><th>Lugar de descarga</th><th>Matrícula</th><th class="num">m³</th><th class="num">t</th><th class="num">km</th><th class="num">Horas</th><th class="num">Ingreso</th><th class="num">Coste</th><th class="num">Margen</th><th class="num">%</th><th>Fiab.</th></tr></thead>';
+const cliTrow=t=>`<tr><td>${t.dia||t.mes}</td><td>${esc(t.carga||t.ruta)}</td><td>${esc(t.descarga||'')}</td><td>${esc(t.mat||'—')}</td><td class="num">${t.m3||'—'}</td><td class="num">${t.t||'—'}</td><td class="num">${nf(t.km)}</td><td class="num">${t.horas==null?'—':t.horas}</td><td class="num">${eur(t.ingreso)}</td><td class="num">${eur(t.coste)}</td><td class="num ${t.margen>=0?'pos':'neg'}" style="font-weight:600">${eur(t.margen)}</td><td class="num ${t.margen>=0?'pos':'neg'}">${pcm(t.margenPct)}</td><td>${esc(t.fiab||'')}</td></tr>`;
+function cliOpsHtml(trips){
+ if(_cliGroupBy==='none'){const shown=trips.slice(0,400);return `<div class="cli-tablewrap"><table class="cli-optable">${CLI_THEAD}<tbody>${shown.map(cliTrow).join('')}</tbody></table></div>${trips.length>400?`<p class="sub">Mostrando 400 de ${nf(trips.length)} viajes. Agrupa para verlos todos organizados por grupos.</p>`:''}`;}
+ const gk=t=>({mes:(t.dia||t.mes||'').slice(0,7),carga:t.carga,descarga:t.descarga,ruta:t.ruta,mat:t.mat})[_cliGroupBy]||'—';
+ const m=new Map();for(const t of trips){const k=gk(t);let g=m.get(k);if(!g){g={key:k,trips:[],ing:0,cost:0};m.set(k,g);}g.trips.push(t);g.ing+=t.ingreso;g.cost+=t.coste;}
+ _cliGroups=[...m.values()].sort((a,b)=>_cliGroupBy==='mes'?(a.key<b.key?-1:1):(b.ing-a.ing));
+ return _cliGroups.map((g,i)=>{const mg=g.ing-g.cost,p=g.ing?mg/g.ing:0;return `<div class="cli-grp"><div class="cli-grphead" data-gi="${i}"><span class="caret">▶</span><b>${esc(g.key)}</b><span class="cli-grpsub">${nf(g.trips.length)} viajes · ${eur(g.ing)} · <span class="${mg>=0?'pos':'neg'}">${eur(mg)} (${pcm(p)})</span></span></div><div class="cli-grpbody" hidden></div></div>`;}).join('');
+}
+function clienteDet(){
+ const nv=M.netaView(state);
+ if(!nv||!nv.byClient.length)return panel('Informe por cliente','','<div class="info">No hay actividad de GesRuta en el periodo elegido.</div>');
+ const list=nv.byClient.filter(c=>c.ingreso>0);
+ if(!_cliSel||!list.find(c=>c.key===_cliSel))_cliSel=list[0]&&list[0].key;
+ const c=list.find(x=>x.key===_cliSel)||list[0];if(!c)return panel('Informe por cliente','','<div class="info">No hay clientes en el periodo.</div>');
+ const cr=compareRange(),nvB=cr&&cr.valid?M.netaView({...state,from:cr.from,to:cr.to}):null,cB=nvB&&nvB.byClient.find(x=>x.key===_cliSel);
+ const trips=M.netaTrips(state).filter(t=>t.cliente===_cliSel),gana=c.margen>=0;
+ const listHtml=list.map(x=>`<div class="cli-row${x.key===_cliSel?' sel':''}" data-cli="${esc(x.key)}"><span>${esc(x.key)}</span><span class="${x.margen>=0?'pos':'neg'}" style="font-weight:700;white-space:nowrap">${pcm(x.margenPct)}</span></div>`).join('');
+ const cmpHtml=nvB?`<div class="cli-cmp"><div class="cli-box"><div class="t">${date(state.from)} – ${date(state.to)}</div>ingreso ${eur(c.ingreso)} · margen <b class="${gana?'pos':'neg'}">${eur(c.margen)} (${pcm(c.margenPct)})</b> · ${nf(c.viajes)} viajes</div><div class="cli-box"><div class="t">${date(cr.from)} – ${date(cr.to)}</div>${cB?`ingreso ${eur(cB.ingreso)} · margen <b class="${cB.margen>=0?'pos':'neg'}">${eur(cB.margen)} (${pcm(cB.margenPct)})</b> · ${nf(cB.viajes)} viajes`:'<span class="sub">este cliente no tuvo actividad en la comparación</span>'}</div></div>`:'<p class="sub">Elige «Comparar con» en la barra de arriba (año anterior, periodo anterior o fechas a tu gusto) para contrastar dos periodos.</p>';
+ return `<div class="cli-grid">
+ <div><div class="cli-search"><input id="cliQ" placeholder="Buscar cliente…"></div><div class="cli-list" id="cliList">${listHtml}</div></div>
+ <div id="cliDetalle"><div class="cli-head"><h2>${esc(c.key)}</h2><button class="textbtn noprint" id="cliPrint">🖨 Imprimir ficha</button><span class="badge-gp ${gana?'g':'p'}">${gana?'GANA':'PIERDE'} ${eur(c.margen)}</span></div>
+ <div class="kpi-grid cli-kpis" style="grid-template-columns:repeat(4,1fr)"><article class="card"><span class="label">Ingreso facturado</span><div class="value">${eur(c.ingreso)}</div></article><article class="card"><span class="label">Coste real</span><div class="value">${eur(c.coste)}</div></article><article class="card"><span class="label">Margen</span><div class="value ${gana?'pos':'neg'}">${pcm(c.margenPct)}</div></article><article class="card"><span class="label">Fiabilidad</span><div class="value">${Math.round(c.fiable*100)} %</div></article></div>
+ <h3 class="cli-h3">Comparar entre fechas</h3>${cmpHtml}
+ <div class="cli-opshead"><b>Operaciones (${nf(trips.length)} viajes)</b> — agrupar por: <select id="cliGroup"><option value="mes"${_cliGroupBy==='mes'?' selected':''}>Mes</option><option value="carga"${_cliGroupBy==='carga'?' selected':''}>Lugar de carga</option><option value="descarga"${_cliGroupBy==='descarga'?' selected':''}>Lugar de descarga</option><option value="ruta"${_cliGroupBy==='ruta'?' selected':''}>Ruta</option><option value="mat"${_cliGroupBy==='mat'?' selected':''}>Matrícula</option><option value="none"${_cliGroupBy==='none'?' selected':''}>Sin agrupar</option></select> <span class="sub">pincha un grupo para desplegar sus viajes</span></div>
+ <div id="cliOps">${cliOpsHtml(trips)}</div></div></div>`;
+}
+function wireCliGroups(){document.querySelectorAll('#cliOps .cli-grphead').forEach(h=>h.onclick=()=>{const b=h.nextElementSibling,gi=+h.dataset.gi;if(b.hidden&&!b.dataset.filled){b.innerHTML=`<div class="cli-tablewrap"><table class="cli-optable">${CLI_THEAD}<tbody>${_cliGroups[gi].trips.map(cliTrow).join('')}</tbody></table></div>`;b.dataset.filled='1';}b.hidden=!b.hidden;h.classList.toggle('open',!b.hidden);});}
+function clienteDetWire(){
+ const q=$('cliQ');if(q)q.oninput=()=>{const v=q.value.toUpperCase();document.querySelectorAll('#cliList .cli-row').forEach(r=>{r.hidden=!r.dataset.cli.toUpperCase().includes(v);});};
+ document.querySelectorAll('#cliList .cli-row').forEach(r=>r.onclick=()=>{_cliSel=r.dataset.cli;renderContent();const el=$('content');if(el)el.scrollIntoView({block:'start'});});
+ const g=$('cliGroup');if(g)g.onchange=()=>{_cliGroupBy=g.value;$('cliOps').innerHTML=cliOpsHtml(M.netaTrips(state).filter(t=>t.cliente===_cliSel));wireCliGroups();};
+ const pr=$('cliPrint');if(pr)pr.onclick=()=>window.print();
+ wireCliGroups();
+}
 function renderContent(){
  tableDefinition=null;let html='';
  if(state.tab==='summary'&&ledgerCtx.ledgerOn){
@@ -398,8 +469,12 @@ function renderContent(){
  else if(state.tab==='personal')html=personalView();
  else if(state.tab==='actividad')html=activityTab();
  else if(state.tab==='viajes')html=viajesTab();
+ else if(state.tab==='mapa')html=mapa();
+ else if(state.tab==='clientedet')html=clienteDet();
  else html=method();
  $('content').innerHTML=html;drawTable();
+ if(state.tab==='mapa')mapaRender();
+ if(state.tab==='clientedet')clienteDetWire();
 }
 function audit(){
  const dates=h=>inRange(h.invoiceDate,state.from,state.to), hs=D.headers.filter(h=>dates(h)&&includes(state.companies,h.company)&&includes(state.clients,h.clientId));
@@ -496,7 +571,7 @@ async function boot(){
  M=createModel(D);state={from:D.metadata.defaultFrom,to:D.metadata.defaultTo,dateBasis:'invoice',costMode:D.payroll?'real':'stored',consolidado:false,tab:'summary',companies:[],plates:[],clients:[],categories:[],loads:[],concepts:[]};
  if(!D.payroll)$('costMode').querySelector('option[value="real"]').remove();
  if(!D.ledger?.intragrupo?.length)$('billing').closest('label').hidden=true;
- $('costMode').value=state.costMode;$('billing').value='suma';renderSources();$('personalTab').hidden=!PERSONAL_BLOB;$('actividadTab').hidden=!D.actividad;$('viajesTab').hidden=!D.actividad;
+ $('costMode').value=state.costMode;$('billing').value='suma';renderSources();$('personalTab').hidden=!PERSONAL_BLOB;$('actividadTab').hidden=!D.actividad;$('viajesTab').hidden=!D.actividad;$('clientedetTab').hidden=!D.actividad;$('mapaTab').hidden=!(D.actividad&&D.actividad.coords);
  for(const id of ['from','to','compareFrom','compareTo']){$(id).min=D.metadata.from;$(id).max=D.metadata.to;}
  $('from').value=state.from;$('to').value=state.to;$('compareFrom').value=priorYear(state.from);$('compareTo').value=priorYear(state.to);
  $('fresh').textContent='Lectura '+new Date(D.metadata.accessReadAt).toLocaleString('es-ES',{timeZone:'Europe/Madrid'})+' · datos hasta '+date(D.metadata.to);

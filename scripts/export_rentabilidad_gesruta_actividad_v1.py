@@ -485,9 +485,18 @@ def main():
                 t["dur"] = round(40 + t["kmr"] / 22.0 * 60, 0) if t["kmr"] else None
                 t["trm"] = "hormigon" if t["horm"] else "sin"
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
+    # Coordenadas por NOMBRE de punto (planta/cantera/obra), para el MAPA: el informe agrega los viajes del periodo
+    # elegido por su punto de origen/destino y une aqui la coordenada del localizador (paradas GPS de la flota).
+    coords = {}
+    for cod, g in gps.items():
+        if not isinstance(g, dict) or g.get("lat") in (None, "") or g.get("lon") in (None, ""):
+            continue
+        nom = (lugar.get(cod, {}).get("nom") or cod)
+        if nom and nom not in coords:
+            coords[nom] = [round(g["lat"], 5), round(g["lon"], 5), g.get("localidad") or "", g.get("provincia") or ""]
     out = {"metadata": {"disponible": True, "fuente": "GesRuta operativo (lineas de albaran: cantera=arido/hormigon, o nacional subcontratado por albaran; coste subcontrata=IMPPRO; inggas)",
                         "desde": a.from_date, "hasta": hasta, "viajes": len(rows),
-                        "improExcluidos": impro_excl,
+                        "improExcluidos": impro_excl, "coords": coords,
                         "leido": datetime.datetime.now().isoformat(timespec="seconds")}, "rows": rows, "margen": margen}
     with open(a.output, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
