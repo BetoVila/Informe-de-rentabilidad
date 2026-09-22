@@ -167,7 +167,7 @@ if(actividadSrc?.metadata?.disponible){
   const oi=intern(prov,provIx,r.op||''),di=intern(prov,provIx,r.dp||'');
   const li=intern(loc,locIx,r.ol||''),ld=intern(loc,locIx,r.dl||'');
   const po=intern(pt,ptIx,r.on||''),pd=intern(pt,ptIx,r.dn||'');
-  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3];
+  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3,r.impro||0];
  });
  // Margen operativo de GesRuta (inggas): P&L por mes×cliente. Antes del coste real de flota/personal/indirectos.
  let margen=null;

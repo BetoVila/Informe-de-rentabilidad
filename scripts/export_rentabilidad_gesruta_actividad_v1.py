@@ -355,16 +355,18 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar):
     ln = abrir(base, "lineas.dbf")
     trips = {}
     for r in ln.registros():
-        c1 = ln.get(r, "CAMPO1")
-        if not (c1 and str(c1).strip()):
-            continue
         v, a = str(ln.get(r, "VIAJE")), str(ln.get(r, "ALBARA"))
         c = cab.get((v, a))
         d = c["fecha"] if c else None
         if not d or not (d.year >= int(desde[:4]) and d.isoformat() >= desde and d.isoformat() <= hasta):
             continue
-        cant = str(c1).strip()
-        key = (v, cant)
+        c1 = ln.get(r, "CAMPO1")
+        tiene_cantera = bool(c1 and str(c1).strip())
+        # Viaje REAL: con «Alb. cantera» (arido/hormigon) por (viaje, cantera). Los NACIONALES subcontratados no llevan
+        # cantera; su viaje = el ALBARAN, y su coste real es lo que se paga al subcontratista (IMPPRO). Sin capturarlos
+        # se dejaba fuera casi todo su ingreso pero se les colgaba el coste -> margenes absurdos (Roberto 22/09).
+        cant = str(c1).strip() if tiene_cantera else ""
+        key = (v, cant) if tiene_cantera else (v, "@" + a)
         unidad = clasificar_unidad(ln.get(r, "UNIMED"), ln.get(r, "CODCON"), ln.get(r, "CONCEP"))
         t = trips.get(key)
         if t is None:
@@ -374,8 +376,9 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar):
                               "cli": c["cliente"] if c else "", "o": o, "d": dest,
                               "op": rprov(o), "ol": rloc(o), "on": rnom(o),
                               "dp": rprov(dest), "dl": rloc(dest), "dn": rnom(dest),
-                              "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "horm": False}
+                              "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "impro": 0.0, "horm": False, "nac": not tiene_cantera}
         t["imp"] += ln.get(r, "IMPORT") or 0
+        t["impro"] += ln.get(r, "IMPPRO") or 0   # coste REAL del subcontratista por linea (cuadra con la cuenta 607); viaje con impro>0 = subcontratado
         cr = ln.get(r, "CANTIDREAL") or ln.get(r, "CANTID") or 0
         if unidad == "m3":
             t["m3"] += cr; t["horm"] = True
@@ -383,7 +386,9 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar):
         elif unidad == "t":
             t["t"] += cr
     ln.cerrar()
-    return list(trips.values())
+    # Nacionales sin cantera: solo se quedan los SUBCONTRATADOS (impro>0), que traen su coste real. Los de coste propio
+    # sin cantera (no triangulan, sin km/horas fiables) se dejan fuera por ahora, para no inventarles un coste.
+    return [t for t in trips.values() if t.get("cant") or t.get("impro", 0) > 0]
 
 
 def main():
