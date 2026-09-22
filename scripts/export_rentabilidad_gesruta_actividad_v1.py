@@ -299,7 +299,7 @@ def leer_margen(base, empresa, desde, hasta):
     return list(agg.values())
 
 
-def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar):
+def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl):
     # maestro de clientes: codigo -> nombre (mascli.dbf)
     clientes = {}
     mc = abrir(base, "mascli.dbf")
@@ -377,8 +377,13 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar):
                               "op": rprov(o), "ol": rloc(o), "on": rnom(o),
                               "dp": rprov(dest), "dl": rloc(dest), "dn": rnom(dest),
                               "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "impro": 0.0, "horm": False, "nac": not tiene_cantera}
-        t["imp"] += ln.get(r, "IMPORT") or 0
-        t["impro"] += ln.get(r, "IMPPRO") or 0   # coste REAL del subcontratista por linea (cuadra con la cuenta 607); viaje con impro>0 = subcontratado
+        imp_val = ln.get(r, "IMPORT") or 0
+        impro_val = ln.get(r, "IMPPRO") or 0     # coste REAL del subcontratista por linea (cuadra con la cuenta 607); viaje con impro>0 = subcontratado
+        if impro_val > 15000 and impro_val > imp_val * 8:   # coste de subcontrata IMPOSIBLE en una linea (error de tecleo en GesRuta, p. ej. 170.108 en un porte de 430): no sumar, anotar
+            impro_excl.append({"empresa": empresa, "viaje": v, "albaran": a, "impro": round(impro_val), "importe": round(imp_val), "cliente": (c["cliente"] if c else "")})
+            impro_val = 0
+        t["imp"] += imp_val
+        t["impro"] += impro_val
         cr = ln.get(r, "CANTIDREAL") or ln.get(r, "CANTID") or 0
         if unidad == "m3":
             t["m3"] += cr; t["horm"] = True
@@ -435,12 +440,13 @@ def main():
     pend = {}
     rows = []
     margen = []
+    impro_excl = []
     for carpeta, empresa in (("EMPTR21", "Razo"), ("EMPAG21", "Agetrans")):
         base = os.path.join(a.root, carpeta)
         if not os.path.isdir(base):
             print("Aviso: no esta %s" % base, file=sys.stderr)
             continue
-        rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend, lugar))
+        rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend, lugar, impro_excl))
         margen.extend(leer_margen(base, empresa, a.from_date, hasta))
     # Pegar a cada viaje su km/litros/horas REALES (bases de reparto). Aridos/nacional: de la triangulacion. Hormigon:
     # km nativo (CAMPO2) y HORAS REALES del localizador (jornadas por matricula/mes, repartidas por km entre los viajes de
@@ -471,8 +477,9 @@ def main():
                 t["dur"] = round(40 + t["kmr"] / 22.0 * 60, 0) if t["kmr"] else None
                 t["trm"] = "hormigon" if t["horm"] else "sin"
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
-    out = {"metadata": {"disponible": True, "fuente": "GesRuta operativo (lineas de albaran con cantera + inggas)",
+    out = {"metadata": {"disponible": True, "fuente": "GesRuta operativo (lineas de albaran: cantera=arido/hormigon, o nacional subcontratado por albaran; coste subcontrata=IMPPRO; inggas)",
                         "desde": a.from_date, "hasta": hasta, "viajes": len(rows),
+                        "improExcluidos": impro_excl,
                         "leido": datetime.datetime.now().isoformat(timespec="seconds")}, "rows": rows, "margen": margen}
     with open(a.output, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
