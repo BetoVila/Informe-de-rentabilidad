@@ -378,7 +378,7 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
         if t is None:
             o, dest = (ln.get(r, "ORIGEN") or "").strip(), (ln.get(r, "DESTINO") or "").strip()
             apuntar_pendiente(o); apuntar_pendiente(dest)
-            t = trips[key] = {"c": empresa, "v": v, "cant": cant, "mat": matr.get(v, {}).get("mat", ""), "cho": matr.get(v, {}).get("cho", ""), "mes": d.isoformat()[:7],
+            t = trips[key] = {"c": empresa, "v": v, "cant": cant, "mat": matr.get(v, {}).get("mat", ""), "cho": matr.get(v, {}).get("cho", ""), "mes": d.isoformat()[:7], "dia": d.isoformat(),
                               "cli": c["cliente"] if c else "", "o": o, "d": dest,
                               "op": rprov(o), "ol": rloc(o), "on": rnom(o),
                               "dp": rprov(dest), "dl": rloc(dest), "dn": rnom(dest),
@@ -465,6 +465,8 @@ def main():
                 hormKm[k] = hormKm.get(k, 0.0) + t["km"]
     for t in rows:
         tr = tri.get((t["c"], t["v"], t["cant"]))
+        if tr and tr.get("fecha"):
+            t["dia"] = tr["fecha"]          # fecha REAL de servicio (traza GPS) donde la hay; si no, la del albarán
         if tr and (tr.get("km") or 0) > 0:
             t["kmr"] = round(tr.get("km") or 0, 1)
             t["lit"] = round(tr.get("litros_calibrados") or tr.get("litros") or (t["kmr"] * Lp100 / 100), 1)

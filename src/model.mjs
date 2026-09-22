@@ -303,7 +303,7 @@ export function createModel(data) {
     const from=f.from.slice(0,7),to=f.to.slice(0,7),wanted=f.companies?.length?f.companies:['Razo','Agetrans'];
     const wc=new Set(wanted.map(w=>A.co.indexOf(w)).filter(i=>i>=0));
     const rows=A.rows.filter(r=>{const m=A.mo[r[M]];return m>=from&&m<=to&&wc.has(r[C]);});
-    if(!rows.length||A.rows[0].length<20)return null;      // hace falta impro (coste real del subcontratista por viaje) + la triangulación
+    if(!rows.length||A.rows[0].length<21)return null;      // hace falta impro (índice 19) + día (índice 20)
     // Viaje SUBCONTRATADO (IMPPRO>0): su coste es lo que pagamos al subcontratista (IMPPRO real por línea, cuadra con la
     // cuenta 607), NO la flota propia. Viaje PROPIO: combustible + personal + flota por sus bases medidas.
     const sub=r=>(r[IMPRO]||0)>0;
@@ -345,7 +345,7 @@ export function createModel(data) {
     const R=_reparto(f);if(!R)return null;
     const {A,rows,cost,nameOf,dRate,ix}=R,{M,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}=ix;
     const TR=['medido','repartido','estimado','sin traza'];
-    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=!R.sub(r)&&(dRate.get(nameOf(r))||0)>1;return {mes:A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(R.sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':'')};});
+    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=!R.sub(r)&&(dRate.get(nameOf(r))||0)>1;return {mes:A.mo[r[M]],dia:(A.dia&&A.dia[r[20]])||A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],carga:A.pt[r[13]]||A.loc[r[6]]||'—',descarga:A.pt[r[14]]||A.loc[r[7]]||'—',mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(R.sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':'')};});
   }
   return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView,netaView,netaTrips};
 }
