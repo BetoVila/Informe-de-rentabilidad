@@ -138,47 +138,49 @@ def norm_loc(s):
     return p
 
 
-def cargar_lugares(base, empresa="", gps=None):
-    # Maestro de lugares combinado: puntos.dbf (rico: provincia/CP/código) manda; puntcd.dbf rellena huecos.
-    # Tres niveles distintos: provincia, LOCALIDAD (pueblo, campo LOCALI) y PUNTO (planta/cantera/obra, campo NOMBRE).
-    lugar = {}
-    try:
-        pt = abrir(base, "puntos.dbf")
-        for r in pt.registros():
-            c = (pt.get(r, "CODIGO") or "").strip()
+def _leer_lugares_base(base, lugar):
+    # Vuelca puntos.dbf + puntcd.dbf de UNA sociedad en el dict compartido 'lugar' (clave=codigo; se rellenan huecos).
+    for tabla in ("puntos.dbf", "puntcd.dbf"):
+        try:
+            t = abrir(base, tabla)
+        except IOError:
+            continue
+        tiene_prov = "PROVINCIA" in t.nombres()
+        for r in t.registros():
+            c = (t.get(r, "CODIGO") or "").strip()
             if not c:
                 continue
-            lugar[c] = {"pro": prov_desde(pt.get(r, "PROVINCIA"), pt.get(r, "PROVIN"), pt.get(r, "CP")),
-                        "loc": norm_loc(pt.get(r, "LOCALI")), "nom": limpio_txt(pt.get(r, "NOMBRE"))}
-        pt.cerrar()
-    except IOError:
-        pass
-    pc = abrir(base, "puntcd.dbf")
-    for r in pc.registros():
-        c = (pc.get(r, "CODIGO") or "").strip()
-        if not c:
-            continue
-        nom = limpio_txt(pc.get(r, "NOMBRE"))
-        pro = prov_desde(pc.get(r, "PROVINCIA") if "PROVINCIA" in pc.nombres() else "", "", pc.get(r, "CP")) or norm_prov(pc.get(r, "PROVIN") or "")
-        loc = norm_loc(pc.get(r, "LOCALI"))
-        prev = lugar.get(c)
-        if prev is None:
-            lugar[c] = {"pro": pro, "loc": loc, "nom": nom}
-        else:
-            # completar lo que puntos no trajo
-            if not prev["pro"] and pro:
-                prev["pro"] = pro
-            if not prev["loc"] and loc:
-                prev["loc"] = loc
-            if not prev["nom"] and nom:
-                prev["nom"] = nom
-    pc.cerrar()
-    # Capa GPS: el municipio REAL adonde van a parar los camiones (Wialon/Locatel + OpenStreetMap). Rellena el pueblo
-    # y la provincia que el maestro dejo vacios; no pisa un LOCALI escrito a mano en el maestro. El CSV de Roberto (rprov/rloc)
-    # sigue por encima de todo. Clave del GPS: «Empresa|Codigo» (los codigos colisionan entre Razo y Agetrans).
+            pro = prov_desde(t.get(r, "PROVINCIA") if tiene_prov else "", t.get(r, "PROVIN") if "PROVIN" in t.nombres() else "", t.get(r, "CP"))
+            if not pro:
+                pro = norm_prov(t.get(r, "PROVIN") or "") if "PROVIN" in t.nombres() else ""
+            loc = norm_loc(t.get(r, "LOCALI"))
+            nom = limpio_txt(t.get(r, "NOMBRE"))
+            prev = lugar.get(c)
+            if prev is None:
+                lugar[c] = {"pro": pro, "loc": loc, "nom": nom}
+            else:  # completar lo que faltaba (misma clave en las dos sociedades = mismo lugar, dato unico global)
+                if not prev["pro"] and pro:
+                    prev["pro"] = pro
+                if not prev["loc"] and loc:
+                    prev["loc"] = loc
+                if not prev["nom"] and nom:
+                    prev["nom"] = nom
+        t.cerrar()
+
+
+def cargar_lugares_global(root, gps=None):
+    # Maestro de lugares GLOBAL: Razo + Agetrans JUNTOS, por codigo (Roberto 22/09: las localizaciones son globales,
+    # dato unico del grupo). Tres niveles: provincia, LOCALIDAD (pueblo, LOCALI) y PUNTO (planta/cantera/obra, NOMBRE).
+    lugar = {}
+    for carpeta in ("EMPTR21", "EMPAG21"):
+        base = os.path.join(root, carpeta)
+        if os.path.isdir(base):
+            _leer_lugares_base(base, lugar)
+    # Capa GPS GLOBAL: municipio REAL de las paradas de la flota (Wialon/Locatel + OpenStreetMap), por CODIGO (sin empresa).
+    # Rellena el pueblo/provincia que el maestro dejo vacios; no pisa un LOCALI escrito a mano. El CSV de Roberto manda.
     if gps:
         for c, x in lugar.items():
-            g = gps.get("%s|%s" % (empresa, c))
+            g = gps.get(c)
             if not g:
                 continue
             if not x["loc"] and g.get("localidad"):
@@ -292,7 +294,7 @@ def leer_margen(base, empresa, desde, hasta):
     return list(agg.values())
 
 
-def leer_sociedad(base, empresa, desde, hasta, override, pend, gps=None):
+def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar):
     # maestro de clientes: codigo -> nombre (mascli.dbf)
     clientes = {}
     mc = abrir(base, "mascli.dbf")
@@ -320,8 +322,7 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, gps=None):
         if v is not None:
             matr[str(v)] = {"mat": (vj.get(r, "MATRI1") or "").strip(), "cho": (vj.get(r, "CHOFER1") or "").strip()}
     vj.cerrar()
-    # lugares: codigo -> provincia, localidad (maestro combinado puntos + puntcd + GPS de la flota)
-    lugar = cargar_lugares(base, empresa, gps)
+    # lugares: dict GLOBAL (Razo+Agetrans) ya construido en main y pasado aqui (dato unico de localizacion)
 
     def rprov(code):  # el CSV de Roberto manda; si no, el maestro de lugares
         ov = override.get(code)
@@ -397,6 +398,7 @@ def main():
             gps = json.load(open(a.gps, encoding="utf-8"))
         except (OSError, ValueError) as e:
             print("Aviso: no se pudo leer --gps %s: %s" % (a.gps, e), file=sys.stderr)
+    lugar = cargar_lugares_global(a.root, gps)   # maestro de lugares GLOBAL (Razo+Agetrans), una sola vez
     pend = {}
     rows = []
     margen = []
@@ -405,7 +407,7 @@ def main():
         if not os.path.isdir(base):
             print("Aviso: no esta %s" % base, file=sys.stderr)
             continue
-        rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend, gps))
+        rows.extend(leer_sociedad(base, empresa, a.from_date, hasta, override, pend, lugar))
         margen.extend(leer_margen(base, empresa, a.from_date, hasta))
     for t in rows:
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
