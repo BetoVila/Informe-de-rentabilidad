@@ -308,7 +308,9 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
         if cod:
             clientes[cod] = (mc.get(r, "NOMBRE") or "").strip()
     mc.cerrar()
-    # fecha de servicio + cliente por (viaje, albaran)
+    # fecha de servicio + cliente + FACTURADO (el albaran lleva su nº de factura, serie y fecha) por (viaje, albaran).
+    # El INGRESO se ancla a lo FACTURADO (albaran con NUMFAC): cuadra con la facturacion de GesRuta y la contabilidad.
+    # Un albaran sin NUMFAC es trabajo ENTREGADO PENDIENTE DE FACTURAR (del año en curso): no se cuenta todavia.
     alb = abrir(base, "albara.dbf")
     cab = {}
     for r in alb.registros():
@@ -317,7 +319,9 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
             continue
         cod = (alb.get(r, "CLIENT") or "").strip()
         cab[(str(v), str(n))] = {"fecha": alb.get(r, "DESDEF") or alb.get(r, "FECHA"),
-                                 "cliente": clientes.get(cod, cod)}
+                                 "cliente": clientes.get(cod, cod),
+                                 "facturado": bool(str(alb.get(r, "NUMFAC") or "").strip()),
+                                 "delega": str(alb.get(r, "DELEGACLIE") or "").strip()}
     alb.cerrar()
     # matricula por viaje
     vj = abrir(base, "viaje.dbf")
@@ -359,6 +363,8 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
         c = cab.get((v, a))
         d = c["fecha"] if c else None
         if not d or not (d.year >= int(desde[:4]) and d.isoformat() >= desde and d.isoformat() <= hasta):
+            continue
+        if not c.get("facturado"):      # albaran aun sin facturar: no se cuenta (el ingreso se ancla a lo FACTURADO)
             continue
         c1 = ln.get(r, "CAMPO1")
         tiene_cantera = bool(c1 and str(c1).strip())
