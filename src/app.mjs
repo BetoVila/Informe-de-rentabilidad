@@ -560,9 +560,22 @@ function viajesTab(){
 }
 // ---- HALLAZGOS: lo que el cruce GesRuta ↔ localizador ↔ tacógrafo descubre y sirve para actuar (listas medidas, con qué hacer).
 const HZ_ROL={carga:'cargando',descarga:'descargando',espera:'espera en ruta',fuera:'fuera de viaje'};
+// Cada bloque de Hallazgos usa el MÓDULO ÚNICO de filtros (crearFiltro), como las demás tablas: buscar por palabras + mín/máx por cifra.
+const _hzF={},_hzRows={},_hzCols={},_hzMax={};
+function hzCuerpo(id,columns,rows,max){
+ const F=_hzF[id],ft=filtroAplica(F,rows);
+ return `${filtroToolsHTML(F,rows)}<div id="hz_${id}">${simpleTable(columns,ft.slice(0,max))}${ft.length>max?`<p class="sub">Se muestran ${max} de ${nf(ft.length)}; el fichero triangulado_v2.json en P:\\_RENTABILIDAD tiene la lista completa.</p>`:''}</div>`;
+}
+function hzRedibuja(id){
+ const F=_hzF[id];if(!F)return;const rows=_hzRows[id],cols=_hzCols[id],max=_hzMax[id],ft=filtroAplica(F,rows);
+ const el=$('hz_'+id);if(el)el.innerHTML=simpleTable(cols,ft.slice(0,max))+(ft.length>max?`<p class="sub">Se muestran ${max} de ${nf(ft.length)}; el fichero triangulado_v2.json en P:\\_RENTABILIDAD tiene la lista completa.</p>`:'');
+ filtroRefresca(F,ft.length);
+}
 function hzBloque(id,titulo,sub,columns,rows,abierto=false,max=400){
  const n=rows.length;
- return `<details class="hz" ${abierto?'open':''}><summary>${esc(titulo)} <span class="hzn">${nf(n)}</span></summary><p class="sub">${sub}</p>${n?simpleTable(columns,rows.slice(0,max)):'<div class="empty">Nada que señalar.</div>'}${n>max?`<p class="sub">Se muestran ${max} de ${nf(n)}; el fichero triangulado_v2.json en P:\\_RENTABILIDAD tiene la lista completa.</p>`:''}</details>`;
+ _hzRows[id]=rows;_hzCols[id]=columns;_hzMax[id]=max;
+ if(!_hzF[id])_hzF[id]=crearFiltro(columns.map(c=>({...c})),rows,()=>hzRedibuja(id));
+ return `<details class="hz" ${abierto?'open':''}><summary>${esc(titulo)} <span class="hzn">${nf(n)}</span></summary><p class="sub">${sub}</p>${n?hzCuerpo(id,columns,rows,max):'<div class="empty">Nada que señalar.</div>'}</details>`;
 }
 function hallazgosTab(){
  const H=D.actividad&&D.actividad.tri&&D.actividad.tri.hallazgos;
