@@ -85,14 +85,16 @@ function update(){
  const priorLabel=range?.valid?({year:'Año anterior',previous:'Periodo anterior',custom:'Comparación'}[$('compare').value]||'Comparación'):'';
  ledgerCtx.priorLabel=priorLabel;
  const cmp=(value,prior,goodUp=true,fmt=eur)=>compareHtml(value,prior,goodUp,fmt,priorLabel);
- const kcard=(label,value,hint,extra='',primary=false)=>`<article class="card ${primary?'primary':''}"><span class="label">${label}</span><div class="value">${value}</div><div class="hint">${hint}</div>${extra}</article>`;
+ const kcard=(label,value,hint,extra='',primary=false,detailKey='')=>`<article class="card ${primary?'primary':''}${detailKey?' card-click':''}"${detailKey?` data-carddetail="${detailKey}" tabindex="0" role="button" aria-label="${esc(label)}: pincha para ver el desglose real"`:''}><span class="label">${label}${detailKey?' <span class="card-caret">▾ ver desglose</span>':''}</span><div class="value">${value}</div><div class="hint">${hint}</div>${extra}</article>`;
  if(ledgerOn){
   $('cards').innerHTML=[
-   kcard('Ingresos contables'+(lv.consolidado?' (consolidados)':''),eur(lv.income),'Contabilidad, '+monthRange(lv.months)+'. Facturas GesRuta de esos mismos meses: '+eur(M.run({...state,from:lv.months[0]+'-01',to:monthEndOf(lv.months[lv.months.length-1])}).totals.revenue)+'.'+(lv.consolidado?' Consolidado: excluidos '+eur(lv.intragrupo.income)+' de facturación intragrupo Razo–Agetrans.':''),cmp(lv.income,lvBase?.income),true),
-   kcard('Gastos contables'+(lv.consolidado?' (consolidados)':''),eur(lv.expenses),'Todo el gasto real. Los partes de Access solo captan el '+pct(br.coverage)+' ('+eur(br.totalParts)+').'+(lv.consolidado?' Consolidado: excluidos '+eur(lv.intragrupo.expense)+' de subcontratación intragrupo.':''),cmp(lv.expenses,lvBase?.expenses,false)),
+   kcard('Ingresos contables'+(lv.consolidado?' (consolidados)':''),eur(lv.income),'Contabilidad, '+monthRange(lv.months)+'. Facturas GesRuta de esos mismos meses: '+eur(M.run({...state,from:lv.months[0]+'-01',to:monthEndOf(lv.months[lv.months.length-1])}).totals.revenue)+'.'+(lv.consolidado?' Consolidado: excluidos '+eur(lv.intragrupo.income)+' de facturación intragrupo Razo–Agetrans.':''),cmp(lv.income,lvBase?.income),true,'income'),
+   kcard('Gastos contables'+(lv.consolidado?' (consolidados)':''),eur(lv.expenses),'Todo el gasto real. Los partes de Access solo captan el '+pct(br.coverage)+' ('+eur(br.totalParts)+').'+(lv.consolidado?' Consolidado: excluidos '+eur(lv.intragrupo.expense)+' de subcontratación intragrupo.':''),cmp(lv.expenses,lvBase?.expenses,false),false,'expense'),
    kcard('Resultado contable',eur(lv.result),'Margen '+pct(lv.marginPct)+' sobre ingresos'+(lv.consolidado?' del grupo (sin intragrupo)':'')+'. Es el resultado de la contabilidad, no un cálculo de los partes.',cmp(lv.result,lvBase?.result)),
    kcard('Gasto que no llega a los partes',eur(br.missing),'Subcontratación, compra de áridos, generales… existen en la contabilidad y no en ningún parte de vehículo.',cmp(br.missing,lvBase?M.bridge({...state,...range}).missing:null,false))].join('');
+  _cardCats={income:{cats:lv.incomeCategories,total:lv.income},expense:{cats:lv.expenseCategories,total:lv.expenses}};wireCardDetail();
  }else{
+  _cardCats=null;if($('cardDetail')){$('cardDetail').hidden=true;}
   $('cards').innerHTML=[
    card('Ingresos sin IVA (facturas GesRuta)',eur(t.revenue),'Base de facturación · '+(state.dateBasis==='invoice'?'fecha de factura':'fecha de línea'),'revenue',true),
    card('Coste imputable a vehículos ('+costLabels[state.costMode]+')',eur(t.cost),'Solo lo que los partes imputan. No incluye subcontratación, compra de áridos ni gastos generales.','cost'),
@@ -592,7 +594,7 @@ function tripDetail(t){
   ${t.mapaKey?`<div><span class="k">Mapa del día</span><a class="v noprint" href="dias/${encodeURIComponent(t.mapaKey)}.html${t.orden?'#v='+t.orden:''}" target="_blank" rel="noopener">ver la traza, las paradas y las esperas ↗</a></div>`:''}
  </div>`;
 }
-let _map=null,_mapLayer=null,_mapMetric='viajes',_mapStyle='carreteras',_tileLayers=[];
+let _map=null,_mapLayer=null,_mapMetric='viajes',_mapStyle='carreteras',_tileLayers=[],_mapView='puntos',_heatLayer=null;
 const ESRI='https://server.arcgisonline.com/ArcGIS/rest/services/';
 // Basemaps de Esri SIN CLAVE: funcionan al abrir el informe como archivo local (OSM da 403 sin Referer; CARTO estampa marca de agua sin API key).
 // «satelite» es HÍBRIDO: imagen aérea + capas transparentes de carreteras y rótulos encima.
@@ -614,12 +616,33 @@ function setMapStyle(style){
 }
 const mapNorm=s=>(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase();
 const mapGal=p=>['A CORUNA','LUGO','PONTEVEDRA','OURENSE'].includes(mapNorm(p.prov));
+// ---- Tarjetas interactivas: pinchar «Ingresos»/«Gastos contables» despliega el desglose REAL por naturaleza (contabilidad).
+let _cardCats=null,_cardDetailKey=null;
+function wireCardDetail(){
+ document.querySelectorAll('#cards [data-carddetail]').forEach(a=>{
+  a.onclick=()=>toggleCardDetail(a.dataset.carddetail);
+  a.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggleCardDetail(a.dataset.carddetail);}};
+ });
+ if(_cardDetailKey&&_cardCats&&_cardCats[_cardDetailKey]){const k=_cardDetailKey;_cardDetailKey=null;toggleCardDetail(k);}   // se mantenía abierto: re-pinta con los datos nuevos
+ else{const cd=$('cardDetail');if(cd)cd.hidden=true;}
+}
+function toggleCardDetail(key){
+ const cd=$('cardDetail');if(!cd||!_cardCats||!_cardCats[key])return;
+ const marca=k=>document.querySelectorAll('#cards [data-carddetail]').forEach(a=>a.classList.toggle('open',a.dataset.carddetail===k));
+ if(_cardDetailKey===key){cd.hidden=true;_cardDetailKey=null;marca(null);return;}
+ _cardDetailKey=key;
+ const {cats,total}=_cardCats[key],titulo=key==='income'?'Ingresos reales por naturaleza (contabilidad)':'Gastos reales por naturaleza (contabilidad)';
+ const rows=cats.filter(c=>Math.abs(c.amount)>=0.5).sort((a,b)=>b.amount-a.amount);
+ cd.innerHTML=`<div class="carddetail-in"><div class="grp">${titulo} <small>(pincha la tarjeta otra vez para cerrar)</small></div><table class="cardcat"><tbody>${rows.map(c=>`<tr><td>${esc(c.label)}</td><td class="num">${eur(c.amount)}</td><td class="num">${pct(total?c.amount/total:null)}</td></tr>`).join('')}<tr class="tot"><td><b>Total</b></td><td class="num"><b>${eur(total)}</b></td><td class="num">100 %</td></tr></tbody></table><p class="sub">Dato de la contabilidad (cuentas de los grupos 6 y 7, meses cerrados). El detalle por cuenta y por mes, con el ajuste intragrupo, está en «Conciliación».</p></div>`;
+ cd.hidden=false;marca(key);
+}
 function mapa(){
  const nv=M.zonasGeo(state);
  if(!nv||!nv.puntos.length)return panel('Mapa de zonas','Dónde trabaja la flota.','<div class="info">No hay puntos con coordenada del localizador en el periodo elegido.</div>');
  return panel('Mapa de zonas','Dónde trabaja la flota, por los puntos GPS reales donde para (planta, cantera u obra), sobre el mapa base. Rueda para acercar/alejar, arrastra para mover, pincha un punto para ver sus datos.',
   `<div class="mapmetric">Vista: ${['carreteras','satelite'].map(s=>`<button class="segbtn${s===_mapStyle?' on':''}" data-ms="${s}">${({carreteras:'Carreteras',satelite:'Satélite'})[s]}</button>`).join('')}</div>
-  <div class="mapmetric">Tamaño de cada punto por: ${['viajes','t','m3','ing'].map(m=>`<button class="segbtn${m===_mapMetric?' on':''}" data-mm="${m}">${({viajes:'Viajes',t:'Toneladas',m3:'m³',ing:'Ingreso'})[m]}</button>`).join('')}</div>
+  <div class="mapmetric">${_mapView==='calor'?'Intensidad del calor por':'Tamaño de cada punto por'}: ${['viajes','t','m3','ing'].map(m=>`<button class="segbtn${m===_mapMetric?' on':''}" data-mm="${m}">${({viajes:'Viajes',t:'Toneladas',m3:'m³',ing:'Ingreso'})[m]}</button>`).join('')}</div>
+  <div class="mapmetric">Modo: ${['puntos','calor'].map(m=>`<button class="segbtn${m===_mapView?' on':''}" data-mv="${m}">${({puntos:'Puntos',calor:'Mapa de calor'})[m]}</button>`).join('')} <span class="sub">el mapa de calor resalta las zonas donde más se trabaja (según la medida elegida)</span></div>
   <div id="mapContainer" class="mapbox"></div>
   <p class="sub" id="mapInfo">${nf(nv.puntos.length)} puntos en el periodo elegido. Pincha uno para ver sus datos.</p>`);
 }
@@ -630,25 +653,54 @@ function mapaRender(){
  if(_map){try{_map.remove();}catch(e){}_map=null;_mapLayer=null;}
  _map=L.map(el).setView([42.9,-8.1],7);
  setMapStyle(_mapStyle);   // Esri sin clave; «satelite» = híbrido (aérea + carreteras + rótulos). Ver MAP_STYLES.
- drawMapPoints(nv.puntos);
- document.querySelectorAll('.segbtn[data-ms]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.segbtn[data-ms]').forEach(x=>x.classList.remove('on'));b.classList.add('on');setMapStyle(b.dataset.ms);const z=M.zonasGeo(state);if(z)drawMapPoints(z.puntos);});
- document.querySelectorAll('.segbtn[data-mm]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.segbtn[data-mm]').forEach(x=>x.classList.remove('on'));b.classList.add('on');_mapMetric=b.dataset.mm;const z=M.zonasGeo(state);if(z)drawMapPoints(z.puntos);});
+ drawMap(nv.puntos);
+ const redib=()=>{const z=M.zonasGeo(state);if(z)drawMap(z.puntos);};
+ document.querySelectorAll('.segbtn[data-ms]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.segbtn[data-ms]').forEach(x=>x.classList.remove('on'));b.classList.add('on');setMapStyle(b.dataset.ms);redib();});
+ document.querySelectorAll('.segbtn[data-mm]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.segbtn[data-mm]').forEach(x=>x.classList.remove('on'));b.classList.add('on');_mapMetric=b.dataset.mm;redib();});
+ document.querySelectorAll('.segbtn[data-mv]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.segbtn[data-mv]').forEach(x=>x.classList.remove('on'));b.classList.add('on');_mapView=b.dataset.mv;const c=$('content');if(c){/* re-pinta la barra para el rótulo puntos/calor */}redib();});
+}
+function drawMap(pts){
+ if(!_map)return;
+ if(_mapLayer){try{_map.removeLayer(_mapLayer);}catch(e){}_mapLayer=null;}
+ if(_heatLayer){try{_map.removeLayer(_heatLayer);}catch(e){}_heatLayer=null;}
+ if(_mapView==='calor')drawMapHeat(pts);else drawMapPoints(pts);
+}
+function drawMapHeat(pts){
+ if(!_map)return;
+ if(typeof L.heatLayer!=='function')return drawMapPoints(pts);   // sin el plugin de calor: puntos
+ const mx=Math.max(...pts.map(p=>p[_mapMetric]||0))||1,data=[],bounds=[];
+ for(const p of pts){const v=p[_mapMetric]||0;if(v<=0)continue;data.push([p.lat,p.lon,Math.max(.06,Math.sqrt(v/mx))]);bounds.push([p.lat,p.lon]);}
+ _heatLayer=L.heatLayer(data,{radius:26,blur:20,maxZoom:12,minOpacity:.28,gradient:{0.2:'#2c5fd6',0.45:'#16a34a',0.7:'#f59e0b',1:'#c1394b'}}).addTo(_map);
+ if(bounds.length)_map.fitBounds(bounds,{padding:[30,30],maxZoom:11});
 }
 function drawMapPoints(pts){
  if(!_map)return;
- if(_mapLayer)_map.removeLayer(_mapLayer);
+ if(_mapLayer){try{_map.removeLayer(_mapLayer);}catch(e){}}
  _mapLayer=L.layerGroup().addTo(_map);
  const mx=Math.max(...pts.map(p=>p[_mapMetric]||0))||1,bounds=[];
  const sat=_mapStyle==='satelite';
  for(const p of pts){const v=p[_mapMetric]||0;if(v<=0)continue;const r=6+26*Math.sqrt(v/mx),isGal=mapGal(p);
   const c=L.circleMarker([p.lat,p.lon],{radius:r,color:sat?'#ffffff':'#12233b',weight:sat?1.5:1,fillColor:isGal?'#2563eb':(sat?'#e0862f':'#8a5a2b'),fillOpacity:sat?.72:.5});
-  c.bindTooltip(`<b>${esc(p.name)}</b><br>${esc(p.loc)} (${esc(p.prov)})<br>viajes ${nf(p.viajes)} · t ${nf(p.t)} · m³ ${nf(p.m3)}<br>ingreso ${eur(p.ing)}`,{sticky:true});
-  c.on('click',()=>{const mi=$('mapInfo');if(mi)mi.innerHTML=`<b>${esc(p.name)}</b> — ${esc(p.loc)} (${esc(p.prov)}): viajes ${nf(p.viajes)}, toneladas ${nf(p.t)}, m³ ${nf(p.m3)}, ingreso ${eur(p.ing)} · sale ${nf(p.orig)} / llega ${nf(p.dest)}`;});
+  c.bindTooltip(`<b>${esc(p.name)}</b><br>${esc(p.loc)} (${esc(p.prov)})<br>viajes ${nf(p.viajes)} · t ${nf(p.t,2)} · m³ ${nf(p.m3,1)}<br>ingreso ${eur(p.ing)}`,{sticky:true});
+  c.on('click',()=>{const mi=$('mapInfo');if(mi)mi.innerHTML=`<b>${esc(p.name)}</b> — ${esc(p.loc)} (${esc(p.prov)}): viajes ${nf(p.viajes)}, toneladas ${nf(p.t,2)}, m³ ${nf(p.m3,1)}, ingreso ${eur(p.ing)} · sale ${nf(p.orig)} / llega ${nf(p.dest)}`;});
   c.addTo(_mapLayer);bounds.push([p.lat,p.lon]);}
  if(bounds.length)_map.fitBounds(bounds,{padding:[30,30],maxZoom:11});
 }
 // ---- Informe por CLIENTE: lista gana/pierde + ficha (KPIs, comparación de periodos, operaciones agrupables) ----
-let _cliSel=null,_cliGroupBy='mes',_cliGroups=[];
+let _cliSel=null,_cliGroupBy='mes',_cliGroups=[],_cliOpsQ='',_cliOpsNum={};
+const cliTripHay=t=>norm([t.dia,t.mes,t.carga,t.descarga,t.ruta,t.mat,t.chofer,t.metodo,t.fiab].filter(Boolean).join(' '));
+function cliTripsFiltrados(trips){   // filtros de la ficha: palabras (matricula, lugar, mes, chofer) + min/max por cifra
+ const ws=norm(_cliOpsQ).split(/\s+/).filter(Boolean),N=_cliOpsNum;
+ return trips.filter(t=>{
+  if(ws.length){const h=cliTripHay(t);if(!ws.every(w=>h.includes(w)))return false;}
+  for(const k in N){const r=N[k];if(!r||!(numSet(r.min)||numSet(r.max)))continue;const x=t[k];if(typeof x!=='number')return false;if(numSet(r.min)&&x<+r.min)return false;if(numSet(r.max)&&x>+r.max)return false;}
+  return true;
+ });
+}
+const CLI_OPS_NUM=[['km','km'],['horas','horas'],['espera','min espera'],['ingreso','ingreso €'],['coste','coste €'],['margen','margen €'],['t','t']];
+function cliOpsFilterBar(){
+ return `<div class="cli-opsfilter noprint"><input id="cliOpsQ" type="search" placeholder="filtrar estos viajes por palabras (matrícula, lugar, mes, chófer…)" value="${esc(_cliOpsQ)}">${CLI_OPS_NUM.map(([k,lb])=>`<span class="cli-nf"><span>${lb}</span><input type="number" step="any" data-cliopsnum="${k}" data-part="min" placeholder="mín" value="${esc(_cliOpsNum[k]?.min??'')}"><input type="number" step="any" data-cliopsnum="${k}" data-part="max" placeholder="máx" value="${esc(_cliOpsNum[k]?.max??'')}"></span>`).join('')}<button id="cliOpsClear" type="button" class="textbtn">Quitar filtros</button></div>`;
+}
 const pcm=x=>x==null?'—':(x>=0?'+':'')+nf(x*100,1)+' %';
 const CLI_THEAD='<thead><tr><th>Fecha</th><th class="num">Nº</th><th>Inicio</th><th>Fin</th><th>Lugar de carga</th><th>Lugar de descarga</th><th>Matrícula</th><th>Chofer</th><th class="num">m³</th><th class="num">t</th><th class="num">km</th><th class="num">Km carg.</th><th class="num">Km vacío</th><th class="num">Horas</th><th class="num">Min. cond.</th><th class="num">Min. espera</th><th class="num">Ingreso</th><th class="num">Coste</th><th class="num">Margen</th><th class="num">%</th><th>Fiab.</th><th>Método</th><th>Conf.</th><th class="noprint">Mapa</th></tr></thead>';
 const cliTrow=t=>`<tr><td>${t.dia||t.mes}</td><td class="num">${t.orden||'—'}</td><td>${esc(t.tini||'—')}</td><td>${esc(t.tfin||'—')}</td><td>${esc(t.carga||t.ruta)}</td><td>${esc(t.descarga||'')}</td><td>${esc(t.mat||'—')}</td><td>${esc(t.chofer||'—')}</td><td class="num">${t.m3?nf(t.m3,1):'—'}</td><td class="num">${t.t?nf(t.t,2):'—'}</td><td class="num">${nf(t.km)}</td><td class="num">${t.kmCarg==null?'—':nf(t.kmCarg)}</td><td class="num">${t.kmVac==null?'—':nf(t.kmVac)}</td><td class="num">${t.horas==null?'—':t.horas}</td><td class="num">${t.cond==null?'—':t.cond}</td><td class="num">${t.espera==null?'—':t.espera}</td><td class="num">${eur(t.ingreso)}</td><td class="num">${eur(t.coste)}</td><td class="num ${t.margen>=0?'pos':'neg'}" style="font-weight:600">${eur(t.margen)}</td><td class="num ${t.margen>=0?'pos':'neg'}">${pcm(t.margenPct)}</td><td>${esc(t.fiab||'')}</td><td>${esc(t.metodo||'—')}</td><td>${esc(t.conf||'—')}</td><td class="noprint">${t.tini&&t.mat&&t.mat!=='—'?`<a href="dias/${encodeURIComponent(t.mat)}_${esc(t.dia)}.html" target="_blank" rel="noopener">ver día</a>`:'—'}</td></tr>`;
@@ -679,14 +731,19 @@ function clienteDet(){
  ${desgC}
  <div class="tripdetail" style="margin:6px 0 10px">${estadViajes(trips,'Estadística de sus viajes: media, mediana y dispersión')}</div>
  <h3 class="cli-h3">Comparar entre fechas</h3>${cmpHtml}
- <div class="cli-opshead"><b>Operaciones (${nf(trips.length)} viajes)</b> — agrupar por: <select id="cliGroup"><option value="mes"${_cliGroupBy==='mes'?' selected':''}>Mes</option><option value="carga"${_cliGroupBy==='carga'?' selected':''}>Lugar de carga</option><option value="descarga"${_cliGroupBy==='descarga'?' selected':''}>Lugar de descarga</option><option value="ruta"${_cliGroupBy==='ruta'?' selected':''}>Ruta</option><option value="mat"${_cliGroupBy==='mat'?' selected':''}>Matrícula</option><option value="none"${_cliGroupBy==='none'?' selected':''}>Sin agrupar</option></select> <span class="sub">pincha un grupo para desplegar sus viajes</span></div>
- <div id="cliOps">${cliOpsHtml(trips)}</div></div></div>`;
+ <div class="cli-opshead"><b>Operaciones (<span id="cliOpsCount">${nf(trips.length)}</span> de ${nf(trips.length)} viajes)</b> — agrupar por: <select id="cliGroup"><option value="mes"${_cliGroupBy==='mes'?' selected':''}>Mes</option><option value="carga"${_cliGroupBy==='carga'?' selected':''}>Lugar de carga</option><option value="descarga"${_cliGroupBy==='descarga'?' selected':''}>Lugar de descarga</option><option value="ruta"${_cliGroupBy==='ruta'?' selected':''}>Ruta</option><option value="mat"${_cliGroupBy==='mat'?' selected':''}>Matrícula</option><option value="none"${_cliGroupBy==='none'?' selected':''}>Sin agrupar</option></select> <span class="sub">pincha un grupo para desplegar sus viajes</span></div>
+ ${cliOpsFilterBar()}
+ <div id="cliOps">${cliOpsHtml(cliTripsFiltrados(trips))}</div></div></div>`;
 }
 function wireCliGroups(){document.querySelectorAll('#cliOps .cli-grphead').forEach(h=>h.onclick=()=>{const b=h.nextElementSibling,gi=+h.dataset.gi;if(b.hidden&&!b.dataset.filled){b.innerHTML=`<div class="cli-tablewrap"><table class="cli-optable">${CLI_THEAD}<tbody>${_cliGroups[gi].trips.map(cliTrow).join('')}</tbody></table></div>`;b.dataset.filled='1';}b.hidden=!b.hidden;h.classList.toggle('open',!b.hidden);});}
 function clienteDetWire(){
  const q=$('cliQ');if(q)q.oninput=()=>{const ws=norm(q.value).split(/\s+/).filter(Boolean);document.querySelectorAll('#cliList .cli-row').forEach(r=>{const h=norm(r.dataset.cli);r.hidden=!ws.every(w=>h.includes(w));});};
  document.querySelectorAll('#cliList .cli-row').forEach(r=>r.onclick=()=>{_cliSel=r.dataset.cli;renderContent();const el=$('content');if(el)el.scrollIntoView({block:'start'});});
- const g=$('cliGroup');if(g)g.onchange=()=>{_cliGroupBy=g.value;$('cliOps').innerHTML=cliOpsHtml(M.netaTrips(state).filter(t=>t.cliente===_cliSel));wireCliGroups();};
+ const reOps=()=>{const ft=cliTripsFiltrados(M.netaTrips(state).filter(t=>t.cliente===_cliSel));const oh=$('cliOps');if(oh){oh.innerHTML=cliOpsHtml(ft);wireCliGroups();}const cnt=$('cliOpsCount');if(cnt)cnt.textContent=nf(ft.length);};
+ const g=$('cliGroup');if(g)g.onchange=()=>{_cliGroupBy=g.value;reOps();};
+ const oq=$('cliOpsQ');if(oq)oq.oninput=()=>{_cliOpsQ=oq.value;reOps();};
+ document.querySelectorAll('[data-cliopsnum]').forEach(inp=>inp.oninput=()=>{const k=inp.dataset.cliopsnum,p=inp.dataset.part;_cliOpsNum[k]={..._cliOpsNum[k],[p]:inp.value};reOps();});
+ const oc=$('cliOpsClear');if(oc)oc.onclick=()=>{_cliOpsQ='';_cliOpsNum={};const oqi=$('cliOpsQ');if(oqi)oqi.value='';document.querySelectorAll('[data-cliopsnum]').forEach(x=>x.value='');reOps();};
  const pr=$('cliPrint');if(pr)pr.onclick=()=>window.print();
  wireCliGroups();
 }
