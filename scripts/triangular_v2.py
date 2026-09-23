@@ -799,6 +799,219 @@ def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, dr
     return res
 
 
+# ---------------------------------------------------------------- HORMIGON POR VIAJE (plantas aprendidas de la traza)
+def aprender_plantas(dem_h, jornadas_mat):
+    """Planta REAL de cada codigo de origen de hormigon, aprendida de la traza. El maestro y el geocode no valen aqui
+    (PREBETONG CORUÑA apunta a la cantera a 40 km; PLANTA DE SABON al centro de Arteixo). Regla: en los dias en que todos los
+    albaranes de la hormigonera son de UN origen, el grupo de paradas mas visitado del dia (>= 2 visitas: se vuelve a cargar)
+    vota por ese codigo; gana el grupo con mas dias (>= 2). Devuelve {(casa, cod): {lat, lon, dias, visitas, radio_m}}."""
+    por_dia = collections.defaultdict(list)
+    for t in dem_h:
+        if t["mat"] and t["o"]:
+            por_dia[(t["mat"], t["dia"])].append(t)
+    votos = collections.defaultdict(lambda: collections.defaultdict(lambda: [0, 0, 0.0, 0.0]))
+    celda = lambda p: (round(p["lat"] / 0.004), round(p["lon"] / 0.005))  # noqa: E731  (~440 x 400 m)
+    for (m, d), ts in por_dia.items():
+        origs = {(t["c"], t["o"]) for t in ts}
+        if len(origs) != 1 or m not in jornadas_mat:
+            continue
+        key = next(iter(origs))
+        paradas = [p for j in jornadas_mat[m] if j["fecha"] == d for p in j["paradas"] if p["t_out"] - p["t_in"] >= 180]
+        if not paradas:
+            continue
+        cuenta = collections.Counter(celda(p) for p in paradas)
+        cel, n = cuenta.most_common(1)[0]
+        if n < 2:
+            continue
+        ps = [p for p in paradas if celda(p) == cel]
+        v = votos[key][cel]
+        v[0] += 1; v[1] += n; v[2] += sum(p["lat"] for p in ps) / len(ps); v[3] += sum(p["lon"] for p in ps) / len(ps)
+    plantas = {}
+    for key, cels in votos.items():
+        cel, v = max(cels.items(), key=lambda kv: (kv[1][0], kv[1][1]))
+        if v[0] >= 2:
+            plantas[key] = {"lat": v[2] / v[0], "lon": v[3] / v[0], "dias": v[0], "visitas": v[1], "radio_m": 450}
+    return plantas
+
+
+def planta_en(q, plantas):
+    return next((k for k, pl in plantas.items() if abs(q["lat"] - pl["lat"]) <= 0.006 and v1.hav((q["lat"], q["lon"]), (pl["lat"], pl["lon"])) * 1000.0 <= pl["radio_m"]), None)
+
+
+def visitas_plantas(j, plantas):
+    """Visitas de la jornada a cualquier planta aprendida: paradas dentro de su radio, fundiendo las consecutivas en la misma
+    planta sin parada fuera entre medias (cola y cargadero). Si la jornada ARRANCA en una planta (durmio alli) la salida es la
+    carga del primer viaje, y si ACABA en una planta la llegada cierra el ultimo: los descansos no son paradas de la jornada,
+    asi que se anaden como visitas de borde. [(t_in, t_out, key, parada)] en orden."""
+    out = []
+    for s in j["paradas"]:
+        out.append((s["t_in"], s["t_out"], planta_en(s, plantas), s))
+    out.sort(key=lambda x: x[0])
+    vis = []
+    for (a, b, key, s) in out:
+        if key is None:
+            vis.append((a, b, None, s))
+        elif vis and vis[-1][2] == key:
+            vis[-1] = (vis[-1][0], b, key, vis[-1][3])
+        else:
+            vis.append((a, b, key, s))
+    vis = [v for v in vis if v[2] is not None]
+    pts = j["pts"]
+    if pts:
+        k0 = planta_en(pts[0], plantas)
+        if k0 and not (vis and vis[0][0] <= j["ini"] + 60):
+            vis.insert(0, (j["c0"], j["ini"], k0, {"lat": pts[0]["lat"], "lon": pts[0]["lon"], "t_in": j["c0"], "t_out": j["ini"]}))
+        k1 = planta_en(pts[-1], plantas)
+        if k1 and not (vis and vis[-1][1] >= j["fin"] - 60):
+            vis.append((j["fin"], j["c1"], k1, {"lat": pts[-1]["lat"], "lon": pts[-1]["lon"], "t_in": j["fin"], "t_out": j["c1"]}))
+    return vis
+
+
+def ciclos_plantas(j, plantas, fuente, tablas):
+    """Ciclos de hormigonera: de la LLEGADA a una planta (a cargar) a la llegada a la siguiente planta (vuelta de la obra). Si
+    la jornada empieza fuera de planta (viene de casa), el primer tramo se funde con el primer ciclo (como en aridos: el primer
+    viaje incluye la ida desde la base). Obra = parada mas larga fuera de plantas DESPUES de salir de la planta. Un ciclo sin
+    obra ni recorrido (lavado, espera en planta, cambio de planta) no es un viaje y se funde con el anterior."""
+    vis = visitas_plantas(j, plantas)
+    if not vis:
+        return []
+    ini, fin = j.get("arranque") or j["ini"], j["fin"]
+    ids_pl = {id(v[3]) for v in vis}
+    otras = [s for s in j["paradas"] if id(s) not in ids_pl]
+    cortes = []
+    if vis[0][0] > ini + 600:
+        cortes.append((ini, vis[0][0], None))
+    for k, v in enumerate(vis):
+        b = vis[k + 1][0] if k + 1 < len(vis) else max(fin, v[1])
+        if b - v[0] >= 60:
+            cortes.append((v[0], b, v))
+    ciclos = []
+    for (a, b, v) in cortes:
+        dentro = [s for s in otras if s["t_out"] > a and s["t_in"] < b and (v is None or s["t_in"] >= v[1] - 60)]
+        obra = max(dentro, key=lambda s: s["t_out"] - s["t_in"]) if dentro else None
+        ciclos.append({"t0": a, "t1": b,
+                       "carga": ({"t_in": v[0], "t_out": v[1], "lat": v[3]["lat"], "lon": v[3]["lon"]} if v else None),
+                       "descarga": ({"t_in": obra["t_in"], "t_out": obra["t_out"], "lat": obra["lat"], "lon": obra["lon"]} if obra else None),
+                       "o": v[2][1] if v else None, "d": None, "falta": None if obra else "obra_no_vista", "planta": v[2] if v else None, "obra": obra})
+    i = 0
+    while i < len(ciclos) and len(ciclos) > 1:
+        c = ciclos[i]
+        m = v1.medir({"fuente": fuente, "pts": j["pts"]}, c["t0"], c["t1"], tablas, c["t0"], c["t1"])
+        if c["obra"] is not None and (m["km"] or 0) >= KM_MIN_CICLO and (m["duracion_min"] or 0) >= MIN_MIN_CICLO:
+            i += 1
+            continue
+        if i > 0:
+            p = ciclos[i - 1]; p["t1"] = c["t1"]
+            if c["obra"] and (not p["obra"] or (c["obra"]["t_out"] - c["obra"]["t_in"]) > (p["obra"]["t_out"] - p["obra"]["t_in"])):
+                p["obra"], p["descarga"], p["falta"] = c["obra"], c["descarga"], None
+            del ciclos[i]
+        else:
+            n = ciclos[1]; n["t0"] = c["t0"]
+            if not n["carga"] and c["carga"]:
+                n["carga"], n["o"], n["planta"] = c["carga"], c["o"], c["planta"]
+            del ciclos[0]
+    return ciclos
+
+
+def triangular_hormigon(viajes, jor, plantas, coords, fuente, tablas, acts, drvs, diag):
+    """Hormigon por viaje en UN (camion, dia): ciclos por plantas aprendidas (una jornada puede cargar en dos plantas); cada
+    albaran va a un ciclo de SU planta (origen) en orden de GesRuta (cronologico dentro de cada planta, como en aridos);
+    'hora_carga' (albaran impreso / app del conductor), si viene, es ancla dura (+-30 min sobre la salida de la planta).
+    Un albaran con nº de cantera REPETIDO ocupa su turno en el orden (es una carga real) pero no se mide (error de grabacion).
+    Sin planta aprendida o sin visita a planta ese dia: respaldo por hub (como el piloto), confianza baja.
+    Ciclos sin albaran = cargas que GesRuta no tiene (quedan como sobrantes, visibles); albaranes sin ciclo = SIN DATO."""
+    n = len(viajes)
+    res = [None] * n
+    casa = viajes[0]["c"]
+    ciclos = []
+    for j in jor:
+        cic = ciclos_plantas(j, plantas, fuente, tablas)
+        modo = "plantas"
+        if not cic:
+            codigos = {c for t in viajes for c in (t["o"], t["d"]) if c}
+            hub, hm = elegir_hub(sitios_jornada(j, codigos, coords, casa), viajes)
+            cic = particionar_hub(j, hub, hm, fuente, tablas, acts, drvs) if hub else []
+            for c in cic:
+                c["planta"], c["obra"] = None, c.get("descarga")
+            modo = "hub_" + (hm or "unico") if cic else "sin_planta"
+            diag["hormigon_dias_por_hub"] += 1 if cic else 0
+        j["ciclos"], j["modo"], j["sobrantes"], j["asignados"] = cic, modo, [], 0
+        for k, c in enumerate(cic):
+            ciclos.append((j, k, c))
+    ciclos.sort(key=lambda x: x[2]["t0"])
+    usados = set()
+
+    def asigna(i, idx, conf, motivo=None):
+        j, k, c = ciclos[idx]
+        usados.add(idx); c["viaje"] = viajes[i]; j["asignados"] += 1
+        if viajes[i].get("_repetida"):
+            res[i] = sin_dato("cantera_repetida", "mismo_numero_de_cantera_en_varias_lineas_del_ano", j)
+            return
+        m = medir_ciclo(j, c, k, len(j["ciclos"]), fuente, tablas, acts, drvs)
+        de = c.get("descarga") or {}
+        if de.get("t_out") is not None and c["t1"] > de["t_out"]:          # vuelta de la obra a la planta: en vacio
+            kv, lv = km_litros(j["pts"], fuente, tablas, de["t_out"], c["t1"])
+            if kv is not None:
+                m["km_vacio"] = round((m.get("km_vacio") or 0) + kv, 2)
+            if lv is not None:
+                m["litros_vacio"] = round((m.get("litros_vacio") or 0) + lv, 2)
+        ob = c.get("obra")
+        m.update({"metodo": "geo", "confianza": conf, "geo_score": None, "motivo": motivo or c.get("falta"),
+                  "obra": ({"lat": round(ob["lat"], 5), "lon": round(ob["lon"], 5), "min": round((ob["t_out"] - ob["t_in"]) / 60.0, 0)} if ob else None)})
+        res[i] = m
+
+    # 1) ancla dura: hora de carga (impresa por la planta) en la carga
+    for i, t in enumerate(viajes):
+        hc = t.get("hora_carga") or ((t.get("cargas") or [{}])[0].get("hora_carga") if t.get("cargas") else None)
+        if not hc or len(str(hc)) < 5:
+            continue
+        try:
+            hh, mi = int(str(hc)[:2]), int(str(hc)[3:5])
+        except ValueError:
+            continue
+        mejor = None
+        for idx, (j, k, c) in enumerate(ciclos):
+            if idx in usados or not c.get("carga"):
+                continue
+            l_ = local(c["carga"]["t_out"])
+            dif = abs((l_.hour * 60 + l_.minute) - (hh * 60 + mi))
+            if dif <= 30 and (mejor is None or dif < mejor[0]):
+                mejor = (dif, idx)
+        if mejor:
+            asigna(i, mejor[1], "alta", "hora_carga_impresa")
+            diag["hormigon_ancla_hora_carga"] += 1
+    # 2) por planta, en orden de GesRuta dentro de la planta (las repetidas ocupan turno)
+    por_o = collections.defaultdict(list)
+    for i, t in enumerate(viajes):
+        if res[i] is None and not (t.get("_repetida") and i in {ii for ii, (jj, kk, cc) in enumerate(ciclos) if False}):
+            por_o[(t["c"], t["o"])].append(i)
+    for key, lst in por_o.items():
+        lst.sort(key=lambda i: (v1.natkey(viajes[i]["v"]), v1.natkey(viajes[i]["cant"])))
+        cand = [idx for idx, (j, k, c) in enumerate(ciclos) if idx not in usados and c.get("planta") == key]
+        conf = "alta" if len(cand) == len(lst) else "media"
+        for i, idx in zip(lst, cand):
+            asigna(i, idx, conf, None if len(cand) == len(lst) else "mas_ciclos_que_albaranes_en_la_planta")
+    # 3) respaldo: albaranes sin planta aprendida (o sin ciclo en la suya) -> ciclos libres en orden, confianza baja
+    pend = sorted((i for i in range(n) if res[i] is None), key=lambda i: (v1.natkey(viajes[i]["v"]), v1.natkey(viajes[i]["cant"])))
+    libres = [idx for idx in range(len(ciclos)) if idx not in usados]
+    for i, idx in zip(pend, libres):
+        asigna(i, idx, "baja", "ciclo_de_otra_planta_o_sin_planta_aprendida")
+    for i in range(n):
+        if res[i] is None:
+            if viajes[i].get("_repetida"):
+                res[i] = sin_dato("cantera_repetida", "mismo_numero_de_cantera_en_varias_lineas_del_ano", jor[0] if jor else None)
+            else:
+                res[i] = sin_dato("sin_ciclo", "mas_albaranes_que_ciclos_en_la_traza", jor[0] if jor else None)
+                diag["hormigon_sin_ciclo"] += 1
+    for j in jor:
+        j["sobrantes"] = [c for c in (j["ciclos"] or []) if "viaje" not in c]
+        diag["hormigon_ciclos_sin_albaran"] += len(j["sobrantes"])
+        diag["ciclos_sobrantes"] += len(j["sobrantes"])
+        j["min_sobrantes"] = round(sum((c["t1"] - c["t0"]) / 60.0 for c in j["sobrantes"]), 0)
+        diag["min_sobrantes"] += j["min_sobrantes"]
+    return res
+
+
 # ---------------------------------------------------------------- LARGO RECORRIDO (nacional, >= LARGA_KM)
 def zona_larga(cod, coords, casa):
     """Geocerca de un lugar para LARGO recorrido: (lat, lon, radio_km, fuente). A cientos de km la zona de destino es
@@ -1329,17 +1542,27 @@ def main():
     def dist_od(t):
         co, cd = coords.get((t["c"], t["o"])), coords.get((t["c"], t["d"]))
         return v1.hav((co["lat"], co["lon"]), (cd["lat"], cd["lon"])) if co and cd else None
+    # camion cuya MAYORIA de cargas es hormigon = hormigonera: TODOS sus dias van por la pasada de hormigon (si no, una linea de
+    # porte o de mortero del mismo dia iria por la maquina de aridos y cortaria ciclos sobre la misma jornada: doble conteo)
+    n_h, n_t = collections.Counter(), collections.Counter()
+    for t in dem:
+        n_t[t["mat"]] += 1
+        if t.get("horm"):
+            n_h[t["mat"]] += 1
+    es_hormigonera = {m for m in n_t if m and n_h[m] / n_t[m] >= 0.5}
     por_dia = collections.defaultdict(list)
+    horm_dia = collections.defaultdict(list)          # hormigon: su propia pasada (plantas aprendidas), no la maquina de aridos
     for idx, t in enumerate(dem):
         cg = ancla.get((t["c"], t["v"], t["cant"])) or []
-        t["tipo"] = cg[0]["tipo"] if cg else None
+        t["tipo"] = cg[0]["tipo"] if cg else ("hormigonera" if t.get("horm") else None)
         t["cargas"] = cg
         d = dist_od(t)
         t["dist_od"] = round(d, 1) if d is not None else None
         # LARGO = por DISTANCIA. «nacional» en GesRuta es el tipo de servicio (portes), no la distancia: hay portes de 30 km
         # que caben en una jornada y van por la maquina de ciclos como los aridos.
-        t["larga"] = d is not None and d >= LARGA_KM
-        por_dia[(t["mat"], t["dia"])].append(idx)
+        es_h = bool(t.get("horm")) or t["mat"] in es_hormigonera
+        t["larga"] = (not es_h) and d is not None and d >= LARGA_KM
+        (horm_dia if es_h else por_dia)[(t["mat"], t["dia"])].append(idx)
     # ESPEJOS intercompania: el mismo porte fisico sale en Razo y en Agetrans (Agetrans lo vende y se lo subcontrata a Razo):
     # mismo camion, mismo nº de ticket / carta de porte, mismo dia. Se triangula UNA vez, en la linea de la casa duena del
     # camion (la que lo tiene en su ficha sin proveedor; si no se sabe, Razo); la otra hereda la medida marcada 'espejo_de'
@@ -1435,6 +1658,48 @@ def main():
             salida[i] = r
         if a.diag:
             dias_diag.append({"matricula": m, "fecha": d, "viajes": len(idxs), "larga": len(i_larga), "repetidas": len(i_rep), "prestados": len(prestados),
+                              "espejos": sum(1 for i in idxs if i in espejo_de),
+                              "jornadas": [{"ini": iso_min(j["ini"]), "fin": iso_min(j["fin"]), "horas": j["horas"], "nocturna": j["nocturna"],
+                                            "paradas": len(j["paradas"]), "modo": j["modo"], "ciclos": len(j["ciclos"] or []),
+                                            "asignados": j["asignados"], "sobrantes": len(j["sobrantes"]), "min_sobrantes": j.get("min_sobrantes", 0)} for j in jor],
+                              "medidos": sum(1 for i in idxs if (salida[i] or {}).get("medido"))})
+
+    # ---- HORMIGON POR VIAJE (Roberto: hormigon tambien por viaje, todo por GPS): plantas APRENDIDAS de la traza (el maestro las
+    # tiene mal: PREBETONG CORUÑA apunta a la cantera a 40 km, PLANTA DE SABON al centro de Arteixo), ciclos por planta (una
+    # jornada puede cargar en dos plantas), obra = parada mas larga fuera de plantas, asignacion por planta y orden de GesRuta.
+    dem_h = [dem[i] for idxs in horm_dia.values() for i in idxs]
+    plantas = aprender_plantas(dem_h, jornadas_mat) if dem_h else {}
+    for key, pl in plantas.items():
+        coords[key] = {"lat": pl["lat"], "lon": pl["lon"], "fuente": "planta_aprendida", "radio_m": pl["radio_m"], "nombre": (ref.get(key) or {}).get("nombre")}
+    diag["hormigon_plantas_aprendidas"] = len(plantas)
+    for (m, d) in sorted(horm_dia, key=lambda k: (k[1], k[0])):
+        idxs = horm_dia[(m, d)]
+        idxs.sort(key=lambda i: (v1.natkey(dem[i]["v"]), v1.natkey(dem[i]["cant"])))
+        fuente = (fuente_mat.get(m) or collections.Counter()).most_common(1)
+        fuente = fuente[0][0] if fuente else None
+        if m not in flujo:
+            ajeno = any(dem[i].get("propio") is False for i in idxs)
+            motivo = "sin_matricula" if not m else ("pendiente_bajada" if m in plates else ("camion_ajeno" if ajeno else "sin_telemetria_o_pendiente_locatel"))
+            for i in idxs:
+                salida[i] = sin_dato("sin_traza", motivo)
+            continue
+        jor = por_fecha.get((m, d), [])
+        if not jor:
+            d_ = dt.date.fromisoformat(d)
+            motivo = "sin_jornada_ese_dia" if any((m, (d_ + dt.timedelta(days=k)).isoformat()) in trazas for k in range(-VENTANA_DIAS, VENTANA_DIAS + 1)) else "sin_traza_en_esas_fechas"
+            for i in idxs:
+                salida[i] = sin_dato("sin_traza", motivo)
+            continue
+        i_rep = [i for i in idxs if any(c.get("repetida") for c in dem[i]["cargas"])]
+        for i in i_rep:
+            dem[i]["_repetida"] = True                # ocupa su turno en el orden (es una carga real) pero no se mide
+        i_h = [i for i in idxs if i not in espejo_de]
+        if i_h:
+            r = triangular_hormigon([dem[i] for i in i_h], jor, plantas, coords, fuente, sens.get(m), acts.get(m, []), drvs.get(m, []), diag)
+            for i, x in zip(i_h, r):
+                salida[i] = x
+        if a.diag:
+            dias_diag.append({"matricula": m, "fecha": d, "viajes": len(idxs), "larga": 0, "repetidas": len(i_rep), "prestados": 0, "hormigon": True,
                               "espejos": sum(1 for i in idxs if i in espejo_de),
                               "jornadas": [{"ini": iso_min(j["ini"]), "fin": iso_min(j["fin"]), "horas": j["horas"], "nocturna": j["nocturna"],
                                             "paradas": len(j["paradas"]), "modo": j["modo"], "ciclos": len(j["ciclos"] or []),
@@ -1567,6 +1832,8 @@ def main():
             salida[i] = sin_dato("sin_ciclo", "sin_procesar")
             diag["sin_procesar"] += 1
 
+    for k_, v_ in horm_dia.items():                  # el hormigon vuelve al conteo por dia (viajes_dia, orden_dia)
+        por_dia[k_].extend(v_)
     viajes_out = []
     for t, r in zip(dem, salida):
         co, cd = coords.get((t["c"], t["o"])), coords.get((t["c"], t["d"]))
@@ -1627,7 +1894,7 @@ def main():
             "cliente": cargas[0]["cliente"] if cargas else None, "n_cargas_clave": len(cargas) if cargas else None,
             "espejo_de": r.get("espejo_de"),
             "pendiente_pasada_nacional": bool(r.get("pendiente_pasada_nacional")),
-            "paradas": par_v,
+            "paradas": par_v, "obra": r.get("obra"),
             "coord_origen": co["fuente"] if co else None, "coord_destino": cd["fuente"] if cd else None,
             "coord_revisar": ((t["c"], t["o"]) in discrepantes) or ((t["c"], t["d"]) in discrepantes)})
     for (m, d), idxs in por_dia.items():
@@ -1636,7 +1903,9 @@ def main():
 
     tot = len(viajes_out)
     met = collections.Counter(x["metodo"] for x in viajes_out)
-    arid = [x for x in viajes_out if not x["larga_distancia"]]
+    arid = [x for x in viajes_out if not x["larga_distancia"] and x["tipo"] != "hormigonera"]
+    horm = [x for x in viajes_out if x["tipo"] == "hormigonera"]
+    horm_c = [x for x in horm if x["metodo"] != "sin_traza" and not x["espejo_de"]]
     larg = [x for x in viajes_out if x["larga_distancia"]]
     nmed = sum(1 for x in viajes_out if x["medido"])
     larg_c = [x for x in larg if x["metodo"] != "sin_traza" and not x["espejo_de"]]
@@ -1651,6 +1920,12 @@ def main():
                                                                         "repartos_recortados": diag["larga_recorta_reparto"], "repartos_anulados": diag["larga_anula_reparto"]},
                                    "km_cargado": round(sum(x["km_cargado"] or 0 for x in larg_c if x["medido"]), 0),
                                    "km_vacio": round(sum(x["km_vacio"] or 0 for x in larg_c if x["medido"]), 0)},
+               "hormigon": {"albaranes": len(horm), "con_traza": len(horm_c), "medidos": sum(1 for x in horm_c if x["medido"]),
+                            "pct_medidos_con_traza": round(100.0 * sum(1 for x in horm_c if x["medido"]) / max(1, len(horm_c)), 1),
+                            "sin_ciclo": sum(1 for x in horm_c if x["metodo"] == "sin_ciclo"), "con_obra": sum(1 for x in horm_c if x.get("obra")),
+                            "ciclos_sin_albaran": diag["hormigon_ciclos_sin_albaran"], "ancla_hora_carga": diag["hormigon_ancla_hora_carga"],
+                            "dias_por_hub": diag["hormigon_dias_por_hub"], "confianza": dict(collections.Counter(x["confianza"] for x in horm_c if x["medido"])),
+                            "plantas_aprendidas": {"%s|%s" % k: {"lat": round(v["lat"], 5), "lon": round(v["lon"], 5), "dias": v["dias"], "visitas": v["visitas"], "nombre": (ref.get(k) or {}).get("nombre")} for k, v in sorted(plantas.items())}},
                "espejos_intercompania": diag["espejos"], "sin_procesar": diag["sin_procesar"],
                "tacografo_descartado": dict(collections.Counter(x["motivo_min"] for x in viajes_out if x["min_coherente"] is False)),
                "por_metodo": {k: {"viajes": n, "pct": round(100.0 * n / tot, 1)} for k, n in met.most_common()},
@@ -1701,6 +1976,7 @@ def main():
             "hitos": "t_carga = llegada a cargar, t_carga_fin = salida cargado, t_descarga = llegada a descargar, t_descarga_fin = salida de la descarga (hora de Madrid; null si no se ve la visita); minutos de carga/descarga = diferencias. En largo recorrido son las estancias en las zonas de origen y destino",
             "chofer": "chofer_coincide = el codigo de chofer del albaran (GesRuta) es uno de los enlazados a la tarjeta de la ranura 1 (una tarjeta puede tener varios codigos: dos fichas de la misma persona o un codigo por casa); chofer_tacografo = el codigo enlazado que coincide o, si no, el primero de su casa",
             "paradas": "paradas = [{t (hora de Madrid), min, lugar, rol}]: paradas >= 5 min del camion dentro de [t_ini, t_fin]; rol = carga | descarga (por los hitos t_carga/t_descarga; lugar = origen/destino del viaje) | espera (tiempo parado fuera de la carga y la descarga; lugar = codigo del lugar conocido a < 700 m o null)",
+            "hormigon": "tipo hormigonera: ciclos por PLANTAS APRENDIDAS de la traza (grupo de paradas mas visitado en los dias de un solo origen; el maestro/geocode no valen), de la llegada a la planta a la llegada a la siguiente; obra = parada mas larga fuera de plantas (campo obra {lat, lon, min}); asignacion por planta en orden de GesRuta (cronologico dentro de cada planta), hora_carga impresa como ancla dura si viene en la carga; ciclos sin albaran = cargas que GesRuta no tiene (resumen.hormigon.ciclos_sin_albaran); km_vacio = ida a cargar + vuelta de la obra",
             "litros": "crudo = reduccion monotona del contador; calibrados = tabla del sensor (ERP) + reduccion monotona"}
     json.dump({"meta": meta, "resumen": resumen, "viajes": viajes_out}, open(a.salida, "w", encoding="utf-8"), ensure_ascii=False)
     if a.diag:

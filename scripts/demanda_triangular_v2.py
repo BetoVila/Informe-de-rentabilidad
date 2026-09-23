@@ -33,7 +33,7 @@ def flota_grupo(base):
     return grupo
 
 
-def leer_sociedad(base, empresa, desde, hasta, viajes, grupo=None, dueno=None):
+def leer_sociedad(base, empresa, desde, hasta, viajes, grupo=None, dueno=None, con_hormigon=False):
     dueno = dueno or {}
     vj = abrir(base, "viaje.dbf"); matr = {}
     for r in vj.registros():
@@ -83,7 +83,7 @@ def leer_sociedad(base, empresa, desde, hasta, viajes, grupo=None, dueno=None):
         t["imp"] += ln.get(r, "IMPORT") or 0
     ln.cerrar()
     for t in seen.values():
-        if not t["horm"]:
+        if con_hormigon or not t["horm"]:      # hormigon (m3 / concepto K): solo si se pide; va por su propia pasada del motor
             viajes.append(t)
 
 
@@ -95,6 +95,7 @@ def main():
     ap.add_argument("--plates", default="", help="movertis_plates.txt: matriculas descargables por Wialon")
     ap.add_argument("--salida", required=True)
     ap.add_argument("--pares", default="", help="salida opcional: pares (matricula, dia) a bajar del localizador")
+    ap.add_argument("--con-hormigon", dest="con_hormigon", action="store_true", help="incluir tambien las cargas de hormigon (viaje por viaje)")
     a = ap.parse_args()
     plates = set()
     if a.plates and os.path.isfile(a.plates):
@@ -111,7 +112,7 @@ def main():
             if m not in dueno or empresa == "Razo":
                 dueno[m] = empresa
     for carpeta, empresa in casas:
-        leer_sociedad(os.path.join(a.root, carpeta), empresa, a.desde, a.hasta, viajes, grupo, dueno)
+        leer_sociedad(os.path.join(a.root, carpeta), empresa, a.desde, a.hasta, viajes, grupo, dueno, a.con_hormigon)
     if len(casas) < 2:
         print("Aviso: falta alguna casa en %s" % a.root, file=sys.stderr)
     json.dump({"desde": a.desde, "hasta": a.hasta, "viajes": viajes}, open(a.salida, "w", encoding="utf-8"), ensure_ascii=False)
@@ -119,7 +120,7 @@ def main():
     if a.pares:
         lista = sorted([{"mat": k[0], "dia": k[1], "viajes": n} for k, n in pares.items() if k[0] in plates or not plates], key=lambda x: (x["dia"], x["mat"]))
         json.dump({"pares": lista, "total": len(lista)}, open(a.pares, "w", encoding="utf-8"), ensure_ascii=False)
-    print(json.dumps({"viajes_aridos_nacional": len(viajes), "sin_matricula": sum(1 for t in viajes if not t["mat"]),
+    print(json.dumps({"viajes_aridos_nacional": sum(1 for t in viajes if not t["horm"]), "viajes_hormigon": sum(1 for t in viajes if t["horm"]), "sin_matricula": sum(1 for t in viajes if not t["mat"]),
                       "pares_matricula_dia": len(pares), "pares_movertis": sum(1 for k in pares if k[0] in plates),
                       "por_casa": dict(collections.Counter(t["c"] for t in viajes))}, ensure_ascii=False))
 
