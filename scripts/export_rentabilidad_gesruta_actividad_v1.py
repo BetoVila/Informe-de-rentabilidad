@@ -458,7 +458,7 @@ def main():
                 if isinstance(hz, dict):
                     def nom_(code):
                         return (lugar.get(code, {}).get("nom", "") or code) if code else None
-                    for r_ in list(hz.get("cargas_sin_albaran") or []) + list(hz.get("albaranes_sin_ciclo") or []):
+                    for r_ in list(hz.get("cargas_sin_albaran") or []) + list(hz.get("albaranes_sin_ciclo") or []) + list(hz.get("albaranes_matricula_baja") or []):
                         r_["origen_nombre"] = nom_(r_.get("origen")); r_["destino_nombre"] = nom_(r_.get("destino"))
                     for r_ in hz.get("canteras_repetidas") or []:
                         r_["origen_nombre"] = nom_(r_.get("origen"))

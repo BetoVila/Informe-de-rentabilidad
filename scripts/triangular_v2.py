@@ -1553,6 +1553,7 @@ def main():
     ap.add_argument("--plates", default="")
     ap.add_argument("--ancla", default="", help="viajes-ancla-razo.json(.gz) de tarifas")
     ap.add_argument("--conductores", default="", help="conductores_hash_codigo.json: hash de tarjeta -> codigo de chofer GesRuta")
+    ap.add_argument("--bajas", default="", help="bajas_flota_erp.json del ERP (matricula, fecha_baja, motivo): albaran posterior a la baja = matricula mal grabada")
     ap.add_argument("--rest-h", type=float, default=8.0, dest="rest_h", help="descanso (h) que separa jornadas: > 8 h (Roberto)")
     ap.add_argument("--dwell-min", type=float, default=3.0, dest="dwell_min", help="minutos parado para contar como parada")
     ap.add_argument("--sin-aprender", action="store_true")
@@ -1577,6 +1578,14 @@ def main():
             enlace = json.load(open(a.conductores, encoding="utf-8"))
         except (OSError, ValueError):
             enlace = {}
+    bajas = {}
+    if a.bajas and os.path.isfile(a.bajas):
+        try:
+            for b_ in json.load(open(a.bajas, encoding="utf-8")).get("bajas") or []:
+                if b_.get("matricula") and b_.get("fecha_baja"):
+                    bajas[v1.clean(b_["matricula"])] = {"fecha_baja": str(b_["fecha_baja"])[:10], "motivo": b_.get("motivo") or ""}
+        except (OSError, ValueError) as e:
+            print("Aviso: bajas ilegibles (%s)" % e, file=sys.stderr)
 
     ges = v1.coords_gesruta()
     geo = {}
@@ -1979,7 +1988,7 @@ def main():
             "cliente": cargas[0]["cliente"] if cargas else None, "n_cargas_clave": len(cargas) if cargas else None,
             "espejo_de": r.get("espejo_de"),
             "pendiente_pasada_nacional": bool(r.get("pendiente_pasada_nacional")),
-            "paradas": par_v, "obra": r.get("obra"),
+            "paradas": par_v, "obra": r.get("obra"), "matricula_de_baja": (bajas.get(t["mat"]) or {}).get("fecha_baja"),
             "coord_origen": co["fuente"] if co else None, "coord_destino": cd["fuente"] if cd else None,
             "coord_revisar": ((t["c"], t["o"]) in discrepantes) or ((t["c"], t["d"]) in discrepantes)})
     for (m, d), idxs in por_dia.items():
@@ -2157,19 +2166,30 @@ def main():
                                for x in viajes_out if x["medido"] and x["fecha"] != x["fecha_gesruta"] and not x["espejo_de"]]
     lp = collections.Counter(x["matricula"] for x in viajes_out if x["pendiente_pasada_nacional"] and not x["espejo_de"])
     hall["largos_pendientes_de_traza"] = [{"matricula": m, "viajes": n_} for m, n_ in lp.most_common()]
+
+    def tras_baja(x):
+        b_ = bajas.get(x["matricula"] or "")
+        if not b_:
+            return False
+        margen = 60 if "no consta" in (b_.get("motivo") or "").lower() else 7   # fecha estimada (ultimo trabajo del ERP) vs exacta
+        return x["fecha_gesruta"] > (dt.date.fromisoformat(b_["fecha_baja"]) + dt.timedelta(days=margen)).isoformat()
+    hall["albaranes_matricula_baja"] = [{"empresa": x["empresa"], "viaje": x["viaje"], "cantera": x["cantera"], "matricula": x["matricula"], "fecha": x["fecha_gesruta"],
+                                         "fecha_baja": bajas[x["matricula"]]["fecha_baja"], "motivo_baja": bajas[x["matricula"]]["motivo"], "cliente": x["cliente"],
+                                         "origen": x["origen"], "destino": x["destino"]} for x in viajes_out if not x["espejo_de"] and tras_baja(x)]
     hall["plantas_aprendidas"] = resumen["hormigon"]["plantas_aprendidas"]
     hall["resumen"] = {"cargas_sin_albaran": len(hall["cargas_sin_albaran"]), "albaranes_sin_ciclo": len(hall["albaranes_sin_ciclo"]), "canteras_repetidas": len(hall["canteras_repetidas"]),
                        "camiones_tacografo_descartado": sum(1 for r_ in hall["tacografo_por_camion"] if r_["pct_descartado"] >= 50),
                        "chofer_discrepante_viajes": sum(r_["viajes"] for r_ in hall["chofer_discrepante"]),
                        "unidades_incoherentes": sum(1 for r_ in hall["coherencia_por_unidad"] if r_["pct_geografia_albaran"] < 60),
                        "sin_localizador_viajes": sum(r_["viajes"] for r_ in hall["sin_localizador"]), "fecha_corregida": len(hall["fecha_corregida"]),
-                       "largos_pendientes": sum(lp.values()), "plantas_aprendidas": len(hall["plantas_aprendidas"])}
+                       "largos_pendientes": sum(lp.values()), "plantas_aprendidas": len(hall["plantas_aprendidas"]),
+                       "albaranes_matricula_baja": len(hall["albaranes_matricula_baja"]), "bajas_conocidas": len(bajas)}
     meta["hallazgos"] = ("cargas_sin_albaran = ciclos reales del camion (>= 10 min y >= 1 km) sin albaran ese dia (posibles cargas sin facturar o grabadas otro dia); "
                          "albaranes_sin_ciclo = albaranes que la traza no explica; canteras_repetidas = mismo nº de cantera en varias lineas (empresa, origen, año); "
                          "tacografo_por_camion = viajes medidos cuyo tacografo se descarto (localizador que no lo lee); chofer_discrepante = tarjeta con codigo distinto al del albaran; "
                          "coherencia_por_unidad = % de viajes cortos cuyo ciclo se corta por la geografia del albaran (< 60 % = revisar el localizador); "
                          "paradas_por_lugar = paradas >= 5 min por lo que hacia y lugar (codigo); espera_por_cliente = minutos parado por viaje medido; "
-                         "sin_localizador = camiones con albaranes y sin traza; fecha_corregida = ticket con fecha real distinta a la del albaran; largos_pendientes = largos sin traza contigua")
+                         "sin_localizador = camiones con albaranes y sin traza; fecha_corregida = ticket con fecha real distinta a la del albaran; largos_pendientes = largos sin traza contigua; albaranes_matricula_baja = albaranes fechados mas de 7 dias despues de la baja de la matricula en el ERP (bajas_flota_erp.json): matricula mal grabada, el viaje lo hizo otro camion")
     json.dump({"meta": meta, "resumen": resumen, "hallazgos": hall, "viajes": viajes_out}, open(a.salida, "w", encoding="utf-8"), ensure_ascii=False)
     if a.diag:
         json.dump({"meta": meta, "resumen": resumen, "dias": dias_diag}, open(a.diag, "w", encoding="utf-8"), ensure_ascii=False)
