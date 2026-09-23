@@ -1998,6 +1998,7 @@ def main():
             "albara": cargas[0]["albara"] if len(cargas) == 1 else None, "linea": linea_txt(cargas[0]["linea"]) if len(cargas) == 1 else None,
             "cliente": cargas[0]["cliente"] if cargas else None, "n_cargas_clave": len(cargas) if cargas else None,
             "espejo_de": r.get("espejo_de"),
+            "km_facturado": t.get("km_fact"), "unidad_facturada": t.get("unidad"), "nacional": bool(t.get("nac")), "sin_cantera": bool(t.get("sin_cantera")),
             "pendiente_pasada_nacional": bool(r.get("pendiente_pasada_nacional")),
             "paradas": par_v, "obra": r.get("obra"), "matricula_de_baja": (bajas.get(t["mat"]) or {}).get("fecha_baja"),
             "coord_origen": co["fuente"] if co else None, "coord_destino": cd["fuente"] if cd else None,

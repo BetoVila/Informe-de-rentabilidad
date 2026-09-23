@@ -75,7 +75,7 @@ try{
     $hist=Join-Path $root 'historicos'
     $tri2=Join-Path $root 'cache\triangulado_v2.json'
     Invoke-Opcional 'Triangulado v2' {
-        & $py (Join-Path $root 'scripts\demanda_triangular_v2.py') --root (Join-Path $config.sourceRoot 'Gesruta') --from-date $config.from --to-date $hasta --plates (Join-Path $hist 'movertis_plates.txt') --con-hormigon --salida (Join-Path $run 'demanda_triangular.json')
+        & $py (Join-Path $root 'scripts\demanda_triangular_v2.py') --root (Join-Path $config.sourceRoot 'Gesruta') --from-date $config.from --to-date $hasta --plates (Join-Path $hist 'movertis_plates.txt') --con-hormigon --con-nacional --salida (Join-Path $run 'demanda_triangular.json')
         if($LASTEXITCODE -ne 0){throw 'demanda'}
         & $py (Join-Path $root 'scripts\triangular_v2.py') --demanda (Join-Path $run 'demanda_triangular.json') --wialon (Join-Path $hist 'wialon_hist') --locatel (Join-Path $hist 'locatel_hist') --sensores (Join-Path $hist 'sensores_erp.json') --geocode (Join-Path $hist 'coords_lugares_por_casa.json') --plates (Join-Path $hist 'movertis_plates.txt') --conductores (Join-Path $hist 'conductores_hash_codigo.json') --bajas (Join-Path $config.sourceRoot '_TACOGRAFO\export\bajas_flota_erp.json') --flota (Join-Path $config.sourceRoot '_TACOGRAFO\export\flota_erp.json') --ancla (Join-Path $config.sourceRoot '_TARIFAS\export\viajes-ancla-razo.json.gz') --salida (Join-Path $run 'triangulado_v2.json') --diag (Join-Path $run 'triangulado_v2_diag.json')
         if($LASTEXITCODE -ne 0){throw 'triangular'}
