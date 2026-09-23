@@ -81,9 +81,10 @@ try{
         if($LASTEXITCODE -ne 0){throw 'triangular'}
         Copy-Item -LiteralPath (Join-Path $run 'triangulado_v2.json') -Destination $tri2 -Force
         # Publicacion en P: (esquema aditivo acordado con el ERP y tarifas): sustitucion atomica, nunca se trunca el vigente.
-        $pub=Join-Path $config.publicPath 'triangulado_v2.json';$tmp=$pub+'.tmp'
+        # (Replace con respaldo con nombre, como el informe: en la unidad de red Replace con $null falla si el fichero ya existe.)
+        $pub=Join-Path $config.publicPath 'triangulado_v2.json';$tmp=Join-Path $config.publicPath ('triangulado_v2.'+[guid]::NewGuid().ToString('N')+'.tmp')
         Copy-Item -LiteralPath (Join-Path $run 'triangulado_v2.json') -Destination $tmp -Force
-        if(Test-Path -LiteralPath $pub){[IO.File]::Replace($tmp,$pub,$null)}else{[IO.File]::Move($tmp,$pub)}
+        if(Test-Path -LiteralPath $pub){[IO.File]::Replace($tmp,$pub,$pub+'.anterior')}else{[IO.File]::Move($tmp,$pub)}
         # El dia de cada camion en el mapa (compacto), junto al informe: dias\<MATRICULA>_<fecha>.html ("ver dia" en Por cliente).
         & $py (Join-Path $root 'scripts\ver_dia_mapa.py') --v2 (Join-Path $run 'triangulado_v2.json') --diag (Join-Path $run 'triangulado_v2_diag.json') --wialon (Join-Path $hist 'wialon_hist') --locatel (Join-Path $hist 'locatel_hist') --todos --salida-dir (Join-Path $config.publicPath 'dias')
         if($LASTEXITCODE -ne 0){throw 'mapas de dias'}

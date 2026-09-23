@@ -743,7 +743,7 @@ def cargar_ancla(ruta):
     except (OSError, ValueError) as e:
         print("Aviso: ancla ilegible (%s); se sigue sin ella" % e, file=sys.stderr)
         return out
-    filas, ident = [], collections.Counter()
+    filas, ident = [], collections.defaultdict(set)
     for x in cargas:
         if x.get("naturaleza") not in (None, "viaje"):
             continue
@@ -751,12 +751,12 @@ def cargar_ancla(ruta):
         fecha = str(x.get("fecha") or "")[:10]
         cant = str(x.get("cantera") or "").strip()
         k_id = (casa, (x.get("origen") or "").strip().upper(), cant, fecha[:4])
-        ident[k_id] += 1
+        ident[k_id].add((str(x.get("viaje")), str(x.get("albara"))))     # albaranes DISTINTOS con el mismo ticket = error
         filas.append((casa, str(x.get("viaje")), cant, k_id,
                       {"tipo": x.get("tipo"), "albara": x.get("albara"), "linea": x.get("linea"), "cliente": x.get("cliente"),
                        "cantidad": x.get("cantidad"), "unidad": x.get("unidad"), "fecha": fecha, "origen": x.get("origen"), "chofer": x.get("chofer")}))
     for casa, viaje, cant, k_id, reg in filas:
-        reg["repetida"] = bool(cant) and ident[k_id] > 1
+        reg["repetida"] = bool(cant) and len(ident[k_id]) > 1   # dos lineas del MISMO albaran son la misma carga (dos conceptos)
         out[(casa, viaje, cant)].append(reg)
     return out
 
@@ -852,6 +852,14 @@ def main():
                 salida[i] = sin_dato("sin_traza", motivo)
             continue
         jor = por_fecha.get((m, d), [])
+        if not jor:
+            # ¿hay traza del camion en esas fechas? Si no la hay a ±VENTANA_DIAS (p. ej. 2025, sin bajada), es 'sin traza en esas
+            # fechas', no 'sin jornada ese dia' (que sugiere que el camion paro). Rotular bien lo que no se sabe.
+            d_ = dt.date.fromisoformat(d)
+            if not any((m, (d_ + dt.timedelta(days=k)).isoformat()) in trazas for k in range(-VENTANA_DIAS, VENTANA_DIAS + 1)):
+                for i in idxs:
+                    salida[i] = sin_dato("sin_traza", "sin_traza_en_esas_fechas")
+                continue
         dprev = (dt.date.fromisoformat(d) - dt.timedelta(days=1)).isoformat()
         # el ciclo pertenece al dia de su CARGA (el albaran se hace al cargar), no al de su inicio (que puede ser la vuelta de ayer)
         prestados = [(c, j) for j in por_fecha.get((m, dprev), []) if j["nocturna"] and fecha_de(j["fin"]) == d

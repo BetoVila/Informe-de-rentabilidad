@@ -439,6 +439,15 @@ def main():
                                "nocturnas": (rs.get("jornadas") or {}).get("nocturnas"), "sin_ciclo": rs.get("viajes_sin_ciclo"),
                                "sobrantes_h": rs.get("horas_sobrantes_sin_viaje"), "largas": rs.get("larga_distancia_pendiente_pasada_2"),
                                "repetidas": rs.get("cantera_repetida_error_grabacion"), "sin_traza": sum((rs.get("sin_traza_por_motivo") or {}).values())}
+                # cobertura HONESTA: sobre los viajes con traza disponible (2025 no tiene traza bajada; no es hueco del metodo)
+                try:
+                    con_traza = (rs.get("viajes") or 0) - tri_resumen["sin_traza"]
+                    tri_resumen["con_traza"] = con_traza
+                    tri_resumen["pct_con_traza"] = round(100.0 * (tri_resumen.get("medido") or 0) / con_traza, 1) if con_traza else None
+                    tri_resumen["desde_traza"] = min((str(r.get("fecha") or "") for r in trows if r.get("medido")), default=None)
+                    tri_resumen["hasta_traza"] = max((str(r.get("fecha") or "") for r in trows if r.get("medido")), default=None)
+                except (TypeError, ValueError):
+                    pass
             kmt = litt = 0.0
             for r in trows:
                 tri[(r.get("empresa"), str(r.get("viaje")), str(r.get("cantera")))] = r
