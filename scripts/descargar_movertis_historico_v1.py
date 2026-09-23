@@ -188,13 +188,41 @@ def ventana(dia, zona):
     return int(d0.timestamp()), int(d1.timestamp())
 
 
+class _Madrid(datetime.tzinfo):
+    """Europe/Madrid sin tzdata ni pytz (el Python del runtime no los trae): CET +1 / CEST +2 con la regla UE
+    (ultimo domingo de marzo 02:00 local -> ultimo domingo de octubre 03:00 local)."""
+    @staticmethod
+    def _ultimo_domingo(y, m):
+        d = datetime.date(y, m, 31)
+        return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+    def _verano(self, dt):
+        if dt is None:
+            return False
+        ini = datetime.datetime.combine(self._ultimo_domingo(dt.year, 3), datetime.time(2))
+        fin = datetime.datetime.combine(self._ultimo_domingo(dt.year, 10), datetime.time(3))
+        return ini <= dt.replace(tzinfo=None) < fin
+
+    def utcoffset(self, dt):
+        return datetime.timedelta(hours=2 if self._verano(dt) else 1)
+
+    def dst(self, dt):
+        return datetime.timedelta(hours=1 if self._verano(dt) else 0)
+
+    def tzname(self, dt):
+        return "CEST" if self._verano(dt) else "CET"
+
+
 def zona_casa(nombre="Europe/Madrid"):
     try:
         from zoneinfo import ZoneInfo
         return ZoneInfo(nombre)
     except Exception:  # noqa: BLE001
-        import pytz
-        return pytz.timezone(nombre)
+        try:
+            import pytz
+            return pytz.timezone(nombre)
+        except Exception:  # noqa: BLE001
+            return _Madrid()
 
 
 def contar_dia(sid, unit_id, t0, t1):
