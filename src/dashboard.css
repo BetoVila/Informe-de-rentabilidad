@@ -272,6 +272,14 @@ table.stat td:first-child{white-space:normal;min-width:190px}
 table.stat svg.hist{display:block}
 .rel{margin:10px 0 0 18px;padding:0;font-size:13px;line-height:1.6}
 .rel li{margin-bottom:4px}
+/* «Estadística de lo que ves» y reparto del localizador: desplegables */
+details.tstats{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:0 0 12px;background:#fbfcfe}
+details.tstats>summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--navy);list-style:none}
+details.tstats>summary::-webkit-details-marker{display:none}
+details.tstats>summary::before{content:'▸ ';color:var(--blue)}
+details.tstats[open]>summary::before{content:'▾ '}
+details.tstats>summary small{font-weight:400;color:var(--muted)}
+details.tstats .tripdetail{margin-top:10px}
 .tripdetail{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px 22px;font-size:13px;line-height:1.5}
 .tripdetail .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:block;margin-bottom:1px}
 .tripdetail .v{font-weight:600;color:var(--navy)}

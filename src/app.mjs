@@ -123,6 +123,27 @@ function telemetriaCobertura(){
  const m=D.telemetry.meta,fu=m.fuentes||{};
  return `Datos del localizador disponibles del <b>${date(m.desde)}</b> al <b>${date(m.hasta)}</b>: ${fu.erp?'ERP (Movertis) del '+date(fu.erp.desde)+' al '+date(fu.erp.hasta):''}${fu.historico?'; histórico bajado de Wialon del '+date(fu.historico.desde)+' al '+date(fu.historico.hasta)+' ('+nf(fu.historico.unidades)+' camiones, '+nf(fu.historico.dias)+' días-camión)':'; sin histórico anterior al ERP'}${fu.locatel?'; Locatel (solo km) del '+date(fu.locatel.desde)+' al '+date(fu.locatel.hasta):''}. ${nf(m.diasDescartados)} días-camión sin lectura fiable no se cuentan.`;
 }
+// Cómo se reparte lo medido por el localizador entre camiones y días (media, mediana, dispersión) y qué camiones gastan fuera
+// de lo normal DE SU CLASE (tractora, rígido…): atípico = fuera de Q1 − 1,5·IQR … Q3 + 1,5·IQR del consumo de su clase.
+function telemetriaReparto(v){
+ const T=D.telemetry,pl=state.plates?.length?new Set(state.plates.map(p=>String(p).toUpperCase().replace(/[^A-Z0-9]/g,''))):null;
+ const act=T.rows.filter(r=>r.date>=v.from&&r.date<=v.to&&(!pl||pl.has(r.plate))&&r.km>=30);if(act.length<5)return '';
+ const cl=p=>(T.clases&&T.clases[p])||'(sin tipo en el ERP)';
+ const byP=new Map();for(const r of act){const x=byP.get(r.plate)||{plate:r.plate,km:0,lit:0,kmF:0,dias:0};x.km+=r.km;x.dias++;if(r.litres>0){x.lit+=r.litres;x.kmF+=r.km;}byP.set(r.plate,x);}
+ const P=[...byP.values()];
+ const F=[['Km por día activo (30 km o más)',statsDe(act.map(r=>r.km)),'km',0],['Litros por día activo (camiones con sensor)',statsDe(act.filter(r=>r.litres>0).map(r=>r.litres)),'L',0],
+  ['Consumo por día (días de 100 km o más, con sensor)',statsDe(act.filter(r=>r.km>=100&&r.litres>0).map(r=>r.litres/r.km*100)),'L/100 km',1],['Días activos por camión',statsDe(P.map(x=>x.dias)),'días',0],['Km por camión en el periodo',statsDe(P.map(x=>x.km)),'km',0]];
+ const avisos=[];
+ for(const c of [...new Set(P.filter(x=>x.kmF>=1000).map(x=>cl(x.plate)))].sort()){
+  const xs=P.filter(x=>x.kmF>=1000&&cl(x.plate)===c).map(x=>({...x,l100:x.lit/x.kmF*100}));if(xs.length<3)continue;
+  const S=statsDe(xs.map(x=>x.l100));F.push(['Consumo por camión · '+c+' ('+xs.length+' camiones con sensor y 1.000 km o más)',S,'L/100 km',1]);
+  const iqr=S.q3-S.q1,hi=S.q3+1.5*iqr,lo=S.q1-1.5*iqr,alto=xs.filter(x=>x.l100>hi).sort((a,b)=>b.l100-a.l100),bajo=xs.filter(x=>x.l100<lo).sort((a,b)=>a.l100-b.l100);
+  const q=x=>`<b>${esc(plateFmt(x.plate))}</b> ${nf(x.l100,1)} L/100 km <small>(${nf(x.kmF)} km con sensor)</small>`;
+  if(alto.length||bajo.length)avisos.push(`<li><b>${esc(c)}</b> (mediana ${nf(S.mediana,1)} L/100 km): ${alto.length?'muy por encima de su clase — revisar el sensor de consumo o el camión: '+alto.map(q).join(', '):''}${alto.length&&bajo.length?'; ':''}${bajo.length?'muy por debajo — revisar el sensor (¿mal calibrado?): '+bajo.map(q).join(', '):''}.</li>`);
+  else{const s=xs.slice().sort((a,b)=>b.l100-a.l100);avisos.push(`<li><b>${esc(c)}</b> (mediana ${nf(S.mediana,1)} L/100 km): ninguno fuera de lo normal; los que más gastan ${s.slice(0,3).map(q).join(', ')}; los que menos ${s.slice(-3).reverse().map(q).join(', ')}.</li>`);}
+ }
+ return `<details class="tstats" style="margin-top:14px"><summary>Cómo se reparte entre camiones y días: media, mediana, dispersión y camiones que gastan fuera de lo normal</summary><div class="tripdetail"><div style="grid-column:1/-1">${statsTabla(F)}${avisos.length?`<p class="sub" style="margin:10px 0 4px"><b>Camiones fuera de lo normal de su clase</b> (consumo por encima de Q3 + 1,5 veces el rango intercuartílico, o por debajo de Q1 − 1,5 veces; solo camiones con sensor y 1.000 km o más en el periodo):</p><ul class="rel">${avisos.join('')}</ul>`:''}</div></div></details>`;
+}
 function telemetryPanel(){
  if(!D.telemetry)return '';
  const v=M.telemetryView(state);
@@ -130,7 +151,7 @@ function telemetryPanel(){
  const fuenteTxt=Object.entries(v.porFuente||{}).map(([k,n])=>({erp:'ERP (Movertis)',historico:'histórico Wialon',locatel:'Locatel'}[k]||k)+' '+nf(n)).join(' · ');
  return `<section class="panel"><h2>Medido por el camión (localizador)</h2><p class="sub">Km y litros medidos por el propio camión <b>del ${date(v.from)} al ${date(v.to)}</b>${v.recortado?' (el periodo elegido, '+date(state.from)+' – '+date(state.to)+', se recorta a los días con lectura)':' (el periodo elegido arriba)'}. Solo días con lectura fiable: un día sin lectura no cuenta como cero. Días-camión de este periodo por fuente: ${fuenteTxt}. ${telemetriaCobertura()}</p><div class="kpi-grid">${[
   ['Km medidos',nf(v.km),nf(v.plates)+' camiones activos'],['Camiones con sensor de consumo',nf(v.sensorInv.conSensor)+' de '+nf(v.sensorInv.motor)+' con motor',v.sensorInv.sinSensor?('sin sensor: '+v.sensorInv.sinSensorPlates.join(', ')+(v.sensorInv.remolques?'. '+nf(v.sensorInv.remolques)+' remolques no cuentan':'')):(v.sensorInv.remolques?nf(v.sensorInv.remolques)+' remolques no gastan gasoil':'todos lo llevan')],['Litros medidos',nf(v.litres),'Solo los '+nf(v.sensorInv.conSensor)+' camiones con sensor'],['Consumo medido',nf(v.consumption,1)+' l/100 km','Solo camiones con sensor; el resto no mide litros'],['Días-camión activos',nf(v.activeDays),'Circula 30 km o más ese día'],['Días activos sin parte',nf(v.daysWithoutPart)+' ('+pct(v.pctWithoutPart)+')','El camión circuló y no hay parte de Access'],['Km del parte / km medidos',nf(v.ratio,2),'En los días con parte (1 = coinciden)']
- ].map(([l,x,h])=>`<div class="smallkpi"><span class="label">${l}</span><span class="value">${x}</span><small>${h}</small></div>`).join('')}</div></section>`;
+ ].map(([l,x,h])=>`<div class="smallkpi"><span class="label">${l}</span><span class="value">${x}</span><small>${h}</small></div>`).join('')}</div>${telemetriaReparto(v)}</section>`;
 }
 function telemetryAuditPanel(){
  if(!D.telemetry)return '';
@@ -269,23 +290,33 @@ const groupColumns=()=>[{label:'Detalle',key:'label'},moneyCol('Ingresos sin IVA
 const ratioNote='Los ratios (por € de coste, por km y por hora) usan el coste imputable y los km y horas DECLARADOS en los partes: son orientativos. El cálculo completo (contabilidad, subcontratistas reales, km y horas de Movertis y Locatel) está en construcción y se irá afinando.';
 // Aviso de que el coste por vehículo o cliente es parcial: solo lo que los partes imputan.
 const partialWarn=()=>{const br=ledgerCtx.br;return br&&br.totalLedger>0?`<div class="warn"><strong>El coste que se ve aquí es parcial.</strong> Solo es lo que los partes de Access imputan a vehículos (el ${pct(br.coverage)} del gasto real de ${monthRange(br.months)}). Faltan subcontratación, compra de áridos y gastos generales (${eur(br.missing)}), así que el saldo de cada fila es aparente y sale por encima del real. El resultado real está en la contabilidad (pestaña Resumen).</div>`:'';};
-function setTable(title,subtitle,rows,columns,drill=null,detail=null){
+// stats (opcional): función (filas visibles) → HTML con la estadística de lo que se ve; sigue a la búsqueda y a los filtros.
+const STATS_KEY='rz_stats_open';
+function setTable(title,subtitle,rows,columns,drill=null,detail=null,stats=null){
  if(tableState.forTitle!==title){tableState.filters={};tableState.query='';tableState.showFilters=false;tableState.open=new Set();tableState.page=0;tableState.forTitle=title;}
  rows.forEach((r,i)=>{r.__i=i;});
  for(const c of columns)if(c.filter===undefined)c.filter=filterKind(c,rows);
- tableDefinition={title,subtitle,rows,columns,drill,detail};
+ tableDefinition={title,subtitle,rows,columns,drill,detail,stats};
  const k=activeFilterCount(),open=tableState.showFilters||k>0;
- return `<section class="panel"><h2>${title}</h2><p class="sub">${subtitle}</p><div class="tabletools"><div class="tabletools-l"><input id="tableSearch" type="search" placeholder="Buscar palabras (todas deben aparecer; da igual tildes o mayúsculas)…" aria-label="Buscar en tabla" value="${esc(tableState.query)}"><button id="tableFilters" type="button" class="${open?'on':''}" aria-expanded="${open}">Filtros${k?' · '+k:''}</button></div><span id="tableCount"></span></div><div id="tableFilterBar" class="filterbar" ${open?'':'hidden'}>${filterBarHtml(columns,rows)}</div><div id="tableChips" class="active-filters tchips"></div><div id="tableArea"></div></section>`;
+ const st=stats?`<details id="tstats" class="tstats"${lsGet(STATS_KEY,false)?' open':''}><summary>Estadística de los <b id="tstatsN">${nf(rows.length)}</b> viajes que ves: media, mediana, dispersión y rectas para calcular <small>(sigue a la búsqueda y a los filtros)</small></summary><div id="tstatsBody" class="tripdetail"></div></details>`:'';
+ return `<section class="panel"><h2>${title}</h2><p class="sub">${subtitle}</p><div class="tabletools"><div class="tabletools-l"><input id="tableSearch" type="search" placeholder="Buscar palabras (todas deben aparecer; da igual tildes o mayúsculas)…" aria-label="Buscar en tabla" value="${esc(tableState.query)}"><button id="tableFilters" type="button" class="${open?'on':''}" aria-expanded="${open}">Filtros${k?' · '+k:''}</button></div><span id="tableCount"></span></div><div id="tableFilterBar" class="filterbar" ${open?'':'hidden'}>${filterBarHtml(columns,rows)}</div><div id="tableChips" class="active-filters tchips"></div>${st}<div id="tableArea"></div></section>`;
 }
-// Qué filtro le toca a cada columna: fechas (desde/hasta), pocas opciones (desplegable), texto libre (contiene) o cifra (mín./máx.).
+function drawStats(){
+ const def=tableDefinition;if(!def||!def.stats)return;
+ const rows=tableState.lastRows||def.rows,n=$('tstatsN');if(n)n.textContent=nf(rows.length);
+ const d=$('tstats');if(d&&d.open){const b=$('tstatsBody');if(b)b.innerHTML=def.stats(rows)||'<div class="empty">Sin viajes con dato en lo que ves.</div>';}
+}
+// Qué filtro le toca a cada columna: fechas (desde/hasta), cifra (mín./máx.) y, todo lo demás, TEXTO QUE SE ESCRIBE (contiene
+// todas las palabras, sin tildes; con sugerencias de los valores reales). Roberto 23/09: «los buscadores tienen que poder
+// escribir en ellos para ir buscando sin tener que hacerlo en una lista» — fuera los desplegables.
 function filterKind(c,rows){
  if(c.html)return false;
  if(c.numeric)return 'number';
- let n=0,dateLike=true,sample=null;const set=new Set();
- for(const r of rows){const v=r[c.key];if(v==null||v==='')continue;const s=String(v);n++;if(sample===null)sample=s;if(dateLike&&!/^\d{4}-\d{2}(-\d{2})?$/.test(s))dateLike=false;if(set.size<=400)set.add(s);}
+ let n=0,dateLike=true,sample=null;
+ for(const r of rows){const v=r[c.key];if(v==null||v==='')continue;const s=String(v);n++;if(sample===null)sample=s;if(dateLike&&!/^\d{4}-\d{2}(-\d{2})?$/.test(s)){dateLike=false;break;}}
  if(!n)return false;
  if(dateLike){c.dateLen=sample.length;return 'date';}
- return set.size<=120?'select':'text';
+ return 'text';
 }
 function filterBarHtml(columns,rows){
  const f=tableState.filters,out=[];
@@ -295,7 +326,7 @@ function filterBarHtml(columns,rows){
   if(c.filter==='date'){const t=c.dateLen===7?'month':'date';out.push(`<label class="fctl"><span>${esc(c.label)} desde</span><input type="${t}" data-tfilter="${esc(c.key)}" data-part="from" value="${esc(v?.from||'')}"></label><label class="fctl"><span>${esc(c.label)} hasta</span><input type="${t}" data-tfilter="${esc(c.key)}" data-part="to" value="${esc(v?.to||'')}"></label>`);continue;}
   const freq=new Map();for(const r of rows){const x=r[c.key];if(x==null||x==='')continue;const s=String(x);freq.set(s,(freq.get(s)||0)+1);}
   if(c.filter==='select'){const opts=[...freq.keys()].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));out.push(`<label class="fctl"><span>${esc(c.label)}</span><select data-tfilter="${esc(c.key)}"><option value="">Todos</option>${opts.map(o=>`<option value="${esc(o)}"${v===o?' selected':''}>${esc(o)}</option>`).join('')}</select></label>`);}
-  else{const opts=[...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,300).map(e=>e[0]).sort((a,b)=>a.localeCompare(b,'es'));const lid='dl_'+String(c.key).replace(/\W/g,'_');out.push(`<label class="fctl"><span>${esc(c.label)}</span><input type="search" list="${lid}" data-tfilter="${esc(c.key)}" placeholder="contiene…" value="${esc(v||'')}"><datalist id="${lid}">${opts.map(o=>`<option value="${esc(o)}">`).join('')}</datalist></label>`);}
+  else{const opts=[...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,300).map(e=>e[0]).sort((a,b)=>a.localeCompare(b,'es'));const lid='dl_'+String(c.key).replace(/\W/g,'_');out.push(`<label class="fctl"><span>${esc(c.label)}</span><input type="search" list="${lid}" data-tfilter="${esc(c.key)}" placeholder="escribe (varias palabras)…" autocomplete="off" value="${esc(v||'')}"><datalist id="${lid}">${opts.map(o=>`<option value="${esc(o)}">`).join('')}</datalist></label>`);}
  }
  const nums=columns.filter(c=>c.filter==='number');
  if(nums.length){const n=f.__num||{};out.push(`<div class="fctl fnum"><span>Cifra entre (elige la columna)</span><div class="fnumrow"><select data-tnum="key"><option value="">— columna —</option>${nums.map(c=>`<option value="${esc(c.key)}"${n.key===c.key?' selected':''}>${esc(c.label)}</option>`).join('')}</select><input type="number" step="any" data-tnum="min" placeholder="mín." aria-label="mínimo" value="${esc(n.min??'')}"><input type="number" step="any" data-tnum="max" placeholder="máx." aria-label="máximo" value="${esc(n.max??'')}"></div></div>`);}
@@ -345,7 +376,7 @@ function drawTable(){
  const def=tableDefinition;if(!def||!$('tableArea'))return;
  const terms=norm(tableState.query).split(/\s+/).filter(Boolean);
  let rows=def.rows.filter(r=>rowPasses(r,def)&&(!terms.length||(h=>terms.every(t=>h.includes(t)))(hayOf(r,def))));
- const count=rows.length,k=activeFilterCount();
+ const count=rows.length,k=activeFilterCount();tableState.lastRows=rows;
  if(tableState.sort){const key=tableState.sort;rows=rows.slice().sort((a,b)=>{const aa=a[key],bb=b[key];const res=typeof aa==='number'&&typeof bb==='number'?aa-bb:String(aa??'').localeCompare(String(bb??''),'es',{numeric:true});return tableState.asc?res:-res;});}
  tableState.page=Math.min(tableState.page,Math.max(0,Math.ceil(rows.length/50)-1));
  const view=rows.slice(tableState.page*50,tableState.page*50+50);
@@ -355,6 +386,7 @@ function drawTable(){
  const ncol=def.columns.length,cls=c=>`${c.numeric?'num':''} ${c.center?'ctr':''}`;
  const cell=(c,r,i)=>i===0&&def.drill?`<button class="tablelink" data-drill="${def.drill}" data-key="${esc(r.key)}">${esc(r[c.key])} ↗</button>`:(c.html?String(c.format?c.format(r[c.key]):r[c.key]??''):esc(c.format?c.format(r[c.key]):r[c.key]));
  $('tableArea').innerHTML=count?`<div class="tablewrap"><table class="${def.detail?'expandable':''}"><thead><tr>${def.columns.map(c=>`<th scope="col" class="${cls(c)}" aria-sort="${tableState.sort===c.key?(tableState.asc?'ascending':'descending'):'none'}"><button data-sort="${c.key}">${esc(c.label)} ${tableState.sort===c.key?(tableState.asc?'↑':'↓'):'↕'}</button></th>`).join('')}</tr></thead><tbody>${view.map(r=>{const open=Boolean(def.detail)&&tableState.open.has(r.__i);return `<tr${def.detail?` class="exp${open?' open':''}" data-row="${r.__i}" title="Pincha para ${open?'plegar':'ver'} el detalle"`:''}>${def.columns.map((c,i)=>`<td class="${cls(c)} ${signedTone(c,r)||(c.numeric&&r[c.key]<0?'neg':'')}" title="${esc(c.format?c.format(r[c.key]):r[c.key])}">${i===0&&def.detail?`<span class="caret" aria-hidden="true">${open?'▾':'▸'}</span>`:''}${cell(c,r,i)}</td>`).join('')}</tr>${open?`<tr class="detailrow"><td colspan="${ncol}">${def.detail(r)}</td></tr>`:''}`;}).join('')}</tbody></table></div><div class="pager"><span>${tableState.page*50+1}–${Math.min((tableState.page+1)*50,count)} de ${nf(count)} · todas las filas están disponibles</span><div><button data-page="-1" ${tableState.page===0?'disabled':''}>← Anterior</button><button data-page="1" ${(tableState.page+1)*50>=count?'disabled':''}>Siguiente →</button></div></div>`:`<div class="empty">No hay datos para esta combinación. Cambie los filtros o el texto de búsqueda.</div>`;
+ drawStats();
 }
 // ---- Recuadros explicativos (.info): cada uno se puede ocultar y un botón general los oculta/muestra todos; se recuerda en el navegador.
 const INFO_KEY='rz_info_hidden',INFO_ALL='rz_info_all';
@@ -487,7 +519,7 @@ function viajesTab(){
  const tri=D.actividad&&D.actividad.tri;
  const largasTxt=tri&&tri.largas_medidas!=null?`largo recorrido (≥200 km): <b>${nf(tri.largas_medidas||0)}</b> de ${nf(tri.largas_con_traza||0)} con traza medidos de carga a descarga aunque crucen días (horas = de trabajo, sin los descansos), con <b>km cargado y en vacío</b>`:`largas distancias pendientes de la pasada de nacional ${nf(tri&&tri.largas||0)}`;
  const triHtml=tri?`<div class="info"><b>Triangulación v${tri.version||2}</b> (${esc(tri.generado||'')}): <b>${nf(tri.medido||0)}</b> de ${nf(tri.con_traza||tri.viajes||0)} viajes de áridos/nacional <b>con traza del localizador</b>${tri.desde_traza?` (${esc(tri.desde_traza)} → ${esc(tri.hasta_traza||'')})`:''} tienen <b>hora real de inicio y fin</b> (${tri.pct_con_traza!=null?tri.pct_con_traza:tri.pct||0} %); ${nf(tri.sin_traza||0)} viajes más son de fechas sin traza bajada, camiones ajenos o sin localizador · confianza alta ${nf(tri.alta||0)} / media ${nf(tri.media||0)} · ${largasTxt} · minutos del <b>tacógrafo</b> en ${nf(tri.taco||0)} viajes${tri.taco_descartado?` (en ${nf(tri.taco_descartado)} más el localizador no recibe el tacógrafo: se usa la traza)`:''} · el chofer del tacógrafo coincide con GesRuta en ${nf(tri.chofer_ok||0)} de ${nf((tri.chofer_ok||0)+(tri.chofer_no||0))} · jornadas nocturnas ${nf(tri.nocturnas||0)} · albaranes sin ciclo en la traza ${nf(tri.sin_ciclo||0)} (<b>sin dato, no cero</b>) · nº de cantera repetido (error de grabación) ${nf(tri.repetidas||0)}${tri.espejos?` · ${nf(tri.espejos)} portes que salen en Razo y en Agetrans (espejo intercompañía) medidos una vez y marcados «espejo»`:''}. <b>Inicio/Fin</b> en hora de Madrid («+1» = acaba al día siguiente).</div>`:'';
- return `<div class="info">Cada <b>viaje real</b> con su <b>margen neto</b>: ingreso menos el coste real (combustible, personal, flota, subcontratación e indirectos). <b>Pincha en un viaje</b> para desplegar su detalle: lugares de carga y descarga, horario real, km cargado y en vacío, litros, minutos de conducción y de espera, desglose del coste y el mapa del día. Ordena por «Margen neto» para ver los peores; busca por palabras o abre «Filtros» para acotar por cliente, lugar, matrícula, fechas o cifras. «Fiabilidad»: <b>medido/repartido</b> = km y horas del localizador; <b>subcontrata</b> = coste real de la factura del subcontratista (por línea, cuadra con la contabilidad); <b>estimado</b> = hormigón (horas de la traza GPS). El aviso <b>⚠</b> marca algún viaje propio suelto de clientes casi todo subcontratados, donde el reparto de áridos sale inflado — ahí fíate del margen por <b>cliente</b>.</div>`+triHtml+setTable('Margen por viaje','Los '+nf(t.length)+' viajes del periodo, ordenables, con búsqueda por palabras y filtros por columna. Verde gana, rojo pierde. Pincha en una fila para desplegar el detalle del viaje.',t,cols,null,tripDetail);
+ return `<div class="info">Cada <b>viaje real</b> con su <b>margen neto</b>: ingreso menos el coste real (combustible, personal, flota, subcontratación e indirectos). <b>Pincha en un viaje</b> para desplegar su detalle: lugares de carga y descarga, horario real, km cargado y en vacío, litros, minutos de conducción y de espera, desglose del coste y el mapa del día. Ordena por «Margen neto» para ver los peores; busca por palabras o abre «Filtros» para acotar por cliente, lugar, matrícula, fechas o cifras. «Fiabilidad»: <b>medido/repartido</b> = km y horas del localizador; <b>subcontrata</b> = coste real de la factura del subcontratista (por línea, cuadra con la contabilidad); <b>estimado</b> = hormigón (horas de la traza GPS). El aviso <b>⚠</b> marca algún viaje propio suelto de clientes casi todo subcontratados, donde el reparto de áridos sale inflado — ahí fíate del margen por <b>cliente</b>.</div>`+triHtml+setTable('Margen por viaje','Los '+nf(t.length)+' viajes del periodo, ordenables, con búsqueda por palabras y filtros por columna. Verde gana, rojo pierde. Pincha en una fila para desplegar el detalle del viaje. Abre «Estadística de los viajes que ves» para la media, la mediana, la dispersión y las rectas de justo los viajes que dejan la búsqueda y los filtros (por ejemplo, una ruta).',t,cols,null,tripDetail,rows=>estadViajes(rows,''));
 }
 // ---- HALLAZGOS: lo que el cruce GesRuta ↔ localizador ↔ tacógrafo descubre y sirve para actuar (listas medidas, con qué hacer).
 const HZ_ROL={carga:'cargando',descarga:'descargando',espera:'espera en ruta',fuera:'fuera de viaje'};
@@ -647,7 +679,7 @@ function clienteDet(){
 }
 function wireCliGroups(){document.querySelectorAll('#cliOps .cli-grphead').forEach(h=>h.onclick=()=>{const b=h.nextElementSibling,gi=+h.dataset.gi;if(b.hidden&&!b.dataset.filled){b.innerHTML=`<div class="cli-tablewrap"><table class="cli-optable">${CLI_THEAD}<tbody>${_cliGroups[gi].trips.map(cliTrow).join('')}</tbody></table></div>`;b.dataset.filled='1';}b.hidden=!b.hidden;h.classList.toggle('open',!b.hidden);});}
 function clienteDetWire(){
- const q=$('cliQ');if(q)q.oninput=()=>{const v=q.value.toUpperCase();document.querySelectorAll('#cliList .cli-row').forEach(r=>{r.hidden=!r.dataset.cli.toUpperCase().includes(v);});};
+ const q=$('cliQ');if(q)q.oninput=()=>{const ws=norm(q.value).split(/\s+/).filter(Boolean);document.querySelectorAll('#cliList .cli-row').forEach(r=>{const h=norm(r.dataset.cli);r.hidden=!ws.every(w=>h.includes(w));});};
  document.querySelectorAll('#cliList .cli-row').forEach(r=>r.onclick=()=>{_cliSel=r.dataset.cli;renderContent();const el=$('content');if(el)el.scrollIntoView({block:'start'});});
  const g=$('cliGroup');if(g)g.onchange=()=>{_cliGroupBy=g.value;$('cliOps').innerHTML=cliOpsHtml(M.netaTrips(state).filter(t=>t.cliente===_cliSel));wireCliGroups();};
  const pr=$('cliPrint');if(pr)pr.onclick=()=>window.print();
@@ -732,10 +764,15 @@ function statsDe(xs,bins=8){
  if(n>=5){let lo=q(.01),hi=q(.99);if(hi<=lo)hi=lo+1;const w=(hi-lo)/bins,cnt=new Array(bins).fill(0);for(const x of v){const i=x<hi?Math.floor((x-lo)/w):bins-1;cnt[Math.max(0,Math.min(bins-1,i))]++;}out.hist=cnt.map((c,i)=>[lo+i*w,lo+(i+1)*w,c]);}
  return out;
 }
+// Recta y = a + b·x por mínimos cuadrados, ROBUSTA: con 20 pares o más se apartan los viajes a más de 3 errores típicos de
+// la primera recta (lecturas raras del sensor, un día de avería) y se reajusta; se dice cuántos se apartaron.
+function ajusteLineal(p){const n=p.length,mx=p.reduce((s,[x])=>s+x,0)/n,my=p.reduce((s,[,y])=>s+y,0)/n;let sxx=0,sxy=0,syy=0;for(const [x,y] of p){sxx+=(x-mx)**2;sxy+=(x-mx)*(y-my);syy+=(y-my)**2;}
+ if(!(sxx>0)||!(syy>0))return null;const b=sxy/sxx,a=my-b*mx;let ssr=0;for(const [x,y] of p)ssr+=(y-(a+b*x))**2;return {a,b,r2:Math.max(0,1-ssr/syy),n,mx,my,se:n>2?Math.sqrt(ssr/(n-2)):0};}
 function regresion(pares){
- const p=pares.filter(([x,y])=>x!=null&&y!=null&&Number.isFinite(x)&&Number.isFinite(y)&&x>0),n=p.length;if(n<8)return null;
- const mx=p.reduce((s,[x])=>s+x,0)/n,my=p.reduce((s,[,y])=>s+y,0)/n;let sxx=0,sxy=0,syy=0;for(const [x,y] of p){sxx+=(x-mx)**2;sxy+=(x-mx)*(y-my);syy+=(y-my)**2;}
- if(!(sxx>0)||!(syy>0))return null;const b=sxy/sxx,a=my-b*mx;let ssr=0;for(const [x,y] of p)ssr+=(y-(a+b*x))**2;return {a,b,r2:Math.max(0,1-ssr/syy),n,mx,my};
+ const p=pares.filter(([x,y])=>x!=null&&y!=null&&Number.isFinite(x)&&Number.isFinite(y)&&x>0);if(p.length<8)return null;
+ let f=ajusteLineal(p);if(!f)return null;let apartados=0;
+ if(p.length>=20&&f.se>0){const q=p.filter(([x,y])=>Math.abs(y-(f.a+f.b*x))<=3*f.se);if(q.length>=8&&q.length<p.length){const g=ajusteLineal(q);if(g){f=g;apartados=p.length-q.length;}}}
+ return {...f,apartados};
 }
 function histSVG(D,ud,dec){
  if(!D||!D.hist||!D.hist.length)return '';
@@ -752,14 +789,14 @@ function statsTabla(filas){
 function relaciones(trips){
  const own=trips.filter(t=>!t.sub&&t.km>0);
  const R=[['Litros según los km',regresion(own.map(t=>[t.km,t.lit])),'L'],['Horas de trabajo según los km',regresion(own.map(t=>[t.km,t.horas])),'h'],['Coste real según los km',regresion(own.map(t=>[t.km,t.coste])),'€'],['Ingreso según los km',regresion(own.map(t=>[t.km,t.ingreso])),'€']];
- const li=R.filter(([,r])=>r).map(([l,r,uy])=>{const ej=Math.round(r.mx);return `<li><b>${l}</b>: ${uy} = <b>${nf(r.a,2)}</b> + <b>${nf(r.b,3)}</b> × km <small>(R² ${nf(r.r2,2)}, ${nf(r.n)} viajes medidos)</small>. Parte fija por viaje ${nf(r.a,2)} ${uy}; cada km más, ${nf(r.b,3)} ${uy}. Ejemplo: ${nf(ej)} km → ${nf(r.a+r.b*ej,1)} ${uy}.</li>`;}).join('');
- return li?`<ul class="rel">${li}</ul><p class="sub" style="margin:6px 0 0">R² = qué parte de la variación entre viajes explican los km (1 = todo, 0 = nada). Con R² bajo los km no bastan para calcular: pesan las esperas, la carga o el tipo de ruta; usa entonces la mediana del dato.</p>`:'';
+ const li=R.filter(([,r])=>r).map(([l,r,uy])=>{const ej=Math.round(r.mx);return `<li><b>${l}</b>: ${uy} = <b>${nf(r.a,2)}</b> + <b>${nf(r.b,3)}</b> × km <small>(R² ${nf(r.r2,2)}, ${nf(r.n)} viajes medidos${r.apartados?', '+nf(r.apartados)+' apartados por raros':''})</small>. Parte fija por viaje ${nf(r.a,2)} ${uy}; cada km más, ${nf(r.b,3)} ${uy}. Ejemplo: ${nf(ej)} km → ${nf(r.a+r.b*ej,1)} ${uy}${r.se?' (8 de cada 10 viajes así, entre '+nf(Math.max(0,r.a+r.b*ej-1.2816*r.se),1)+' y '+nf(r.a+r.b*ej+1.2816*r.se,1)+')':''}.</li>`;}).join('');
+ return li?`<ul class="rel">${li}</ul><p class="sub" style="margin:6px 0 0">R² = qué parte de la variación entre viajes explican los km (1 = todo, 0 = nada). Con R² bajo los km no bastan para calcular: pesan las esperas, la carga o el tipo de ruta; usa entonces la mediana del dato. «Apartados por raros» = viajes a más de 3 errores típicos de la recta (lecturas raras, averías), que no se usan para trazarla.</p>`:'';
 }
 function estadViajes(trips,titulo){
  const own=trips.filter(t=>!t.sub);
  const F=[['Km por viaje (localizador)',statsDe(own.map(t=>t.km>0?t.km:null)),'km',0],['Horas de trabajo por viaje',statsDe(own.map(t=>t.horas)),'h',1],['Litros por viaje',statsDe(own.map(t=>t.lit)),'L',1],['Litros por 100 km',statsDe(own.map(t=>t.lit&&t.km?t.lit/t.km*100:null)),'L/100 km',1],['Km por hora de trabajo',statsDe(own.map(t=>t.horas&&t.km?t.km/t.horas:null)),'km/h',1],['Minutos parado o esperando',statsDe(own.map(t=>t.espera)),'min',0],['Minutos conduciendo',statsDe(own.map(t=>t.cond)),'min',0],['m³ por viaje',statsDe(trips.map(t=>t.m3>0?t.m3:null)),'m³',1],['Toneladas por viaje',statsDe(trips.map(t=>t.t>0?t.t:null)),'t',1],['Ingreso por viaje',statsDe(trips.map(t=>t.ingreso)),'€',0],['Coste real por viaje',statsDe(trips.map(t=>t.coste)),'€',0],['Margen por viaje',statsDe(trips.map(t=>t.margen)),'€',0],['Ingreso por km',statsDe(own.map(t=>t.km>0?t.ingreso/t.km:null)),'€/km',2],['Coste real por km',statsDe(own.map(t=>t.km>0?t.coste/t.km:null)),'€/km',2]];
  const tabla=statsTabla(F);if(!tabla)return '';
- return `<div class="grp">${titulo}</div><div style="grid-column:1/-1"><p class="sub" style="margin:0 0 8px">Media y mediana con su dispersión: desviación típica, CV (desviación ÷ media), el 50 % central entre Q1 y Q3, el 80 % entre p10 y p90, valores atípicos (fuera de 1,5 veces el rango intercuartílico) e intervalo de confianza del 95 % de la media (con esos viajes, la media real está ahí con un 95 % de seguridad). Km, horas, litros y esperas solo de viajes propios con dato del localizador; los subcontratados no llevan km ni horas nuestros.</p>${tabla}${relaciones(trips)}</div>`;
+ return `${titulo?`<div class="grp">${titulo}</div>`:''}<div style="grid-column:1/-1"><p class="sub" style="margin:0 0 8px">Media y mediana con su dispersión: desviación típica, CV (desviación ÷ media), el 50 % central entre Q1 y Q3, el 80 % entre p10 y p90, valores atípicos (fuera de 1,5 veces el rango intercuartílico) e intervalo de confianza del 95 % de la media (con esos viajes, la media real está ahí con un 95 % de seguridad). Km, horas, litros y esperas solo de viajes propios con dato del localizador; los subcontratados no llevan km ni horas nuestros.</p>${tabla}${relaciones(trips)}</div>`;
 }
 function realCols(dim,real){
  const cols=[dim==='plate'?{label:'Matrícula',key:'label'}:{label:'Cliente',key:'label'}];
@@ -952,12 +989,14 @@ function bind(){
   if(b.dataset.ztoggle){const k=b.dataset.ztoggle;if(zonasAbiertas.has(k))zonasAbiertas.delete(k);else zonasAbiertas.add(k);const c=$('zonasTabla');if(c)c.innerHTML=zonasTabla(zonasVista.zonas,zonasVista.total);}
  });
  document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='personalKey')unlockPersonal();});
+ // la estadística de lo que se ve se calcula al abrirla (y se recuerda abierta en este navegador)
+ document.addEventListener('toggle',e=>{const d=e.target;if(!d||d.id!=='tstats')return;lsSet(STATS_KEY,d.open);if(d.open)drawStats();},true);
  document.addEventListener('change',e=>{
   const el=e.target;if(el.id==='personalMonth'){personal.month=el.value;tableState=freshTable();renderContent();return;}
   if(el.dataset.slicer){const k=el.dataset.slicer;state[k]=el.checked?[...new Set([...state[k],el.value])]:state[k].filter(v=>v!==el.value);tableState.page=0;update();}
  });
  document.addEventListener('input',e=>{
-  if(e.target.dataset.searchSlicer){const id=e.target.dataset.searchSlicer,q=e.target.value.toLocaleLowerCase('es');$('options-'+id).querySelectorAll('label').forEach(l=>l.hidden=!l.textContent.toLocaleLowerCase('es').includes(q));}
+  if(e.target.dataset.searchSlicer){const id=e.target.dataset.searchSlicer,ws=norm(e.target.value).split(/\s+/).filter(Boolean);$('options-'+id).querySelectorAll('label').forEach(l=>{const h=norm(l.textContent);l.hidden=!ws.every(w=>h.includes(w));});}
   if(e.target.id==='tableSearch'){tableState.query=e.target.value;tableState.page=0;drawTable();}
   applyFilterControl(e.target);
  });
