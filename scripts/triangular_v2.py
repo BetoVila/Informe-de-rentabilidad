@@ -310,11 +310,15 @@ def ciclos_geo(j, viajes, coords, casa, fuente, tablas):
             cur = {"cod": cod, "t_in": q["t"], "t_out": q["t"], "n": 1, "lat": q["lat"], "lon": q["lon"], "vmin": q["s"] or 0}
     if cur:
         visitas.append(cur)
+    # arranque: si la jornada empieza descargando el viaje de AYER (carga hoy, descarga manana), sus viajes arrancan despues
+    desde = j.get("arranque") or j["ini"]
     cl = []
     for v in visitas:
         if v["n"] < 2 and v["vmin"] > 10:
             continue
-        s = {"t_in": v["t_in"], "t_out": v["t_out"], "lat": v["lat"] / v["n"], "lon": v["lon"] / v["n"], "zona": v["cod"]}
+        if v["t_out"] <= desde:
+            continue
+        s = {"t_in": max(v["t_in"], desde), "t_out": v["t_out"], "lat": v["lat"] / v["n"], "lon": v["lon"] / v["n"], "zona": v["cod"]}
         cl.append((s, [v["cod"]] if v["cod"] in O else [], [v["cod"]] if v["cod"] in Dd else []))
     if not cl:
         return []
@@ -367,7 +371,7 @@ def ciclos_geo(j, viajes, coords, casa, fuente, tablas):
                         best = (dist, q, o)
         return best
 
-    ciclos, loaded, prev_fin = [], None, j["ini"]
+    ciclos, loaded, prev_fin = [], None, desde
 
     def cerrar(t1, descarga, d, falta):
         ciclos.append({"t0": prev_fin, "t1": t1, "carga": loaded["s"], "descarga": descarga, "o": loaded["o"], "d": d, "falta": falta})
@@ -594,10 +598,27 @@ def sin_dato(metodo, motivo, j=None):
             "min_fuente": None, "conductor_hash": None, "jornada": j, "orden_ciclo": None, "geo_score": None}
 
 
+SUMABLES = ("km", "litros", "litros_calibrados", "duracion_min", "min_conduccion", "min_conduccion_traza", "min_espera", "min_otros", "min_disponible", "min_descanso")
+
+
 def medir_ciclo(j, c, k, nc, fuente, tablas, acts, drvs, prestada=False):
-    c0 = j["c0"] if (not prestada and k == 0) else c["t0"]
-    c1 = j["c1"] if (not prestada and k == nc - 1) else c["t1"]
-    m = medir(j, fuente, c0, c1, tablas, c["t0"], c["t1"], acts, drvs)
+    if c.get("partes"):
+        # viaje que carga hoy y descarga manana: dos tramos en dos jornadas; el descanso entre medias NO es del viaje
+        m = None
+        for (jp, c0, c1, d0, d1) in c["partes"]:
+            mp = medir(jp, fuente, c0, c1, tablas, d0, d1, acts, drvs)
+            if m is None:
+                m = mp
+                continue
+            for kk in SUMABLES:
+                if mp.get(kk) is not None:
+                    m[kk] = round((m.get(kk) or 0) + mp[kk], 2)
+            if mp.get("conductor_hash") and not m.get("conductor_hash"):
+                m["conductor_hash"] = mp["conductor_hash"]
+    else:
+        c0 = max(j["c0"], j.get("arranque") or 0) if (not prestada and k == 0) else c["t0"]
+        c1 = j["c1"] if (not prestada and k == nc - 1) else c["t1"]
+        m = medir(j, fuente, c0, c1, tablas, c["t0"], c["t1"], acts, drvs)
     m.update({"repartido": False, "medido": True, "t_ini": c["t0"], "t_fin": c["t1"], "jornada": j, "orden_ciclo": k + 1,
               "motivo": c.get("falta"), "prestada": prestada})
     return m
@@ -624,7 +645,7 @@ def asignar_geo(viajes, pendientes, ciclos, j, fuente, tablas, acts, drvs, res, 
             m = medir_ciclo(j, ciclos[k], k, len(ciclos), fuente, tablas, acts, drvs, prestada)
             s = S[li][kk]
             m.update({"metodo": "geo", "confianza": "alta" if s > 0 else ("media" if s == 0 else "baja"), "geo_score": MATCH + s})
-            res[i] = m; usados.add(k)
+            res[i] = m; usados.add(k); ciclos[k]["viaje"] = viajes[i]
     quedan = [i for i in pendientes if res[i] is None]
     return quedan, [k for k in range(len(ciclos)) if k not in usados]
 
@@ -641,7 +662,7 @@ def asignar_dp(viajes, pendientes, ciclos, idx_libres, j, fuente, tablas, acts, 
         m = medir_ciclo(j, ciclos[k], k, len(ciclos), fuente, tablas, acts, drvs, prestada)
         sc = S[li][kk]
         m.update({"metodo": "geo" if sc >= 2 * MATCH else "orden", "confianza": "alta" if sc >= 2 * MATCH else ("media" if sc >= 0 else "baja"), "geo_score": sc})
-        res[i] = m; usados.add(k)
+        res[i] = m; usados.add(k); ciclos[k]["viaje"] = viajes[i]
     return [i for i in pendientes if res[i] is None], [k for k in idx_libres if k not in usados]
 
 
@@ -729,6 +750,51 @@ def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, dr
         j["min_sobrantes"] = round(sum((c["t1"] - c["t0"]) / 60.0 for c in j["sobrantes"]), 0)
         diag["min_sobrantes"] += j["min_sobrantes"]
     return res
+
+
+def primer_paso_destino(jn, t, viajes_hoy, coords):
+    """Carga ayer, descarga hoy: en la jornada jn, la primera visita (2 puntos o frenada, radio >= 600 m) al DESTINO del viaje t
+    ANTES de la primera visita a un origen de los viajes de hoy. Devuelve la hora de salida de esa visita, o None."""
+    casa = t["c"]
+    cd = coords.get((casa, t["d"])) if t.get("d") else None
+    if not cd or v1.RADIO_MATCH.get(cd["fuente"], 1) is None:
+        return None
+    origs = []
+    for x in viajes_hoy:
+        c = coords.get((casa, x["o"])) if x.get("o") else None
+        if c and v1.RADIO_MATCH.get(c["fuente"], 1) is not None:
+            origs.append(c)
+
+    def radio(cc):
+        r = v1.RADIO_MATCH.get(cc["fuente"], 3.0)
+        if cc["fuente"] == "gps_aprendida":
+            r = min(1.0, max(0.3, 2.0 * (cc.get("radio_m") or 150) / 1000.0))
+        return max(0.6, r)
+    rd = radio(cd)
+    cur, n_o = None, 0
+    for q in jn["pts"]:
+        if q["t"] < jn["ini"]:
+            continue
+        en_d = v1.hav((q["lat"], q["lon"]), (cd["lat"], cd["lon"])) <= rd
+        en_o = any(v1.hav((q["lat"], q["lon"]), (c["lat"], c["lon"])) <= radio(c) for c in origs)
+        if en_o and not en_d:
+            n_o += 1
+            if n_o >= 2 or (q["s"] or 0) <= 15:
+                break                       # ya esta cargando el primer viaje de hoy: no hubo descarga pendiente antes
+        else:
+            n_o = 0
+        if en_d:
+            if cur is None:
+                cur = {"t_in": q["t"], "t_out": q["t"], "n": 1, "vmin": q["s"] or 0}
+            else:
+                cur["t_out"] = q["t"]; cur["n"] += 1; cur["vmin"] = min(cur["vmin"], q["s"] or 0)
+        elif cur is not None:
+            if cur["n"] >= 2 or cur["vmin"] <= 15:
+                return cur["t_out"]
+            cur = None
+    if cur is not None and (cur["n"] >= 2 or cur["vmin"] <= 15):
+        return cur["t_out"]
+    return None
 
 
 # ---------------------------------------------------------------- ancla de GesRuta (tarifas)
@@ -839,6 +905,7 @@ def main():
         t["larga"] = t["tipo"] == "nacional" or (d is not None and d >= LARGA_KM)
         por_dia[(t["mat"], t["dia"])].append(idx)
     salida = [None] * len(dem)
+    pos_dem = {id(t): i for i, t in enumerate(dem)}
     diag = collections.Counter()
     dias_diag = []
     for (m, d) in sorted(por_dia, key=lambda k: (k[1], k[0])):
@@ -852,6 +919,34 @@ def main():
                 salida[i] = sin_dato("sin_traza", motivo)
             continue
         jor = por_fecha.get((m, d), [])
+        # CARGA HOY, DESCARGA MANANA (aridos, regla de Roberto): si la jornada ANTERIOR del camion acabo cargada (descarga no
+        # vista al fin de jornada) y la primera de hoy pasa por ese destino ANTES de cargar nada, es el MISMO viaje: se le suma
+        # el tramo de hoy (sin el descanso), se marca 'pernocta_cargado' y los viajes de hoy arrancan tras esa descarga.
+        if jor:
+            js = jornadas_mat[m]
+            jn = jor[0]
+            k0 = next((ix for ix, x in enumerate(js) if x is jn), None)
+            prev = js[k0 - 1] if k0 else None
+            if prev and prev.get("ciclos") and (jn["ini"] - prev["fin"]) <= 40 * 3600:
+                c = prev["ciclos"][-1]
+                t = c.get("viaje")
+                if t is not None and c.get("falta") == "descarga_no_vista_fin_jornada" and not c.get("partes") and not jn.get("arranque"):
+                    td = primer_paso_destino(jn, t, [dem[i] for i in idxs], coords)
+                    if td:
+                        cd = coords.get((t["c"], t["d"]))
+                        kl = len(prev["ciclos"]) - 1
+                        c["partes"] = [(prev, prev["c0"] if kl == 0 else c["t0"], prev["c1"], c["t0"], prev["fin"]), (jn, jn["c0"], td, jn["ini"], td)]
+                        c["t1"], c["d"], c["falta"] = td, t["d"], "pernocta_cargado"
+                        c["descarga"] = {"t_in": td, "t_out": td, "lat": cd["lat"], "lon": cd["lon"], "paso": True}
+                        jn["arranque"] = td
+                        fuente_p = (fuente_mat.get(m) or collections.Counter()).most_common(1)
+                        fuente_p = fuente_p[0][0] if fuente_p else None
+                        mm = medir_ciclo(prev, c, kl, kl + 1, fuente_p, sens.get(m), acts.get(m, []), drvs.get(m, []))
+                        old = salida[pos_dem[id(t)]] or {}
+                        mm.update({"metodo": old.get("metodo") or "geo", "confianza": "alta", "geo_score": (old.get("geo_score") or 0) + MATCH,
+                                   "motivo": "pernocta_cargado", "medido": True, "repartido": False})
+                        salida[pos_dem[id(t)]] = mm
+                        diag["pernocta_cargado"] += 1
         if not jor:
             # ¿hay traza del camion en esas fechas? Si no la hay a ±VENTANA_DIAS (p. ej. 2025, sin bajada), es 'sin traza en esas
             # fechas', no 'sin jornada ese dia' (que sugiere que el camion paro). Rotular bien lo que no se sabe.
@@ -1001,6 +1096,8 @@ def main():
                "ciclos_sobrantes_sin_viaje": diag["ciclos_sobrantes"], "horas_sobrantes_sin_viaje": round(diag["min_sobrantes"] / 60.0, 1),
                "descarga_por_paso": sum(1 for x in viajes_out if x["motivo"] == "descarga_por_paso"),
                "carga_por_paso": sum(1 for x in viajes_out if x["motivo"] == "carga_por_paso"),
+               "pernocta_cargado_carga_hoy_descarga_manana": sum(1 for x in viajes_out if x["motivo"] == "pernocta_cargado"),
+               "descarga_no_vista_fin_jornada": sum(1 for x in viajes_out if x["motivo"] == "descarga_no_vista_fin_jornada"),
                "ciclos_prestados_usados": diag["ciclos_prestados_usados"],
                "viajes_repartidos_de_sobrantes": diag["viajes_repartidos_de_sobrantes"], "viajes_sin_ciclo": met.get("sin_ciclo", 0),
                "tickets_recuperados_en_otro_dia": diag["recuperados_entre_dias"],
