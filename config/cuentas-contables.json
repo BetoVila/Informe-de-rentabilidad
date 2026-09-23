@@ -3,6 +3,7 @@
   "gastos": [
     {"id": "subcontratacion", "label": "Trabajos de otras empresas (subcontratación)", "prefijos": ["607"]},
     {"id": "combustible", "label": "Combustible", "prefijos": ["6280000000"]},
+    {"id": "adblue", "label": "AdBlue (compra a granel para el depósito)", "prefijos": ["6020000000"], "_nota": "Roberto 23/09: el AdBlue no se valoraba. No tiene subcuenta propia: el comprado a granel para el depósito va en 6020000000 (compras otros aprovisionamientos), que va al 2-3 % del gasoil y se compra a lotes; el de gasolinera (tarjeta Solred) va dentro del 628 con el gasoil. Se reparte por LITROS de gasoil, no por ingreso."},
     {"id": "personal", "label": "Sueldos y Seguridad Social", "prefijos": ["640", "641", "642", "643", "649"]},
     {"id": "dietas", "label": "Dietas del personal", "prefijos": ["6290080"]},
     {"id": "aridos", "label": "Compra de áridos y productos", "prefijos": ["600", "601", "6020000006", "6020000022"]},
@@ -35,7 +36,8 @@
     {"id": "seguros", "label": "Seguros", "cats": ["seguros"], "partes": ["insurance"]},
     {"id": "mantenimiento", "label": "Reparaciones, repuestos y neumáticos", "cats": ["reparaciones", "repuestos"], "partes": ["maintenance"]},
     {"id": "peajes", "label": "Peajes", "cats": ["peajes"], "partes": ["expensesVehicle"], "nota": "«Gastos vehículo» del parte también recoge otros gastos del camión."},
-    {"id": "consumibles", "label": "AdBlue y otras compras", "cats": ["otras_compras"], "partes": ["adblue"]},
+    {"id": "adblue", "label": "AdBlue", "cats": ["adblue"], "partes": ["adblue"], "nota": "El libro solo separa el AdBlue a granel del depósito (6020000000); el de gasolinera va dentro del combustible (628). El parte declara el AdBlue que echa el conductor."},
+    {"id": "consumibles", "label": "Otras compras", "cats": ["otras_compras"], "partes": []},
     {"id": "generales", "label": "Gastos generales (renting, suministros, impuestos, financieros, otros)", "cats": ["alquileres", "suministros", "tributos", "financieros", "otros"], "partes": ["expensesCompany", "structure"], "nota": "El parte imputa la estructura con un porcentaje fijo; no es el gasto real."},
     {"id": "subcontratacion", "label": "Trabajos de otras empresas (subcontratación)", "cats": ["subcontratacion"], "partes": [], "nota": "No existe en los partes de Access."},
     {"id": "aridos", "label": "Compra de áridos y productos", "cats": ["aridos"], "partes": [], "nota": "No existe en los partes de Access."},

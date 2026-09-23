@@ -317,7 +317,7 @@ export function createModel(data) {
     if(!rows.length||A.rows[0].length<21)return null;      // hace falta impro (índice 19) + día (índice 20)
     const sub=r=>(r[IMPRO]||0)>0,nameOf=r=>A.cli[r[CI]],mesOf=r=>A.mo[r[M]];
     const baseOf={lit:r=>r[LIT]||0,dur:r=>r[DUR]||0,km:r=>r[KMR]||0};
-    const BASE={combustible:'lit',personal:'dur',dietas:'dur',repuestos:'km',reparaciones:'km',seguros:'km',amortizacion:'km',alquileres:'km',peajes:'km',neumaticos:'km'};
+    const BASE={combustible:'lit',adblue:'lit',personal:'dur',dietas:'dur',repuestos:'km',reparaciones:'km',seguros:'km',amortizacion:'km',alquileres:'km',peajes:'km',neumaticos:'km'};   // AdBlue por litros de gasoil (su consumo va con el del motor), no por ingreso
     const DIR=new Set(['aridos','subcontratacion','impuesto_sociedades']);   // no van por base: subcontratación por IMPPRO real, áridos por cliente, el impuesto no es coste del viaje
     // Gasto del libro por MES y naturaleza (mismas sociedades y mismo ajuste intragrupo que ledgerView).
     const names=ledger.sociedades,closed=new Set(lv.months),catM=new Map();
