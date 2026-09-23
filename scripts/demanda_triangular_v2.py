@@ -13,7 +13,27 @@ def clean_plate(v):
     return "" if k in {"", "0", "000000"} else k
 
 
-def leer_sociedad(base, empresa, desde, hasta, viajes):
+def flota_grupo(base):
+    """vehicu.dbf de una casa: matriculas SIN proveedor (PROVEE vacio) = flota del grupo. OJO: PROPIO no vale (5790FSH es de
+    Razo y lleva PROPIO=False: sera propiedad vs renting); y en la ficha de Agetrans los camiones de Razo llevan PROVEE=P00099,
+    por eso la flota del grupo es la UNION de las dos casas. Los camiones ajenos (subcontratados) o no estan en vehicu o
+    llevan proveedor: nunca tendran traza nuestra."""
+    grupo = set()
+    try:
+        db = abrir(base, "vehicu.dbf")
+    except Exception:  # noqa: BLE001
+        return grupo
+    for r in db.registros():
+        m = clean_plate(db.get(r, "MATRIC"))
+        pv = db.get(r, "PROVEE")
+        pv = pv.strip() if isinstance(pv, str) else pv
+        if m and pv in (None, "", 0):
+            grupo.add(m)
+    db.cerrar()
+    return grupo
+
+
+def leer_sociedad(base, empresa, desde, hasta, viajes, grupo=None):
     vj = abrir(base, "viaje.dbf"); matr = {}
     for r in vj.registros():
         v = vj.get(r, "CODIGO")
@@ -46,9 +66,11 @@ def leer_sociedad(base, empresa, desde, hasta, viajes):
         horm = um == "M3" or cod[:1] == "K"
         t = seen.get(key)
         if t is None:
-            t = seen[key] = {"c": empresa, "v": v, "cant": cant, "mat": matr.get(v, ""), "dia": dia,
+            mat = matr.get(v, "")
+            t = seen[key] = {"c": empresa, "v": v, "cant": cant, "mat": mat, "dia": dia,
                              "o": (ln.get(r, "ORIGEN") or "").strip(), "d": (ln.get(r, "DESTINO") or "").strip(),
-                             "m3": 0.0, "t": 0.0, "imp": 0.0, "horm": False}
+                             "m3": 0.0, "t": 0.0, "imp": 0.0, "horm": False,
+                             "propio": ((mat in grupo) if (grupo is not None and mat) else None)}
         cr = ln.get(r, "CANTIDREAL") or ln.get(r, "CANTID") or 0
         if um == "M3":
             t["m3"] += cr; t["horm"] = True
@@ -76,12 +98,14 @@ def main():
     if a.plates and os.path.isfile(a.plates):
         plates = {clean_plate(l) for l in open(a.plates, encoding="utf-8-sig") if clean_plate(l)}
     viajes = []
-    for carpeta, empresa in (("EMPTR21", "Razo"), ("EMPAG21", "Agetrans")):
-        base = os.path.join(a.root, carpeta)
-        if os.path.isdir(base):
-            leer_sociedad(base, empresa, a.desde, a.hasta, viajes)
-        else:
-            print("Aviso: no esta %s" % base, file=sys.stderr)
+    casas = [(carpeta, empresa) for carpeta, empresa in (("EMPTR21", "Razo"), ("EMPAG21", "Agetrans")) if os.path.isdir(os.path.join(a.root, carpeta))]
+    grupo = set()
+    for carpeta, _ in casas:
+        grupo |= flota_grupo(os.path.join(a.root, carpeta))
+    for carpeta, empresa in casas:
+        leer_sociedad(os.path.join(a.root, carpeta), empresa, a.desde, a.hasta, viajes, grupo)
+    if len(casas) < 2:
+        print("Aviso: falta alguna casa en %s" % a.root, file=sys.stderr)
     json.dump({"desde": a.desde, "hasta": a.hasta, "viajes": viajes}, open(a.salida, "w", encoding="utf-8"), ensure_ascii=False)
     pares = collections.Counter((t["mat"], t["dia"]) for t in viajes if t["mat"])
     if a.pares:

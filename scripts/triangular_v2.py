@@ -914,7 +914,9 @@ def main():
         fuente = (fuente_mat.get(m) or collections.Counter()).most_common(1)
         fuente = fuente[0][0] if fuente else None
         if m not in flujo:
-            motivo = "sin_matricula" if not m else ("pendiente_bajada" if m in plates else "sin_telemetria_o_pendiente_locatel")
+            # camion AJENO (vehicu.PROPIO=False: subcontratado, su coste va por IMPPRO) -> nunca tendra traza nuestra; rotularlo asi
+            ajeno = any(dem[i].get("propio") is False for i in idxs)
+            motivo = "sin_matricula" if not m else ("pendiente_bajada" if m in plates else ("camion_ajeno" if ajeno else "sin_telemetria_o_pendiente_locatel"))
             for i in idxs:
                 salida[i] = sin_dato("sin_traza", motivo)
             continue
