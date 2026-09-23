@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PRUEBA PILOTO: hormigon POR VIAJE desde la traza GPS (Roberto: «analiza la ultima semana de agosto, todo por GPS, 2026 y 2025»).
+r"""PRUEBA PILOTO: hormigon POR VIAJE desde la traza GPS (Roberto: «analiza la ultima semana de agosto, todo por GPS, 2026 y 2025»).
 Ciclo = planta -> obra -> planta. Planta = geocerca (coordenada conocida o aprendida); la obra NO suele tener coordenada en
 GesRuta: se localiza como la PARADA MAS LARGA fuera de la planta dentro del ciclo. Regla de Roberto: en hormigon nunca se
 carga hoy y se descarga manana (salvo nocturno cruzando la medianoche, que el corte por descanso ya respeta).
