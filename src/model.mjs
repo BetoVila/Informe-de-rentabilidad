@@ -445,6 +445,7 @@ export function createModel(data) {
       x.dias=x.dias.size;x.matriculas=x.mats.size;x.clientes=x.clis.size;delete x.mats;delete x.clis;
       x.tipo=[...x.tipos.entries()].sort((a,b)=>b[1]-a[1])[0]?.[0]||'';x.tipos=Object.fromEntries(x.tipos);
       x.ingTransporte=x.ingreso-x.material;x.propio=x.subViajes<x.viajes/2;
+      x.costeTransporte=R?x.coste-x.material:null;   // coste comparable al ingreso de transporte: fuera el material (compraventa)
       x.margen=R?x.ingreso-x.coste:null;x.margenPct=R&&x.ingreso?x.margen/x.ingreso:null;x.margenTransPct=R&&x.ingTransporte?x.margen/x.ingTransporte:null;
       x.fiable=x.ingreso?x.medido/x.ingreso:0;
       const ingKmBase=x.ingPropio-x.material;   // por km y por hora: solo viajes propios (los subcontratados no llevan km ni horas nuestros)

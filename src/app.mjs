@@ -328,13 +328,14 @@ function filterBarHtml(columns,rows){
   if(c.filter==='select'){const opts=[...freq.keys()].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));out.push(`<label class="fctl"><span>${esc(c.label)}</span><select data-tfilter="${esc(c.key)}"><option value="">Todos</option>${opts.map(o=>`<option value="${esc(o)}"${v===o?' selected':''}>${esc(o)}</option>`).join('')}</select></label>`);}
   else{const opts=[...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,300).map(e=>e[0]).sort((a,b)=>a.localeCompare(b,'es'));const lid='dl_'+String(c.key).replace(/\W/g,'_');out.push(`<label class="fctl"><span>${esc(c.label)}</span><input type="search" list="${lid}" data-tfilter="${esc(c.key)}" placeholder="escribe (varias palabras)…" autocomplete="off" value="${esc(v||'')}"><datalist id="${lid}">${opts.map(o=>`<option value="${esc(o)}">`).join('')}</datalist></label>`);}
  }
- const nums=columns.filter(c=>c.filter==='number');
- if(nums.length){const n=f.__num||{};out.push(`<div class="fctl fnum"><span>Cifra entre (elige la columna)</span><div class="fnumrow"><select data-tnum="key"><option value="">— columna —</option>${nums.map(c=>`<option value="${esc(c.key)}"${n.key===c.key?' selected':''}>${esc(c.label)}</option>`).join('')}</select><input type="number" step="any" data-tnum="min" placeholder="mín." aria-label="mínimo" value="${esc(n.min??'')}"><input type="number" step="any" data-tnum="max" placeholder="máx." aria-label="máximo" value="${esc(n.max??'')}"></div></div>`);}
+ const nums=columns.filter(c=>c.filter==='number'),N=f.__num||{};
+ if(nums.length){out.push(`<div class="fctl fnumhead"><span>Filtrar por cifra: mínimo y máximo de cada columna (se combinan)</span></div>`);
+  for(const c of nums){const r=N[c.key]||{};out.push(`<label class="fctl fnum"><span>${esc(c.label)}</span><span class="fnumrow"><input type="number" step="any" data-tnumk="${esc(c.key)}" data-part="min" placeholder="mín." aria-label="${esc(c.label)} mínimo" value="${esc(r.min??'')}"><input type="number" step="any" data-tnumk="${esc(c.key)}" data-part="max" placeholder="máx." aria-label="${esc(c.label)} máximo" value="${esc(r.max??'')}"></span></label>`);}}
  out.push(`<div class="fctl fact"><span>&nbsp;</span><button id="tableClearFilters" type="button">Quitar todos los filtros</button></div>`);
  return out.join('');
 }
 const numSet=v=>v!==''&&v!=null&&!Number.isNaN(Number(v));
-function activeFilterCount(){let k=0;for(const [key,v] of Object.entries(tableState.filters)){if(key==='__num'){if(v&&v.key&&(numSet(v.min)||numSet(v.max)))k++;}else if(v&&typeof v==='object'){if(v.from)k++;if(v.to)k++;}else if(v!=null&&v!=='')k++;}return k;}
+function activeFilterCount(){let k=0;for(const [key,v] of Object.entries(tableState.filters)){if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)))k++;}}else if(v&&typeof v==='object'){if(v.from)k++;if(v.to)k++;}else if(v!=null&&v!=='')k++;}return k;}
 function rowPasses(r,def){
  const f=tableState.filters;
  for(const c of def.columns){
@@ -344,8 +345,8 @@ function rowPasses(r,def){
   else if(c.filter==='date'){if(!v.from&&!v.to)continue;const s=String(raw??'').slice(0,c.dateLen);if(v.from&&s<v.from.slice(0,c.dateLen))return false;if(v.to&&s>v.to.slice(0,c.dateLen))return false;}
   else{const s=norm(raw);for(const t of norm(v).split(/\s+/))if(t&&!s.includes(t))return false;}
  }
- const n=f.__num;
- if(n&&n.key&&(numSet(n.min)||numSet(n.max))){const x=r[n.key];if(typeof x!=='number')return false;if(numSet(n.min)&&x<Number(n.min))return false;if(numSet(n.max)&&x>Number(n.max))return false;}
+ const N=f.__num;
+ if(N)for(const key in N){const n=N[key];if(!n||!(numSet(n.min)||numSet(n.max)))continue;const x=r[key];if(typeof x!=='number')return false;if(numSet(n.min)&&x<Number(n.min))return false;if(numSet(n.max)&&x>Number(n.max))return false;}
  return true;
 }
 // Texto de la fila para la búsqueda por palabras (se calcula una vez por fila y tabla)
@@ -353,7 +354,7 @@ const hayOf=(r,def)=>{if(r.__hayT!==def.title){r.__hay=def.columns.map(c=>c.html
 function chipsHtml(def){
  const f=tableState.filters,out=[],lab=k=>def.columns.find(c=>c.key===k)?.label||k;
  for(const [key,v] of Object.entries(f)){
-  if(key==='__num'){if(v&&v.key&&(numSet(v.min)||numSet(v.max)))out.push(`<button class="chip" data-tremove="__num" title="Quitar filtro">${esc(lab(v.key))}${numSet(v.min)?' ≥ '+esc(v.min):''}${numSet(v.max)?' ≤ '+esc(v.max):''} ×</button>`);}
+  if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)))out.push(`<button class="chip" data-tremove="__num" data-part="${esc(kk)}" title="Quitar filtro">${esc(lab(kk))}${numSet(r.min)?' ≥ '+esc(r.min):''}${numSet(r.max)?' ≤ '+esc(r.max):''} ×</button>`);}}
   else if(v&&typeof v==='object'){if(v.from)out.push(`<button class="chip" data-tremove="${esc(key)}" data-part="from" title="Quitar filtro">${esc(lab(key))} desde ${esc(v.from)} ×</button>`);if(v.to)out.push(`<button class="chip" data-tremove="${esc(key)}" data-part="to" title="Quitar filtro">${esc(lab(key))} hasta ${esc(v.to)} ×</button>`);}
   else if(v!=null&&v!=='')out.push(`<button class="chip" data-tremove="${esc(key)}" title="Quitar filtro">${esc(lab(key))}: ${esc(v)} ×</button>`);
  }
@@ -361,14 +362,14 @@ function chipsHtml(def){
 }
 function removeFilter(key,part){
  const f=tableState.filters,bar=$('tableFilterBar'),q=s=>bar?bar.querySelector(s):null;
- if(key==='__num'){delete f.__num;if(bar)bar.querySelectorAll('[data-tnum]').forEach(el=>{el.value='';});}
+ if(key==='__num'){if(part){if(f.__num)delete f.__num[part];if(bar)bar.querySelectorAll(`[data-tnumk="${CSS.escape(part)}"]`).forEach(el=>{el.value='';});if(f.__num&&!Object.keys(f.__num).length)delete f.__num;}else{delete f.__num;if(bar)bar.querySelectorAll('[data-tnumk]').forEach(el=>{el.value='';});}}
  else if(part){if(f[key]&&typeof f[key]==='object'){delete f[key][part];if(!f[key].from&&!f[key].to)delete f[key];}const el=q(`[data-tfilter="${CSS.escape(key)}"][data-part="${part}"]`);if(el)el.value='';}
  else{delete f[key];const el=q(`[data-tfilter="${CSS.escape(key)}"]`);if(el)el.value='';}
  tableState.page=0;drawTable();
 }
 function applyFilterControl(el){
  if(el.dataset.tfilter!==undefined){const k=el.dataset.tfilter,p=el.dataset.part;if(p){const cur=tableState.filters[k]&&typeof tableState.filters[k]==='object'?tableState.filters[k]:{};tableState.filters[k]={...cur,[p]:el.value};}else tableState.filters[k]=el.value;}
- else if(el.dataset.tnum!==undefined){const bar=$('tableFilterBar'),g=n=>bar?.querySelector(`[data-tnum="${n}"]`)?.value??'';tableState.filters.__num={key:g('key'),min:g('min'),max:g('max')};}
+ else if(el.dataset.tnumk!==undefined){const k=el.dataset.tnumk,bar=$('tableFilterBar'),g=p=>bar?.querySelector(`[data-tnumk="${CSS.escape(k)}"][data-part="${p}"]`)?.value??'';tableState.filters.__num={...(tableState.filters.__num||{}),[k]:{min:g('min'),max:g('max')}};}
  else return;
  tableState.page=0;drawTable();
 }
@@ -776,14 +777,16 @@ function regresion(pares){
 }
 function histSVG(D,ud,dec){
  if(!D||!D.hist||!D.hist.length)return '';
- const W=230,H=44,pad=2,n=D.hist.length,mx=Math.max(1,...D.hist.map(b=>b[2])),bw=(W-2*pad)/n,lo=D.hist[0][0],hi=D.hist[n-1][1],x=v=>pad+(W-2*pad)*(Math.min(hi,Math.max(lo,v))-lo)/((hi-lo)||1);
+ const W=190,H=40,pad=2,n=D.hist.length,mx=Math.max(1,...D.hist.map(b=>b[2])),bw=(W-2*pad)/n,lo=D.hist[0][0],hi=D.hist[n-1][1],x=v=>pad+(W-2*pad)*(Math.min(hi,Math.max(lo,v))-lo)/((hi-lo)||1);
  const bars=D.hist.map((b,i)=>{const h=(H-12)*b[2]/mx;return `<rect x="${(pad+i*bw+.5).toFixed(1)}" y="${(H-8-h).toFixed(1)}" width="${(bw-1).toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="#2C5FD6" opacity=".5"><title>${nf(b[0],dec)} – ${nf(b[1],dec)} ${esc(ud)}: ${nf(b[2])} viajes</title></rect>`;}).join('');
  const lin=(v,col,dash,t)=>`<line x1="${x(v).toFixed(1)}" x2="${x(v).toFixed(1)}" y1="2" y2="${H-8}" stroke="${col}" stroke-width="1.6"${dash?' stroke-dasharray="3 2"':''}><title>${t} ${nf(v,dec)} ${esc(ud)}</title></line>`;
  return `<svg class="hist" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="cuántos viajes hay en cada tramo">${bars}${lin(D.mediana,'#C1394B',false,'mediana')}${lin(D.media,'#0E9488',true,'media')}<text x="${pad}" y="${H-1}" font-size="7" fill="#8891a0">${nf(lo,dec)}</text><text x="${W-pad}" y="${H-1}" font-size="7" text-anchor="end" fill="#8891a0">${nf(hi,dec)}</text></svg>`;
 }
 function statsTabla(filas){
- const th=['Dato','n','Media','Mediana','Desv. típica','CV','p10','Q1 (25 %)','Q3 (75 %)','p90','Mín','Máx','IC 95 % de la media','Atípicos','Cuántos viajes en cada tramo'];
- const tr=filas.filter(f=>f[1]&&f[1].n).map(([l,S,ud,d])=>`<tr><td>${l} <small>(${esc(ud)})</small></td><td class="num">${nf(S.n)}</td><td class="num"><b>${nf(S.media,d)}</b></td><td class="num"><b>${nf(S.mediana,d)}</b></td><td class="num">${nf(S.sd,d)}</td><td class="num">${S.cv==null?'—':pct(S.cv)}</td><td class="num">${nf(S.p10,d)}</td><td class="num">${nf(S.q1,d)}</td><td class="num">${nf(S.q3,d)}</td><td class="num">${nf(S.p90,d)}</td><td class="num">${nf(S.min,d)}</td><td class="num">${nf(S.max,d)}</td><td class="num">${nf(S.ic[0],d)} – ${nf(S.ic[1],d)}</td><td class="num">${nf(S.atip)}${S.n?' ('+pct(S.atip/S.n)+')':''}</td><td>${histSVG(S,ud,d)}</td></tr>`).join('');
+ // Compacto: media con su ±desviación, mediana, y los abanicos como rangos. CV e intervalo de confianza van en la ayuda al pasar el ratón.
+ const th=['Dato','n','Media ±desv.','Mediana','Abanico p10–p90','50 % central Q1–Q3','Mín–Máx','Atíp.','Distribución'];
+ const rg=(a,b,d)=>`${nf(a,d)} <span class="rgd">–</span> ${nf(b,d)}`;
+ const tr=filas.filter(f=>f[1]&&f[1].n).map(([l,S,ud,d])=>`<tr><td>${l} <small>(${esc(ud)})</small></td><td class="num">${nf(S.n)}</td><td class="num" title="desviación típica ±${nf(S.sd,d)} · CV ${S.cv==null?'—':pct(S.cv)} · IC 95 % de la media ${nf(S.ic[0],d)} – ${nf(S.ic[1],d)}"><b>${nf(S.media,d)}</b> <small>±${nf(S.sd,d)}</small></td><td class="num"><b>${nf(S.mediana,d)}</b></td><td class="num">${rg(S.p10,S.p90,d)}</td><td class="num">${rg(S.q1,S.q3,d)}</td><td class="num">${rg(S.min,S.max,d)}</td><td class="num" title="fuera de 1,5 × el rango intercuartílico">${nf(S.atip)}${S.n?' <small>('+pct(S.atip/S.n)+')</small>':''}</td><td>${histSVG(S,ud,d)}</td></tr>`).join('');
  return tr?`<div class="tablewrap" style="max-height:none"><table class="stat"><thead><tr>${th.map((h,i)=>`<th class="plain${i===0||i===th.length-1?'':' num'}">${h}</th>`).join('')}</tr></thead><tbody>${tr}</tbody></table></div>`:'';
 }
 function relaciones(trips){
@@ -796,14 +799,18 @@ function estadViajes(trips,titulo){
  const own=trips.filter(t=>!t.sub);
  const F=[['Km por viaje (localizador)',statsDe(own.map(t=>t.km>0?t.km:null)),'km',0],['Horas de trabajo por viaje',statsDe(own.map(t=>t.horas)),'h',1],['Litros por viaje',statsDe(own.map(t=>t.lit)),'L',1],['Litros por 100 km',statsDe(own.map(t=>t.lit&&t.km?t.lit/t.km*100:null)),'L/100 km',1],['Km por hora de trabajo',statsDe(own.map(t=>t.horas&&t.km?t.km/t.horas:null)),'km/h',1],['Minutos parado o esperando',statsDe(own.map(t=>t.espera)),'min',0],['Minutos conduciendo',statsDe(own.map(t=>t.cond)),'min',0],['m³ por viaje',statsDe(trips.map(t=>t.m3>0?t.m3:null)),'m³',1],['Toneladas por viaje',statsDe(trips.map(t=>t.t>0?t.t:null)),'t',1],['Ingreso por viaje',statsDe(trips.map(t=>t.ingreso)),'€',0],['Coste real por viaje',statsDe(trips.map(t=>t.coste)),'€',0],['Margen por viaje',statsDe(trips.map(t=>t.margen)),'€',0],['Ingreso por km',statsDe(own.map(t=>t.km>0?t.ingreso/t.km:null)),'€/km',2],['Coste real por km',statsDe(own.map(t=>t.km>0?t.coste/t.km:null)),'€/km',2]];
  const tabla=statsTabla(F);if(!tabla)return '';
- return `${titulo?`<div class="grp">${titulo}</div>`:''}<div style="grid-column:1/-1"><p class="sub" style="margin:0 0 8px">Media y mediana con su dispersión: desviación típica, CV (desviación ÷ media), el 50 % central entre Q1 y Q3, el 80 % entre p10 y p90, valores atípicos (fuera de 1,5 veces el rango intercuartílico) e intervalo de confianza del 95 % de la media (con esos viajes, la media real está ahí con un 95 % de seguridad). Km, horas, litros y esperas solo de viajes propios con dato del localizador; los subcontratados no llevan km ni horas nuestros.</p>${tabla}${relaciones(trips)}</div>`;
+ return `${titulo?`<div class="grp">${titulo}</div>`:''}<div style="grid-column:1/-1"><p class="sub" style="margin:0 0 8px">Cada dato como abanico: media ±desviación, mediana, el 80 % de los viajes entre p10 y p90 y el 50 % central entre Q1 y Q3. CV, intervalo de confianza y atípicos, al pasar el ratón. Km, horas y litros solo de viajes propios con localizador.</p>${tabla}${relaciones(trips)}</div>`;
 }
 function realCols(dim,real){
  const cols=[dim==='plate'?{label:'Matrícula',key:'label'}:{label:'Cliente',key:'label'}];
  if(dim==='plate')cols.push({label:'Tipo',key:'tipoT',center:true},{label:'Propio / subcontratado',key:'propioT',center:true});
  else cols.push(numberCol('Vehículos','matriculas'));
- cols.push(numberCol('Viajes reales','viajes'),moneyCol('Ingreso facturado','ingreso'),moneyCol('Material (áridos)','material'),moneyCol('Ingreso transporte y servicios','ingTransporte'));
- if(real)cols.push(moneyCol('Coste real','coste'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% sobre facturado','margenPct'),percentCol('% sobre transporte','margenTransPct'));
+ // Primero la comparación COHERENTE (todo sin el material): ingreso de transporte vs coste de transporte → margen. Así el coste
+ // nunca sale mayor que el ingreso que tiene al lado. El material (compraventa) y el coste real con material van después, como contexto.
+ cols.push(numberCol('Viajes reales','viajes'),moneyCol('Ingreso transporte y servicios','ingTransporte'));
+ if(real)cols.push(moneyCol('Coste de transporte','costeTransporte'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% s/ transporte','margenTransPct'));
+ cols.push(moneyCol('Ingreso facturado','ingreso'),moneyCol('Material (áridos)','material'));
+ if(real)cols.push(moneyCol('Coste real (con material)','coste'),percentCol('% s/ facturado','margenPct'));
  cols.push({label:'Medido',key:'fiable',numeric:true,format:pct},numberCol('Km (localizador)','km'),numberCol('Horas','horas',1),numberCol('Litros','litros'),numberCol('l/100 km','l100',1),moneyCol('Ingreso por km','ingKm'));
  if(real)cols.push(moneyCol('Margen por km','margenKm'),moneyCol('Coste flota por km','costeKm'));
  cols.push(moneyCol('Ingreso por hora','ingHora'));
@@ -817,9 +824,9 @@ function realTab(dim){
  const rows=rv.groups.map(g=>({...g,label:isP?plateFmt(g.key):g.key,tipoT:tipoLabel(g.tipo),propioT:g.subViajes===0?'propio':g.subViajes===g.viajes?'subcontratado':(g.propio?'propio (algún viaje subcontratado)':'subcontratado (algún viaje propio)')}));
  const t=rv.tot;
  const cardsRows=[['Viajes reales',nf(t.viajes),nf(rows.length)+(isP?' matrículas':' clientes')+' · '+nf(t.dias)+' días con viaje'],
-  ['Ingreso facturado',eur(t.ingreso),'material (áridos comprados) '+eur(t.material)+' → transporte y servicios <b>'+eur(t.ingTransporte)+'</b>'],
-  rv.real?['Coste real repartido',eur(t.coste),'combustible '+eur(t.combustible)+' · personal '+eur(t.personal)+' · flota '+eur(t.flota)+' · indirectos '+eur(t.indirectos)+' · subcontrata '+eur(t.subcontrata)+' · material '+eur(t.material)]:['Coste real','—','sin contabilidad cerrada en el periodo'],
-  rv.real?['Margen neto',eur(t.margen),pct(t.margenPct)+' sobre facturado · '+pct(t.margenTransPct)+' sobre transporte · el conjunto cuadra con el libro de los meses cerrados, antes de impuestos ('+pct(rv.margenLibroPct)+')']:['Medido',pct(t.fiable),'ingreso con km y horas del localizador']];
+  ['Ingreso de transporte y servicios',eur(t.ingTransporte),'facturado '+eur(t.ingreso)+' − material (áridos, compraventa) '+eur(t.material)],
+  rv.real?['Coste de transporte',eur(t.costeTransporte),'combustible '+eur(t.combustible)+' · personal '+eur(t.personal)+' · flota '+eur(t.flota)+' · indirectos '+eur(t.indirectos)+' · subcontrata '+eur(t.subcontrata)+' <small>(sin el material)</small>']:['Coste','—','sin contabilidad cerrada en el periodo'],
+  rv.real?['Margen neto',eur(t.margen),'<b>'+pct(t.margenTransPct)+'</b> sobre transporte · '+pct(t.margenPct)+' sobre lo facturado · el conjunto cuadra con el libro de los meses cerrados, antes de impuestos ('+pct(rv.margenLibroPct)+')']:['Medido',pct(t.fiable),'ingreso con km y horas del localizador']];
  const cards=`<section class="cards" style="margin-bottom:16px">${cardsRows.map(([l,x,h])=>`<article class="card"><span class="label">${l}</span><div class="value">${x}</div><div class="hint">${h}</div></article>`).join('')}</section>`;
  const intra=isP?'':' <b>Razo o Agetrans como cliente</b> = facturación entre las dos empresas: su margen mide el precio al que una le cobra a la otra (en el grupo se compensa con el viaje de la otra casa), no un cliente real.';
  const info=`<div class="info"><b>${isP?'Cada vehículo':'Cada cliente'} con sus viajes reales</b> (albaranes de GesRuta) y el <b>coste REAL de la contabilidad</b> repartido a cada viaje por lo que midió el localizador: combustible por litros, personal por horas, flota (reparaciones, seguros, amortización…) por km, gastos generales por ingreso; los viajes subcontratados llevan la factura real del subcontratista. <b>Material</b> = compra de áridos que va dentro del precio (compraventa), atribuida por cliente: se descuenta para dar el <b>ingreso de transporte y servicios</b>. <b>Pincha en una fila</b> para desplegar el detalle (por mes, ${isP?'cliente':'matrícula'}, ruta, lugares de carga y descarga${isP?', localizador, Solred y partes':''}). Busca por palabras o abre «Filtros».${intra}${rv.real?' El gasto de cada mes va a los viajes de ese mes; los viajes sin traza reciben su parte por su ingreso, no cargan a los medidos. Coeficientes medios del periodo: '+eur(rv.coef.lit)+'/litro · '+eur(rv.coef.dur*60)+'/hora · '+eur(rv.coef.km)+'/km.'+(rv.mesesEstimados.length?' <b>Meses sin contabilidad cerrada ('+rv.mesesEstimados.map(monthName).join(', ')+')</b>: coste estimado con los coeficientes del último mes cerrado.':''):' <b>Sin contabilidad cerrada en el periodo</b>: se ven viajes, ingresos y medidas, pero no el coste real.'}</div>`;
@@ -831,7 +838,7 @@ function realDetail(r,dim){
  const rv=_rvCur;if(!rv)return '';
  const d=rv.detail(r.key),isP=dim==='plate',real=rv.real,k=pkey(r.key);
  const grp=s=>`<div class="grp">${s}</div>`;
- const mini=(title,rows,first,fmt,max=12)=>{if(!rows.length)return '';const cols=[{label:first,key:'label'},numberCol('Viajes','viajes'),moneyCol('Ingreso','ingreso'),moneyCol('Ing. transporte','ingTransporte')].concat(real?[moneyCol('Coste real','coste'),{...moneyCol('Margen','margen'),signed:true},percentCol('%','margenPct')]:[]).concat([numberCol('Km','km'),numberCol('Horas','horas',1),numberCol('Litros','litros'),{label:'Medido',key:'fiable',numeric:true,format:pct}]);
+ const mini=(title,rows,first,fmt,max=12)=>{if(!rows.length)return '';const cols=[{label:first,key:'label'},numberCol('Viajes','viajes'),moneyCol('Ing. transporte','ingTransporte')].concat(real?[moneyCol('Coste transporte','costeTransporte'),{...moneyCol('Margen','margen'),signed:true},percentCol('%','margenTransPct')]:[]).concat([numberCol('Km','km'),numberCol('Horas','horas',1),numberCol('Litros','litros'),{label:'Medido',key:'fiable',numeric:true,format:pct}]);
   return `<div class="dtab"><h4>${title}${rows.length>max?' <small>(primeros '+max+' de '+nf(rows.length)+')</small>':''}</h4>${simpleTable(cols,rows.slice(0,max).map(x=>({...x,label:fmt?fmt(x.key):x.key})))}</div>`;};
  const soc=isP?M.plateSociety.get(k):null,tel=isP?M.telemetryByPlate(state).get(k):null,sol=isP?M.solredByPlate(state).get(k):null,par=isP?M.partsByPlate(state).get(k):null;
  const trips=M.netaTrips(state).filter(isP?(t=>pkey(t.mat)===k):(t=>t.cliente===r.key));
@@ -841,13 +848,13 @@ function realDetail(r,dim){
  const tipos=Object.entries(r.tipos||{}).filter(([t])=>t).map(([t,n])=>tipoLabel(t)+' '+nf(n)).join(' · ');
  return `<div class="tripdetail">
   ${grp(cabecera)}
-  ${detRow('Ingreso facturado',eur(r.ingreso)+(r.subIng?' <small>(subcontratado '+eur(r.subIng)+')</small>':''))}
-  ${detRow('Material (compra de áridos atribuida)',eur(r.material))}
-  ${detRow('Ingreso de transporte y servicios','<b>'+eur(r.ingTransporte)+'</b>')}
-  ${real?detRow('Coste real',eur(r.coste)):detRow('Coste real','sin contabilidad cerrada en el periodo')}
-  ${costes}
-  ${real?detRow('Margen neto','<b class="'+(r.margen>=0?'pos':'neg')+'">'+eur(r.margen)+'</b> · '+pcm(r.margenPct)+' sobre facturado · '+pcm(r.margenTransPct)+' sobre transporte'+(r.costeEstimado?' <small>('+nf(r.costeEstimado)+' viajes de meses sin cerrar, coste estimado)</small>':'')):''}
+  ${detRow('Ingreso de transporte y servicios','<b>'+eur(r.ingTransporte)+'</b> <small>(facturado '+eur(r.ingreso)+(r.subIng?', subcontratado '+eur(r.subIng):'')+' − material '+eur(r.material)+')</small>')}
+  ${real?detRow('Coste de transporte','<b>'+eur(r.costeTransporte)+'</b> <small>(el coste real sin el material que se revende)</small>'):detRow('Coste de transporte','sin contabilidad cerrada en el periodo')}
+  ${real?detRow('Margen neto','<b class="'+(r.margen>=0?'pos':'neg')+'">'+eur(r.margen)+'</b> · <b>'+pcm(r.margenTransPct)+'</b> sobre transporte · '+pcm(r.margenPct)+' sobre lo facturado'+(r.costeEstimado?' <small>('+nf(r.costeEstimado)+' viajes de meses sin cerrar, coste estimado)</small>':'')):''}
   ${detRow('Medido',pct(r.fiable)+' del ingreso con km y horas reales del localizador'+(r.viajesMed?' · '+nf(r.viajesMed)+' viajes medidos':''))}
+  ${real?grp('Desglose del coste real (contabilidad repartida)'):''}
+  ${costes}
+  ${real?detRow('= Coste real (material incluido)','<b>'+eur(r.coste)+'</b> <small>= coste de transporte '+eur(r.costeTransporte)+' + material '+eur(r.material)+' (el material es compraventa: también está en el ingreso)</small>'):''}
   ${grp('Medidas de los viajes (localizador)')}
   ${detRow('Km en viajes',r.km?nf(r.km)+' km'+((r.kmCarg||r.kmVac)?' · cargado '+nf(r.kmCarg)+' · en vacío '+nf(r.kmVac):''):null)}
   ${detRow('Horas de trabajo',r.horas?nf(r.horas,1)+' h'+(r.cond?' · conduciendo '+nf(r.cond/60,1)+' h · parado o esperando '+nf(r.espera/60,1)+' h':''):null)}

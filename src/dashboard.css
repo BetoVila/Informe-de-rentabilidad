@@ -234,10 +234,10 @@ span.ztog{cursor:default}
 .fctl{display:grid;gap:4px;font-size:12px;color:var(--muted);flex:1 1 160px;max-width:260px;min-width:0}
 .fctl>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fctl input,.fctl select{border:1px solid #cbd6e4;border-radius:7px;padding:7px 9px;font-size:13px;background:#fff;color:var(--ink);width:100%;min-width:0}
-.fctl.fnum{flex-basis:340px;max-width:460px}
+.fctl.fnum{flex-basis:150px;max-width:210px}
+.fctl.fnumhead{flex-basis:100%;max-width:none;font-weight:600;color:var(--ink);margin-top:2px}
 .fnumrow{display:flex;gap:6px}
-.fnumrow select{flex:1}
-.fnumrow input{width:92px;flex:none}
+.fnumrow input{flex:1 1 0;min-width:0;width:auto}
 .fctl.fact{flex:0 0 auto;max-width:none}
 .tchips:empty{display:none}
 td.ctr,th.ctr{text-align:center}
@@ -270,6 +270,7 @@ tr.detailrow>td:first-child{position:static;box-shadow:none}
 table.stat td,table.stat th{font-size:12px;padding:6px 8px}
 table.stat td:first-child{white-space:normal;min-width:190px}
 table.stat svg.hist{display:block}
+table.stat .rgd{color:var(--muted)}
 .rel{margin:10px 0 0 18px;padding:0;font-size:13px;line-height:1.6}
 .rel li{margin-bottom:4px}
 /* «Estadística de lo que ves» y reparto del localizador: desplegables */
