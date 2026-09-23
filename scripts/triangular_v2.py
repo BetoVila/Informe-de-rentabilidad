@@ -1630,6 +1630,8 @@ def main():
         return mejor[1] if mejor else None
 
     flujo, acts, drvs = coser(trazas)
+    # unidades que solo conoce LOCATEL (tienen alguna traza suya y ninguna de Wialon): lo que les falta es bajar su historico
+    plates_locatel = {mat for (mat, dia), v in trazas.items() if v["fuente"] == "locatel"} - {mat for (mat, dia), v in trazas.items() if v["fuente"] == "wialon"}
     fuente_mat = {}
     for (mat, dia), v in trazas.items():
         fuente_mat.setdefault(mat, collections.Counter())[v["fuente"]] += 1
@@ -1735,7 +1737,7 @@ def main():
             d_ = dt.date.fromisoformat(d)
             if not any((m, (d_ + dt.timedelta(days=k)).isoformat()) in trazas for k in range(-VENTANA_DIAS, VENTANA_DIAS + 1)):
                 for i in idxs:
-                    salida[i] = sin_dato("sin_traza", "sin_traza_en_esas_fechas")
+                    salida[i] = sin_dato("sin_traza", "sin_traza_en_esas_fechas_locatel" if m in plates_locatel else "sin_traza_en_esas_fechas")
                 continue
         dprev = (dt.date.fromisoformat(d) - dt.timedelta(days=1)).isoformat()
         # el ciclo pertenece al dia de su CARGA (el albaran se hace al cargar), no al de su inicio (que puede ser la vuelta de ayer)
@@ -1788,7 +1790,7 @@ def main():
         jor = por_fecha.get((m, d), [])
         if not jor:
             d_ = dt.date.fromisoformat(d)
-            motivo = "sin_jornada_ese_dia" if any((m, (d_ + dt.timedelta(days=k)).isoformat()) in trazas for k in range(-VENTANA_DIAS, VENTANA_DIAS + 1)) else "sin_traza_en_esas_fechas"
+            motivo = "sin_jornada_ese_dia" if any((m, (d_ + dt.timedelta(days=k)).isoformat()) in trazas for k in range(-VENTANA_DIAS, VENTANA_DIAS + 1)) else ("sin_traza_en_esas_fechas_locatel" if m in plates_locatel else "sin_traza_en_esas_fechas")
             for i in idxs:
                 salida[i] = sin_dato("sin_traza", motivo)
             continue
@@ -2167,7 +2169,7 @@ def main():
                                   for c_, e in sorted(esp_c.items(), key=lambda kv: -kv[1]["esp"]) if e["n"] >= 10]
     st = collections.defaultdict(lambda: {"n": 0, "casas": set(), "motivo": None, "desde": None, "hasta": None})
     for x in viajes_out:
-        if x["metodo"] == "sin_traza" and x["motivo"] in ("camion_ajeno", "sin_telemetria_o_pendiente_locatel", "pendiente_bajada", "sin_matricula"):
+        if x["metodo"] == "sin_traza" and x["motivo"] in ("camion_ajeno", "sin_telemetria_o_pendiente_locatel", "pendiente_bajada", "sin_matricula", "sin_traza_en_esas_fechas_locatel"):
             e = st[x["matricula"] or "(sin matricula)"]; e["n"] += 1; e["casas"].add(x["empresa"]); e["motivo"] = x["motivo"]
             e["desde"] = min(e["desde"] or x["fecha_gesruta"], x["fecha_gesruta"]); e["hasta"] = max(e["hasta"] or x["fecha_gesruta"], x["fecha_gesruta"])
     hall["sin_localizador"] = [{"matricula": m, "viajes": e["n"], "motivo": e["motivo"], "empresas": sorted(e["casas"]), "desde": e["desde"], "hasta": e["hasta"]}
