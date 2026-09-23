@@ -41,6 +41,29 @@ if(dataPath){
   near(razo.expenses+age.expenses,lv.expenses,'gastos por sociedad');
   // un mes sin cerrar nunca entra
   if(lv.lastClosed)assert.ok(lv.months.every(x=>x<=lv.lastClosed));
+  // el detalle por cuenta suma exactamente cada naturaleza (sin consolidar)
+  for(const c of lv.expenseCategories)near(lv.accounts.filter(a=>a.kind==='g'&&a.cat===c.id).reduce((s,a)=>s+a.amount,0),c.amount,'cuentas de '+c.id);
+  for(const c of lv.incomeCategories)near(lv.accounts.filter(a=>a.kind==='i'&&a.cat===c.id).reduce((s,a)=>s+a.amount,0),c.amount,'cuentas de '+c.id);
+ }
+ // Vista real por vehículo / cliente / mes: cada dimensión suma lo mismo, el coste es la suma de sus partes y cuadra con «Margen por viaje».
+ if(data.actividad&&data.ledger){
+  const g={from:f.from,to:f.to,companies:[]},nv=m.netaView(g);
+  const tol=(a,b,label)=>assert.ok(Math.abs(a-b)<1,label+' '+a+' / '+b);
+  for(const dim of ['plate','client','month','tipo','ruta']){
+   const rv=m.realView(g,dim);assert.ok(rv&&rv.groups.length,'realView '+dim);
+   for(const k of ['viajes','ingreso','material','coste','km','horas','litros'])tol(sum(rv.groups,k),rv.tot[k],dim+' '+k);
+   for(const x of rv.groups.concat([rv.tot]))tol(x.combustible+x.personal+x.flota+x.indirectos+x.subcontrata+x.material,x.coste,dim+' desglose '+x.key);
+   if(nv){tol(rv.tot.ingreso,nv.tot.ingreso,dim+' ingreso = margen por viaje');assert.ok(Math.abs(rv.tot.coste-nv.tot.coste)<rv.groups.length+2,dim+' coste = margen por viaje');}
+   const d=rv.detail(rv.groups[0].key);tol(sum(d.byMonth,'ingreso'),rv.groups[0].ingreso,dim+' detalle por mes');tol(sum(d.byRuta,'coste'),rv.groups[0].coste,dim+' detalle por ruta');
+  }
+  // el segmentador de vehículo deja solo esa matrícula, con los mismos coeficientes
+  const pv=m.realView(g,'plate'),first=pv.groups.find(x=>x.key&&!/^\(/.test(x.key));
+  if(first){const one=m.realView({...g,plates:[first.key]},'plate');assert.equal(one.groups.length,1);tol(one.tot.coste,first.coste,'filtro de matrícula');}
+ }
+ if(data.telemetry){
+  const v=m.telemetryView({from:f.from,to:f.to,companies:[]});assert.ok(v&&v.activeDays>0,'telemetría');
+  assert.ok(data.telemetry.rows.every(r=>r.km>=0&&r.km<=1500),'telemetría: km imposibles');
+  const keys=new Set(data.telemetry.rows.map(r=>r.plate+'|'+r.date));assert.equal(keys.size,data.telemetry.rows.length,'telemetría: día-camión repetido');
  }
 }
 if(htmlPath){

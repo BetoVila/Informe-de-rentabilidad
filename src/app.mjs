@@ -16,7 +16,7 @@ const norm=s=>String(s??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLocaleLowe
 // Estado de la tabla activa: búsqueda por palabras, filtros por columna, orden, página y filas desplegadas
 const freshTable=()=>({page:0,query:'',sort:'',asc:false,filters:{},showFilters:false,open:new Set(),forTitle:''});
 let D,M,state,selection,current,baseline=null,tableState=freshTable(),tableDefinition;
-const slicerDefs=[['plates','Vehículo','plate','plateLabel'],['clients','Cliente','clientId','client'],['categories','Tipo de vehículo','category','category'],['loads','Carga','load','load'],['concepts','Concepto de facturación','concept','concept']];
+const slicerDefs=[['plates','Vehículo','plate','plateLabel'],['clients','Cliente','clientId','client'],['categories','Tipo de vehículo','category','category'],['loads','Carga','load','load'],['concepts','Tipo de servicio (cuenta)','concept','concept']];
 let slicerOptions={},ledgerCtx={},zoneMode='salida',zonasAbiertas=new Set(),zonasVista={zonas:[],total:0};
 const hasFilters=()=>Boolean(state.plates.length||state.clients.length||state.categories.length||state.loads.length||state.concepts.length);
 const monthName=m=>new Intl.DateTimeFormat('es',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(m+'-01T12:00:00Z'));
@@ -118,11 +118,17 @@ function ratiosPanel(){
   ['Ingresos por km medido','pendiente','Necesita los km medidos de toda la flota y de todo el periodo'],['Beneficio por hora trabajada','pendiente','Necesita las horas medidas (Movertis y Locatel); hoy solo hay desde el 20/08']];
  return panel('Ratios de rentabilidad','Ingresos y beneficio por € gastado, por km y por hora, y por persona (pestaña Personal). Por cliente y por vehículo están en sus pestañas.',`<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">${kpi.map(([l,x,h])=>`<div class="smallkpi ${x==='pendiente'?'soft':''}"><span class="label">${l}</span><span class="value">${x}</span><small>${h}</small></div>`).join('')}</div>`);
 }
+// Cobertura del localizador: qué días hay y de qué fuente (ERP-Movertis, histórico bajado de Wialon, Locatel).
+function telemetriaCobertura(){
+ const m=D.telemetry.meta,fu=m.fuentes||{};
+ return `Datos del localizador disponibles del <b>${date(m.desde)}</b> al <b>${date(m.hasta)}</b>: ${fu.erp?'ERP (Movertis) del '+date(fu.erp.desde)+' al '+date(fu.erp.hasta):''}${fu.historico?'; histórico bajado de Wialon del '+date(fu.historico.desde)+' al '+date(fu.historico.hasta)+' ('+nf(fu.historico.unidades)+' camiones, '+nf(fu.historico.dias)+' días-camión)':'; sin histórico anterior al ERP'}${fu.locatel?'; Locatel (solo km) del '+date(fu.locatel.desde)+' al '+date(fu.locatel.hasta):''}. ${nf(m.diasDescartados)} días-camión sin lectura fiable no se cuentan.`;
+}
 function telemetryPanel(){
  if(!D.telemetry)return '';
- const v=M.telemetryView(state),m=D.telemetry.meta;
- if(!v)return `<section class="panel"><h2>Medido por el camión (Movertis)</h2><p class="sub">Km y litros medidos por el propio camión.</p><div class="info">No hay días de Movertis en el periodo elegido: el ERP empezó a bajarlos el ${date(m.desde)} y llegan hasta el ${date(m.hasta)}. El histórico anterior aún no está cargado.</div></section>`;
- return `<section class="panel"><h2>Medido por el camión (Movertis)</h2><p class="sub">Km y litros medidos por el propio camión, del ${date(v.from)} al ${date(v.to)}. Solo días con lectura fiable: un día sin lectura no cuenta como cero. El ERP empezó a bajarlos el ${date(m.desde)}; el histórico anterior aún no está cargado.</p><div class="kpi-grid">${[
+ const v=M.telemetryView(state);
+ if(!v)return `<section class="panel"><h2>Medido por el camión (localizador)</h2><p class="sub">Km y litros medidos por el propio camión en el periodo elegido (${date(state.from)} – ${date(state.to)}).</p><div class="info">No hay días del localizador en el periodo elegido. ${telemetriaCobertura()}</div></section>`;
+ const fuenteTxt=Object.entries(v.porFuente||{}).map(([k,n])=>({erp:'ERP (Movertis)',historico:'histórico Wialon',locatel:'Locatel'}[k]||k)+' '+nf(n)).join(' · ');
+ return `<section class="panel"><h2>Medido por el camión (localizador)</h2><p class="sub">Km y litros medidos por el propio camión <b>del ${date(v.from)} al ${date(v.to)}</b>${v.recortado?' (el periodo elegido, '+date(state.from)+' – '+date(state.to)+', se recorta a los días con lectura)':' (el periodo elegido arriba)'}. Solo días con lectura fiable: un día sin lectura no cuenta como cero. Días-camión de este periodo por fuente: ${fuenteTxt}. ${telemetriaCobertura()}</p><div class="kpi-grid">${[
   ['Km medidos',nf(v.km),nf(v.plates)+' camiones activos'],['Camiones con sensor de consumo',nf(v.sensorInv.conSensor)+' de '+nf(v.sensorInv.motor)+' con motor',v.sensorInv.sinSensor?('sin sensor: '+v.sensorInv.sinSensorPlates.join(', ')+(v.sensorInv.remolques?'. '+nf(v.sensorInv.remolques)+' remolques no cuentan':'')):(v.sensorInv.remolques?nf(v.sensorInv.remolques)+' remolques no gastan gasoil':'todos lo llevan')],['Litros medidos',nf(v.litres),'Solo los '+nf(v.sensorInv.conSensor)+' camiones con sensor'],['Consumo medido',nf(v.consumption,1)+' l/100 km','Solo camiones con sensor; el resto no mide litros'],['Días-camión activos',nf(v.activeDays),'Circula 30 km o más ese día'],['Días activos sin parte',nf(v.daysWithoutPart)+' ('+pct(v.pctWithoutPart)+')','El camión circuló y no hay parte de Access'],['Km del parte / km medidos',nf(v.ratio,2),'En los días con parte (1 = coinciden)']
  ].map(([l,x,h])=>`<div class="smallkpi"><span class="label">${l}</span><span class="value">${x}</span><small>${h}</small></div>`).join('')}</div></section>`;
 }
@@ -130,7 +136,7 @@ function telemetryAuditPanel(){
  if(!D.telemetry)return '';
  const v=M.telemetryView(state);if(!v)return '';
  const rows=v.plateRows.slice(0,15).map(r=>({label:r.label,activeDays:r.activeDays,daysWithoutPart:r.daysWithoutPart,pct:r.pctWithoutPart,km:r.km,kmWithoutPart:r.kmWithoutPart,consumption:r.consumption}));
- return panel('Localizador frente a partes de Access',`Movertis, del ${date(v.from)} al ${date(v.to)}.`,`<div class="warn"><strong>En el ${pct(v.pctWithoutPart)} de los días en que un camión circuló no hay parte de Access</strong> (${nf(v.daysWithoutPart)} de ${nf(v.activeDays)} días-camión, ${nf(v.kmWithoutPart)} km). Cuando el parte existe, su kilometraje coincide con el medido (cociente ${nf(v.ratio,2)}). Por eso el coste de los partes queda corto y por eso el consumo declarado no sirve.</div>`+simpleTable([{label:'Matrícula',key:'label'},{label:'Días activos',key:'activeDays',numeric:true,format:v=>nf(v)},{label:'Sin parte',key:'daysWithoutPart',numeric:true,format:v=>nf(v)},{label:'% sin parte',key:'pct',numeric:true,format:dash(pct)},{label:'Km medidos',key:'km',numeric:true,format:v=>nf(v)},{label:'Km sin parte',key:'kmWithoutPart',numeric:true,format:v=>nf(v)},{label:'Consumo medido (l/100 km)',key:'consumption',numeric:true,format:dash(v=>nf(v,1))}],rows)+`<p class="sub" style="margin-top:12px">Primeros 15 camiones por kilómetros sin parte. Consumo medido: solo camiones con sensor de combustible y lectura fiable.</p>`);
+ return panel('Localizador frente a partes de Access',`Localizador (ERP-Movertis, histórico Wialon y Locatel), del ${date(v.from)} al ${date(v.to)}.`,`<div class="warn"><strong>En el ${pct(v.pctWithoutPart)} de los días en que un camión circuló no hay parte de Access</strong> (${nf(v.daysWithoutPart)} de ${nf(v.activeDays)} días-camión, ${nf(v.kmWithoutPart)} km). Cuando el parte existe, su kilometraje coincide con el medido (cociente ${nf(v.ratio,2)}). Por eso el coste de los partes queda corto y por eso el consumo declarado no sirve.</div>`+simpleTable([{label:'Matrícula',key:'label'},{label:'Días activos',key:'activeDays',numeric:true,format:v=>nf(v)},{label:'Sin parte',key:'daysWithoutPart',numeric:true,format:v=>nf(v)},{label:'% sin parte',key:'pct',numeric:true,format:dash(pct)},{label:'Km medidos',key:'km',numeric:true,format:v=>nf(v)},{label:'Km sin parte',key:'kmWithoutPart',numeric:true,format:v=>nf(v)},{label:'Consumo medido (l/100 km)',key:'consumption',numeric:true,format:dash(v=>nf(v,1))}],rows)+`<p class="sub" style="margin-top:12px">Primeros 15 camiones por kilómetros sin parte. Consumo medido: solo camiones con sensor de combustible y lectura fiable.</p>`);
 }
 function sensorDetailPanel(){
  if(!D.telemetry)return '';
@@ -460,8 +466,8 @@ function activityTab(){
  const netoCols=[{label:'Cliente',key:'key'},numberCol('Viajes','viajes'),moneyCol('Ingreso','ingreso'),moneyCol('Coste real','coste'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% neto','margenPct'),pctPlain('Medido','fiable')];
  const zonaCols=[{label:'Zona (salida)',key:'key'},numberCol('Viajes','viajes'),moneyCol('Ingreso','ingreso'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% neto','margenPct'),pctPlain('Medido','fiable')];
  const netoDim=nv?panel('Margen NETO por cliente y por zona',
-   'El coste REAL de la contabilidad repartido a cada viaje por su base —combustible por litros, personal por horas, flota fija por km, directos e indirectos por ingreso— y escalado al ingreso capturado en los viajes, de modo que el conjunto cuadra con el margen contable ('+pct(nv.margenLibroPct)+'). Verde gana, rojo pierde. «Medido» = qué parte del ingreso lleva km y horas REALES del localizador; el resto es estimado (sobre todo hormigón).',
-   '<div class="info">Coeficientes del reparto: <b>'+eur(nv.coef.lit)+' / litro</b> · <b>'+eur(nv.coef.dur*60)+' / hora</b> · <b>'+eur(nv.coef.km)+' / km</b>. Los directos (áridos y subcontratación) van por CLIENTE según su P&L de inggas; el resto por base del viaje. Es una atribución con método, no una factura por cliente.</div>'
+   'El coste REAL de la contabilidad de cada mes repartido a los viajes de ese mes por su base —combustible por litros, personal por horas, flota por km, indirectos por ingreso— y escalado al ingreso capturado en los viajes, de modo que el conjunto cuadra con el margen contable de los meses cerrados, antes del impuesto de sociedades ('+pct(nv.margenLibroPct)+'). Verde gana, rojo pierde. «Medido» = qué parte del ingreso lleva km y horas REALES del localizador; los viajes sin traza reciben su parte del gasto por su ingreso (no cargan a los medidos).'+(nv.mesesEstimados&&nv.mesesEstimados.length?' Meses sin contabilidad cerrada ('+nv.mesesEstimados.map(monthName).join(', ')+'): coste ESTIMADO con los coeficientes del último mes cerrado.':''),
+   '<div class="info">Coeficientes medios del periodo (viajes medidos): <b>'+eur(nv.coef.lit)+' / litro</b> · <b>'+eur(nv.coef.dur*60)+' / hora</b> · <b>'+eur(nv.coef.km)+' / km</b>. Los directos (áridos y subcontratación) van por CLIENTE según su P&L de inggas; el resto por base del viaje, mes a mes. Es una atribución con método, no una factura por cliente.</div>'
    +'<h3>Por cliente</h3>'+simpleTable(netoCols,[...nv.byClient,{...nv.tot,key:'TOTAL',total:true}])
    +'<h3>Por zona (provincia de salida)</h3>'+simpleTable(zonaCols,nv.byZona.slice(0,15))):'';
  return `<div class="info">Viaje real = cada entrega con <b>albarán de cantera</b>. Producción (viajes, m³/t, km) de las líneas de albarán. <b>Margen operativo</b> del P&L por viaje de GesRuta (inggas): ingreso − material − subcontratación − circulación, <b>antes</b> del coste real de flota. Debajo, el <b>resultado real</b> de la contabilidad tras diésel, personal e indirectos.</div>`+cards+arbol+neto+netoDim+trend+mensual+zonas+rutas+veh+cli;
@@ -548,7 +554,7 @@ function tripDetail(t){
   ${row('Resultado','ingreso '+eur(t.ingreso)+' − coste real '+eur(t.coste)+' = <b class="'+(t.margen>=0?'pos':'neg')+'">'+eur(t.margen)+'</b> ('+pcm(t.margenPct)+')')}
   ${costes}
   ${grp('Fiabilidad de la medida')}
-  ${row('Medida',esc(t.fiab)+(t.metodo?' · método '+esc(t.metodo)+(t.conf?' · confianza '+esc(t.conf):''):'')+(t.motivo?' · '+esc(t.motivo):''))}
+  ${row('Medida',esc(t.fiab)+(t.metodo?' · método '+esc(t.metodo)+(t.conf?' · confianza '+esc(t.conf):''):'')+(t.motivo?' · '+esc(t.motivo):'')+(t.costeEstimado?' · <small>coste estimado: el mes aún no está cerrado en contabilidad (coeficientes del último mes cerrado)</small>':''))}
   ${t.paradas&&t.paradas.length?`<div class="grp">Paradas y esperas del viaje (≥ 5 min): ${t.paradas.map(p=>`<span class="stop ${esc(p.rol)}">${esc(p.t)} · ${nf(p.min)} min · ${esc(p.lugar||'lugar no conocido')} <small>${({carga:'cargando',descarga:'descargando',espera:'espera',fuera:'fuera de viaje'})[p.rol]||''}</small></span>`).join('')}</div>`:''}
   ${t.mapaKey?`<div><span class="k">Mapa del día</span><a class="v noprint" href="dias/${encodeURIComponent(t.mapaKey)}.html${t.orden?'#v='+t.orden:''}" target="_blank" rel="noopener">ver la traza, las paradas y las esperas ↗</a></div>`:''}
  </div>`;
@@ -650,21 +656,138 @@ function clienteDetWire(){
 // Misma contabilidad y categorías que el resto del informe (config\cuentas-contables.json); el reparto conductor/estructura
 // del personal sale de la nómina por secciones (oficina y taller = estructura).
 const ESTR_FLOTA=['amortizacion','reparaciones','seguros','repuestos','alquileres','peajes','neumaticos'],ESTR_COMPRAS=['aridos','subcontratacion'];
-function estructuraPanel(){
- const lv=ledgerCtx.lv;if(!lv||!lv.expenses)return '';
+// Las partes del gasto (combustible, personal conductores / estructura, vehículos, compras, estructura general) de una
+// lectura de contabilidad. Sirve para el panel del periodo y para el detalle de cada mes.
+function estructuraPartes(lv,f){
  const amt=id=>lv.expenseCategories.filter(c=>c.id===id).reduce((s,c)=>s+c.amount,0);
  const tot=lv.expenses,comb=amt('combustible'),pers=amt('personal')+amt('dietas'),flota=ESTR_FLOTA.reduce((s,id)=>s+amt(id),0),compras=ESTR_COMPRAS.reduce((s,id)=>s+amt(id),0);
  const known=new Set(['combustible','personal','dietas','impuesto_sociedades',...ESTR_FLOTA,...ESTR_COMPRAS]),isoc=amt('impuesto_sociedades');
  const gen=lv.expenseCategories.filter(c=>!known.has(c.id)).reduce((s,c)=>s+c.amount,0);
- const pt=M.personnelByTramo?M.personnelByTramo(state):null,fe=pt&&pt.total?pt.structureCost/pt.total:null;
+ const pt=M.personnelByTramo?M.personnelByTramo(f):null,fe=pt&&pt.total?pt.structureCost/pt.total:null;
  const persEst=fe!=null?pers*fe:0,persCond=pers-persEst;
  const partes=[['Combustible',comb,'#d97706'],[fe!=null?'Personal: conductores':'Personal',persCond,'#2563eb']]
   .concat(fe!=null?[['Personal de estructura (oficina, taller)',persEst,'#7c3aed']]:[])
   .concat([['Vehículos: amortización, reparaciones, repuestos y neumáticos, seguros, peajes, renting',flota,'#0e9488'],['Compras: áridos y subcontratación',compras,'#64748b'],['Estructura general: otros servicios, tributos, financieros, otras compras, suministros, extraordinarios',gen,'#c1394b']]).concat(isoc?[['Impuesto de sociedades (sobre el resultado; no es coste de explotación)',isoc,'#94a3b8']]:[]);
+ return {partes,tot,fe,estrTot:gen+persEst,aridos:amt('aridos'),subcontratacion:amt('subcontratacion'),ventas:lv.incomeCategories.filter(c=>c.id==='ventas').reduce((s,c)=>s+c.amount,0)};
+}
+function estructuraPanel(){
+ const lv=ledgerCtx.lv;if(!lv||!lv.expenses)return '';
+ const E=estructuraPartes(lv,state),{partes,tot,fe,estrTot}=E;
  const bar=partes.map(([l,v,c])=>`<span style="width:${(100*Math.max(0,v)/tot).toFixed(2)}%;background:${c}" title="${esc(l)}: ${pct(v/tot)}"></span>`).join('');
  const rows=partes.map(([l,v,c])=>`<tr><td><i class="sw" style="background:${c}"></i>${esc(l)}</td><td class="num">${eur(v)}</td><td class="num">${pct(v/tot)}</td><td class="num">${pct(lv.income?v/lv.income:null)}</td></tr>`).join('');
- const estrTot=gen+persEst;
  return panel('De cada 100 € de gasto','Estructura del gasto real de la contabilidad en el periodo y sociedades elegidos'+(lv.consolidado?' (consolidado, sin la subcontratación entre Razo y Agetrans)':'')+'. <b>Coste de estructura</b> = estructura general + personal de oficina y taller: <b>'+pct(estrTot/tot)+'</b> del gasto, <b>'+pct(lv.income?estrTot/lv.income:null)+'</b> de los ingresos.'+(fe!=null?' El reparto conductores / estructura del personal aplica la proporción de la nómina por secciones ('+pct(fe)+' estructura).':''),`<div class="stackbar">${bar}</div><div class="tablewrap" style="max-height:none"><table class="estr"><thead><tr><th class="plain">Naturaleza del gasto</th><th class="plain num">Importe</th><th class="plain num">% del gasto</th><th class="plain num">% de ingresos</th></tr></thead><tbody>${rows}<tr class="total"><td>Gasto total</td><td class="num">${eur(tot)}</td><td class="num">100 %</td><td class="num">${pct(lv.income?tot/lv.income:null)}</td></tr></tbody></table></div>`);
+}
+// ---- Detalle de un MES de «Resultado mes a mes»: naturalezas y cuentas, por sociedad, estructura, transporte sin el
+// material y la operación del mes (viajes reales con el coste real repartido). Todo del mismo mes y sociedades elegidas.
+const detRow=(k,v)=>v==null||v===''||v==='—'?'':`<div><span class="k">${k}</span><span class="v">${v}</span></div>`;
+function monthDetail(r){
+ const m=r.key,f={...state,from:m+'-01',to:monthEndOf(m)},lv=M.ledgerView(f);
+ if(!lv||!lv.months.length)return '<div class="info">Este mes no tiene contabilidad cerrada.</div>';
+ const br=M.bridge(f),rv=M.realView(state,'month'),op=rv&&rv.groups.find(g=>g.key===m),E=estructuraPartes(lv,f);
+ const accs=(kind,cat)=>lv.accounts.filter(a=>a.kind===kind&&a.cat===cat);
+ const catList=(cats,kind,tot)=>`<div class="ldg">${cats.map(c=>{const as=accs(kind,c.id);return `<details class="ldgc"><summary><span>${esc(c.label)}</span><small>${pct(tot?c.amount/tot:null)}</small><b>${eur(c.amount)}</b></summary>${as.map(a=>`<div class="ldga"><span><code>${esc(a.cuenta)}</code> ${esc(a.label||'')}</span><b>${eur(a.amount)}</b></div>`).join('')||'<div class="ldga"><span>sin detalle por cuenta</span></div>'}</details>`;}).join('')}<div class="ldgt"><span>Total</span><b>${eur(tot)}</b></div></div>`;
+ const bar=E.partes.map(([l,v,c])=>`<span style="width:${(100*Math.max(0,v)/E.tot).toFixed(2)}%;background:${c}" title="${esc(l)}: ${pct(v/E.tot)}"></span>`).join('');
+ const legend=E.partes.map(([l,v,c])=>`<span><i style="background:${c}"></i>${esc(l.split(':')[0])} ${pct(v/E.tot)}</span>`).join('');
+ const ingT=lv.income-E.aridos,gastoT=lv.expenses-E.aridos;
+ const soc=lv.byCompany.map(c=>`<b>${esc(c.key)}</b>: ingresos ${eur(c.income)} · gastos ${eur(c.expenses)} · resultado <b class="${c.result>=0?'pos':'neg'}">${eur(c.result)}</b> (${pcm(c.marginPct)})`).join(' &nbsp;·&nbsp; ');
+ return `<div class="tripdetail">
+  <div class="grp">${esc(monthName(m))}: ingresos ${eur(lv.income)} − gastos ${eur(lv.expenses)} = <b class="${lv.result>=0?'pos':'neg'}">${eur(lv.result)}</b> (${pcm(lv.marginPct)})${lv.consolidado?' · consolidado (sin intragrupo)':''}</div>
+  <div style="grid-column:1/-1;font-size:13px">${soc}</div>
+  <div class="grp">Transporte y servicios (sin el material)</div>
+  ${detRow('Material que va dentro del precio (compra de áridos y productos)',eur(E.aridos))}
+  ${detRow('Ingreso de transporte y servicios','<b>'+eur(ingT)+'</b> <small>(ingresos − material)</small>')}
+  ${detRow('Gasto sin el material',eur(gastoT))}
+  ${detRow('Margen sobre transporte',pcm(ingT?lv.result/ingT:null)+' <small>(el resultado no cambia: '+eur(lv.result)+')</small>')}
+  ${E.ventas?detRow('Venta de productos (cuenta 700; no es transporte)',eur(E.ventas)):''}
+  ${detRow('Subcontratación pagada',eur(E.subcontratacion))}
+  <div class="grp">De cada 100 € de gasto del mes${E.fe!=null?' <small>(personal conductores / estructura según la nómina por secciones)</small>':''}</div>
+  <div style="grid-column:1/-1"><div class="stackbar">${bar}</div><div class="legend">${legend}</div></div>
+  <div class="grp">Contabilidad por naturaleza <small>(pincha una naturaleza para ver sus cuentas${lv.consolidado?'; el ajuste intragrupo se aplica a la naturaleza, no a cada cuenta':''})</small></div>
+  <div class="ldg2" style="grid-column:1/-1"><div><h4>Ingresos</h4>${catList(lv.incomeCategories,'i',lv.income)}</div><div><h4>Gastos</h4>${catList(lv.expenseCategories,'g',lv.expenses)}</div></div>
+  <div class="grp">Operación del mes</div>
+  ${detRow('Facturas GesRuta del mes',eur(r.gesruta))}
+  ${op?detRow('Viajes reales',nf(op.viajes)+' viajes · '+nf(op.dias)+' días · '+nf(op.matriculas)+' matrículas · '+nf(op.clientes)+' clientes'):''}
+  ${op?detRow('Ingreso capturado en los viajes',eur(op.ingreso)+' <small>('+pct(lv.income?op.ingreso/lv.income:null)+' del ingreso contable; material '+eur(op.material)+')</small>'):''}
+  ${op?detRow('Medido por el localizador',nf(op.km)+' km · '+nf(op.horas,1)+' h · '+nf(op.litros)+' L'+(op.l100?' · '+nf(op.l100,1)+' l/100 km':'')+' · '+pct(op.fiable)+' del ingreso con km y horas reales'):''}
+  ${op&&rv.real?detRow('Coste real repartido a los viajes',eur(op.coste)+' → margen neto <b class="'+(op.margen>=0?'pos':'neg')+'">'+eur(op.margen)+'</b> ('+pcm(op.margenPct)+')'):''}
+  ${br?detRow('Lo que captan los partes de Access',pct(br.coverage)+' del gasto real ('+eur(br.totalParts)+'); faltan '+eur(br.missing)+' <small>(subcontratación, áridos, generales)</small>'):''}
+ </div>`;
+}
+// ---- Vehículos y Clientes sobre el motor REAL (mismo reparto que «Margen por viaje»), con detalle al pinchar la fila.
+const plateFmt=p=>/^\d{4}[A-Z]{3}$/.test(p||'')?p.slice(0,4)+'-'+p.slice(4):(p||'');
+const pkey=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const TIPO_LBL={banera:'áridos (bañera)',hormigonera:'hormigón',nacional:'nacional',subcontratado:'subcontratado'};
+const tipoLabel=t=>TIPO_LBL[t]||t||'—';
+let _rvCur=null;
+function realCols(dim,real){
+ const cols=[dim==='plate'?{label:'Matrícula',key:'label'}:{label:'Cliente',key:'label'}];
+ if(dim==='plate')cols.push({label:'Tipo',key:'tipoT',center:true},{label:'Propio / subcontratado',key:'propioT',center:true});
+ else cols.push(numberCol('Vehículos','matriculas'));
+ cols.push(numberCol('Viajes reales','viajes'),moneyCol('Ingreso facturado','ingreso'),moneyCol('Material (áridos)','material'),moneyCol('Ingreso transporte y servicios','ingTransporte'));
+ if(real)cols.push(moneyCol('Coste real','coste'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% sobre facturado','margenPct'),percentCol('% sobre transporte','margenTransPct'));
+ cols.push({label:'Medido',key:'fiable',numeric:true,format:pct},numberCol('Km (localizador)','km'),numberCol('Horas','horas',1),numberCol('Litros','litros'),numberCol('l/100 km','l100',1),moneyCol('Ingreso por km','ingKm'));
+ if(real)cols.push(moneyCol('Margen por km','margenKm'),moneyCol('Coste flota por km','costeKm'));
+ cols.push(moneyCol('Ingreso por hora','ingHora'));
+ if(real)cols.push(moneyCol('Margen por hora','margenHora'));
+ cols.push(numberCol('Días con viaje','dias'),numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Min. espera','espera'));
+ return cols;
+}
+function realTab(dim){
+ const rv=M.realView(state,dim),isP=dim==='plate';
+ if(!rv)return panel(isP?'Vehículos':'Clientes','','<div class="info">No hay viajes reales de GesRuta en el periodo y empresa elegidos.</div>');
+ const rows=rv.groups.map(g=>({...g,label:isP?plateFmt(g.key):g.key,tipoT:tipoLabel(g.tipo),propioT:g.subViajes===0?'propio':g.subViajes===g.viajes?'subcontratado':(g.propio?'propio (algún viaje subcontratado)':'subcontratado (algún viaje propio)')}));
+ const t=rv.tot;
+ const cardsRows=[['Viajes reales',nf(t.viajes),nf(rows.length)+(isP?' matrículas':' clientes')+' · '+nf(t.dias)+' días con viaje'],
+  ['Ingreso facturado',eur(t.ingreso),'material (áridos comprados) '+eur(t.material)+' → transporte y servicios <b>'+eur(t.ingTransporte)+'</b>'],
+  rv.real?['Coste real repartido',eur(t.coste),'combustible '+eur(t.combustible)+' · personal '+eur(t.personal)+' · flota '+eur(t.flota)+' · indirectos '+eur(t.indirectos)+' · subcontrata '+eur(t.subcontrata)+' · material '+eur(t.material)]:['Coste real','—','sin contabilidad cerrada en el periodo'],
+  rv.real?['Margen neto',eur(t.margen),pct(t.margenPct)+' sobre facturado · '+pct(t.margenTransPct)+' sobre transporte · el conjunto cuadra con el libro de los meses cerrados, antes de impuestos ('+pct(rv.margenLibroPct)+')']:['Medido',pct(t.fiable),'ingreso con km y horas del localizador']];
+ const cards=`<section class="cards" style="margin-bottom:16px">${cardsRows.map(([l,x,h])=>`<article class="card"><span class="label">${l}</span><div class="value">${x}</div><div class="hint">${h}</div></article>`).join('')}</section>`;
+ const intra=isP?'':' <b>Razo o Agetrans como cliente</b> = facturación entre las dos empresas: su margen mide el precio al que una le cobra a la otra (en el grupo se compensa con el viaje de la otra casa), no un cliente real.';
+ const info=`<div class="info"><b>${isP?'Cada vehículo':'Cada cliente'} con sus viajes reales</b> (albaranes de GesRuta) y el <b>coste REAL de la contabilidad</b> repartido a cada viaje por lo que midió el localizador: combustible por litros, personal por horas, flota (reparaciones, seguros, amortización…) por km, gastos generales por ingreso; los viajes subcontratados llevan la factura real del subcontratista. <b>Material</b> = compra de áridos que va dentro del precio (compraventa), atribuida por cliente: se descuenta para dar el <b>ingreso de transporte y servicios</b>. <b>Pincha en una fila</b> para desplegar el detalle (por mes, ${isP?'cliente':'matrícula'}, ruta, lugares de carga y descarga${isP?', localizador, Solred y partes':''}). Busca por palabras o abre «Filtros».${intra}${rv.real?' El gasto de cada mes va a los viajes de ese mes; los viajes sin traza reciben su parte por su ingreso, no cargan a los medidos. Coeficientes medios del periodo: '+eur(rv.coef.lit)+'/litro · '+eur(rv.coef.dur*60)+'/hora · '+eur(rv.coef.km)+'/km.'+(rv.mesesEstimados.length?' <b>Meses sin contabilidad cerrada ('+rv.mesesEstimados.map(monthName).join(', ')+')</b>: coste estimado con los coeficientes del último mes cerrado.':''):' <b>Sin contabilidad cerrada en el periodo</b>: se ven viajes, ingresos y medidas, pero no el coste real.'}</div>`;
+ const top=panel(isP?'Vehículos con más ingreso de transporte':'Clientes con más ingreso de transporte','Primeros ocho por ingreso de transporte y servicios (sin el material); tabla completa debajo.',bars(rows.slice(0,8).map(x=>({label:x.label,v:x.ingTransporte,note:rv.real&&x.margen!=null?'margen '+pcm(x.margenPct):''})),'v'));
+ _rvCur=rv;
+ return info+cards+top+setTable(isP?'Rentabilidad real por vehículo':'Rentabilidad real por cliente','Ordenable, con búsqueda por palabras y filtros por columna. Verde gana, rojo pierde. Pincha en una fila para ver su detalle.',rows,realCols(dim,rv.real),null,x=>realDetail(x,dim));
+}
+function realDetail(r,dim){
+ const rv=_rvCur;if(!rv)return '';
+ const d=rv.detail(r.key),isP=dim==='plate',real=rv.real,k=pkey(r.key);
+ const grp=s=>`<div class="grp">${s}</div>`;
+ const mini=(title,rows,first,fmt,max=12)=>{if(!rows.length)return '';const cols=[{label:first,key:'label'},numberCol('Viajes','viajes'),moneyCol('Ingreso','ingreso'),moneyCol('Ing. transporte','ingTransporte')].concat(real?[moneyCol('Coste real','coste'),{...moneyCol('Margen','margen'),signed:true},percentCol('%','margenPct')]:[]).concat([numberCol('Km','km'),numberCol('Horas','horas',1),numberCol('Litros','litros'),{label:'Medido',key:'fiable',numeric:true,format:pct}]);
+  return `<div class="dtab"><h4>${title}${rows.length>max?' <small>(primeros '+max+' de '+nf(rows.length)+')</small>':''}</h4>${simpleTable(cols,rows.slice(0,max).map(x=>({...x,label:fmt?fmt(x.key):x.key})))}</div>`;};
+ const soc=isP?M.plateSociety.get(k):null,tel=isP?M.telemetryByPlate(state).get(k):null,sol=isP?M.solredByPlate(state).get(k):null,par=isP?M.partsByPlate(state).get(k):null;
+ const lab={combustible:'Combustible (por litros medidos)',personal:'Personal (por horas medidas)',flota:'Flota: reparaciones, seguros, amortización… (por km)',indirectos:'Gastos generales (por ingreso)',subcontrata:'Subcontratistas (factura real)',material:'Material: compra de áridos (por cliente)'};
+ const costes=real?['combustible','personal','flota','indirectos','subcontrata','material'].filter(c=>Math.abs(r[c])>=0.5).map(c=>detRow(lab[c],eur(r[c]))).join(''):'';
+ const cabecera=(isP?plateFmt(r.key)+' · '+tipoLabel(r.tipo):esc(r.key))+(soc?' · flota de '+esc(soc):'')+(tel&&tel.clase?' · '+esc(tel.clase)+' (ERP)':'')+' · '+nf(r.viajes)+' viajes reales en '+nf(r.dias)+' días'+(isP?' · '+nf(r.clientes)+' clientes':' · '+nf(r.matriculas)+' matrículas')+(r.subViajes?' · '+nf(r.subViajes)+' subcontratados':'');
+ const tipos=Object.entries(r.tipos||{}).filter(([t])=>t).map(([t,n])=>tipoLabel(t)+' '+nf(n)).join(' · ');
+ return `<div class="tripdetail">
+  ${grp(cabecera)}
+  ${detRow('Ingreso facturado',eur(r.ingreso)+(r.subIng?' <small>(subcontratado '+eur(r.subIng)+')</small>':''))}
+  ${detRow('Material (compra de áridos atribuida)',eur(r.material))}
+  ${detRow('Ingreso de transporte y servicios','<b>'+eur(r.ingTransporte)+'</b>')}
+  ${real?detRow('Coste real',eur(r.coste)):detRow('Coste real','sin contabilidad cerrada en el periodo')}
+  ${costes}
+  ${real?detRow('Margen neto','<b class="'+(r.margen>=0?'pos':'neg')+'">'+eur(r.margen)+'</b> · '+pcm(r.margenPct)+' sobre facturado · '+pcm(r.margenTransPct)+' sobre transporte'+(r.costeEstimado?' <small>('+nf(r.costeEstimado)+' viajes de meses sin cerrar, coste estimado)</small>':'')):''}
+  ${detRow('Medido',pct(r.fiable)+' del ingreso con km y horas reales del localizador'+(r.viajesMed?' · '+nf(r.viajesMed)+' viajes medidos':''))}
+  ${grp('Medidas de los viajes (localizador)')}
+  ${detRow('Km en viajes',r.km?nf(r.km)+' km'+((r.kmCarg||r.kmVac)?' · cargado '+nf(r.kmCarg)+' · en vacío '+nf(r.kmVac):''):null)}
+  ${detRow('Horas de trabajo',r.horas?nf(r.horas,1)+' h'+(r.cond?' · conduciendo '+nf(r.cond/60,1)+' h · parado o esperando '+nf(r.espera/60,1)+' h':''):null)}
+  ${detRow('Litros',r.litros?nf(r.litros)+' L'+(r.l100?' · '+nf(r.l100,1)+' l/100 km':''):null)}
+  ${detRow('Por km y por hora (viajes propios)',r.km?'ingreso '+eur(r.ingKm)+'/km · '+eur(r.ingHora)+'/h'+(real?' · margen '+eur(r.margenKm)+'/km · '+eur(r.margenHora)+'/h · coste de flota '+eur(r.costeKm)+'/km':''):null)}
+  ${detRow('Carga transportada',(r.m3?nf(r.m3)+' m³':'')+(r.t?(r.m3?' · ':'')+nf(r.t)+' t':''))}
+  ${detRow('Tipos de viaje',tipos)}
+  ${isP?grp('El camión en todo el periodo (con y sin viaje)'):''}
+  ${isP?detRow('Localizador',tel?nf(tel.km)+' km en '+nf(tel.dias)+' días con lectura ('+nf(tel.activos)+' activos, del '+date(tel.desde)+' al '+date(tel.hasta)+')'+(tel.litros?' · '+nf(tel.litros)+' L del sensor · '+nf(tel.l100,1)+' l/100 km':' · sin sensor de consumo'):'sin lectura del localizador en el periodo'):''}
+  ${isP&&tel&&tel.km?detRow('Km en viajes / km del localizador',pct(r.km/tel.km)+' <small>(el resto: vacíos entre viajes, nave, taller o viajes sin albarán)</small>'):''}
+  ${isP?detRow('Tarjeta Solred (gasóleo)',sol?nf(sol.litros)+' L · '+eur(sol.base)+' sin IVA · '+nf(sol.n)+' repostajes en '+sol.meses.length+' meses con fichero ('+sol.meses[0]+' → '+sol.meses[sol.meses.length-1]+')':null):''}
+  ${isP?detRow('Partes de Access (declarado)',par?nf(par.partes)+' partes · '+nf(par.km)+' km · '+nf(par.horas,1)+' h · '+nf(par.litros)+' L · coste imputado '+eur(par.coste)+' · '+esc(par.owner)+' · '+esc(par.category):null):''}
+  <div class="grp noprint">${isP?`<button class="textbtn" data-verviajes="${esc(r.key)}">Ver sus viajes uno a uno ↗</button> · <button class="textbtn" data-drill="plates" data-key="${esc(k)}">Filtrar todo el informe por este vehículo ↗</button>`:`<button class="textbtn" data-fichacli="${esc(r.key)}">Abrir la ficha del cliente (comparar periodos, operaciones) ↗</button> · <button class="textbtn" data-verviajes="${esc(r.key)}">Ver sus viajes uno a uno ↗</button>`}</div>
+ </div>
+ ${mini('Por mes',d.byMonth,'Mes',monthName,36)}
+ ${isP?mini('Por cliente',d.byClient,'Cliente'):mini('Por matrícula',d.byPlate,'Matrícula',plateFmt)}
+ ${mini('Por ruta (provincia de carga → provincia de descarga)',d.byRuta,'Ruta')}
+ ${mini('Por lugar de carga',d.byCarga,'Lugar de carga')}
+ ${mini('Por lugar de descarga',d.byDescarga,'Lugar de descarga')}
+ ${mini('Por tipo de viaje',d.byTipo,'Tipo',tipoLabel)}`;
 }
 function renderContent(){
  tableDefinition=null;let html='';
@@ -673,7 +796,7 @@ function renderContent(){
    const plRows=lv.byMonth.map(m=>({key:m.key,label:monthName(m.key),income:m.income,expenses:m.expenses,result:m.result,marginPct:m.marginPct,gesruta:op.get(m.key)?.revenue??0,parts:op.get(m.key)?.[state.costMode==='stored'?'rawCost':state.costMode==='recalculated'?'calcCost':'realCost']??0}));
    const totalExp=lv.expenses||1,cats=lv.expenseCategories.filter(c=>c.amount>0).slice(0,11).map(c=>({label:c.label,cost:c.amount,note:nf(c.amount/totalExp*100,0)+' %'}));
    html=`<div class="grid2">${panel('Ingresos y gastos por mes','Contabilidad real (CxConta), solo meses cerrados.'+(lvBase?' Líneas discontinuas: '+ledgerCtx.priorLabel.toLowerCase()+'.':''),`<div class="legend"><span><i style="background:var(--blue)"></i>Ingresos</span><span><i style="background:#169389"></i>Gastos</span>${lvBase?'<span style="color:var(--blue)"><i class="dash"></i>Ingresos (comparación)</span><span style="color:#169389"><i class="dash"></i>Gastos (comparación)</span>':''}</div>${plChart(lv.byMonth,lvBase?.byMonth)}`)}${panel('De qué está hecho el gasto real','Por naturaleza de la cuenta contable, en el periodo cerrado.',bars(cats,'cost'))}</div>${estructuraPanel()}${intercompanyPanel()}${fuelPersonnelPanel()}${ratiosPanel()}${metrics()}`;
-   html+=setTable('Resultado mes a mes','Ingresos y gastos de la contabilidad. A la derecha, lo que captan las facturas de GesRuta y los partes de Access el mismo mes (el gasto de los partes es incompleto).',plRows,[{label:'Mes',key:'label'},moneyCol('Ingresos','income'),moneyCol('Gastos','expenses'),{...moneyCol('Resultado','result'),signed:true},percentCol('Margen','marginPct'),moneyCol('Facturas GesRuta','gesruta'),moneyCol('Coste en partes','parts')]);
+   html+=setTable('Resultado mes a mes','Ingresos y gastos de la contabilidad. A la derecha, lo que captan las facturas de GesRuta y los partes de Access el mismo mes (el gasto de los partes es incompleto). <b>Pincha en un mes</b> para desplegar su detalle: naturalezas y cuentas, por sociedad, estructura del gasto, transporte sin el material y la operación del mes.',plRows,[{label:'Mes',key:'label'},moneyCol('Ingresos','income'),moneyCol('Gastos','expenses'),{...moneyCol('Resultado','result'),signed:true},percentCol('Margen','marginPct'),moneyCol('Facturas GesRuta','gesruta'),moneyCol('Coste en partes','parts')],null,monthDetail);
  }else if(state.tab==='summary'){
    const months=M.group(selection,state,'month').groups.sort((a,b)=>a.key.localeCompare(b.key));
    const mix=D.costFields.map(([key,label])=>({label,cost:current.totals.breakdown[key]}));
@@ -681,12 +804,9 @@ function renderContent(){
    html=`<div class="grid2">${panel('Evolución mensual','Ingresos según el criterio elegido · costes según fecha del parte.',`<div class="legend"><span><i style="background:#2868dd"></i>Ingresos sin IVA</span><span><i style="background:#169389"></i>Coste disponible</span></div>${trendChart(months)}`)}${panel('De qué está hecho el coste','Desglose conservado del parte de Access.',bars(mix.filter(r=>Math.abs(r.cost)>.001).sort((a,b)=>b.cost-a.cost),'cost'))}</div>${metrics()}`;
    html+=setTable('Mes a mes','Esta tabla y los indicadores comparten el mismo cálculo. Los recuentos de facturas y viajes son distintos, no sumas de subtotales.',months,groupColumns());
  }else if(['plate','client'].includes(state.tab)){
-   let rows=M.group(selection,state,state.tab).groups.sort((a,b)=>b.revenue-a.revenue);
-   if(state.tab==='client')rows=rows.map(r=>({...r,label:r.label+' · '+(r.key===UNASSIGNED?UNASSIGNED:r.key.split('|')[0])}));
-   html=partialWarn()+`<div class="info">${ratioNote}</div>`+panel(state.tab==='plate'?'Vehículos con más ingresos':'Clientes con más ingresos','Primeros ocho por ingresos; tabla completa debajo.',bars(rows.slice(0,8),'revenue'));
-   html+=setTable(state.tab==='plate'?'Rentabilidad por vehículo':'Rentabilidad por cliente',state.tab==='plate'?'Al elegir un vehículo se filtra todo el informe. El coste total de la matrícula es el del parte; la cuota comercial es estimada.':'Costes, km y horas ESTIMADOS por la cuota de ingresos positivos del mes y vehículo. No acreditan el coste real de cada servicio.',rows,groupColumns(),state.tab==='plate'?'plates':'clients');
+   html=realTab(state.tab);
  }else if(state.tab==='invoices'){
-   html=setTable('Detalle completo de facturación','Todas las líneas de la selección. El importe sin IVA respeta suplidos y ajustes de cabecera; ambas fechas quedan visibles.',selection.lines,[{label:'Factura',key:'invoice'},{label:'Empresa',key:'company'},{label:'Fecha factura',key:'invoiceDate'},{label:'Fecha línea',key:'lineDate'},{label:'Cliente',key:'client'},{label:'Vehículo',key:'plateLabel'},{label:'Viaje',key:'trip'},{label:'Albarán',key:'delivery'},{label:'Carga',key:'load'},{label:'Concepto',key:'concept'},numberCol('Cantidad','quantity',2),moneyCol('Precio','price'),moneyCol('Ingreso sin IVA','revenue'),{label:'Tipo',key:'kind'},{label:'Matrícula tomada de',key:'plateSource'}]);
+   html=setTable('Detalle completo de facturación','Todas las líneas de la selección. El importe sin IVA respeta suplidos y ajustes de cabecera; ambas fechas quedan visibles.',selection.lines,[{label:'Factura',key:'invoice'},{label:'Empresa',key:'company'},{label:'Fecha factura',key:'invoiceDate'},{label:'Fecha línea',key:'lineDate'},{label:'Cliente',key:'client'},{label:'Vehículo',key:'plateLabel'},{label:'Viaje',key:'trip'},{label:'Albarán',key:'delivery'},{label:'Carga',key:'load'},{label:'Tipo de servicio',key:'concept'},{label:'Concepto (texto de la línea)',key:'conceptText'},{label:'Cuenta',key:'account'},numberCol('Cantidad','quantity',2),moneyCol('Precio','price'),moneyCol('Ingreso sin IVA','revenue'),{label:'Tipo',key:'kind'},{label:'Matrícula tomada de',key:'plateSource'}]);
  }else if(state.tab==='parts'){
    html=setTable('Partes y composición del coste','El coste origen es íntegro; el coste en selección aplica la cuota comercial. Un mismo parte puede contribuir a varios clientes. No se modifica el dato de Access.',partRows(),[{label:'Parte Access',key:'id'},{label:'Fecha',key:'date'},{label:'Matrícula',key:'plateLabel'},{label:'Tipo vehículo',key:'category'},{label:'Titular actual',key:'owner'},{label:'Cliente del parte',key:'partClient'},moneyCol('Coste origen','stored'),percentCol('Cuota en selección','allocation'),moneyCol('Coste en selección','allocated'),moneyCol('Recalculado origen','recalculated'),moneyCol('Descuadre directo','residual'),...D.costFields.filter(([k])=>k!=='residual').map(([k,l])=>moneyCol(l,k)),numberCol('Km origen','km'),numberCol('Horas origen','hours',2),numberCol('Viajes Access origen','trips')]);
  }else if(state.tab==='audit')html=audit();
@@ -779,6 +899,8 @@ function bind(){
   if(b.dataset.clear){state[b.dataset.clear]=[];tableState.page=0;update();}
   if(b.dataset.remove){state[b.dataset.remove]=state[b.dataset.remove].filter(v=>v!==b.dataset.value);tableState.page=0;update();}
   if(b.dataset.drill){state[b.dataset.drill]=[b.dataset.key==='Sin matrícula'?UNASSIGNED:b.dataset.key];update();}
+  if(b.dataset.verviajes!==undefined){const q=b.dataset.verviajes;switchTab('viajes');tableState.query=q;const inp=$('tableSearch');if(inp)inp.value=q;drawTable();return;}
+  if(b.dataset.fichacli!==undefined){_cliSel=b.dataset.fichacli;switchTab('clientedet');return;}
   if(b.dataset.sort){tableState.asc=tableState.sort===b.dataset.sort?!tableState.asc:true;tableState.sort=b.dataset.sort;drawTable();}
   if(b.dataset.page){tableState.page+=Number(b.dataset.page);drawTable();}
   if(b.dataset.period){const [from,to]=b.dataset.period.split('|');$('from').value=from;$('to').value=to;tableState.page=0;update();}

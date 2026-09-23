@@ -96,7 +96,7 @@ try{
         $pa=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'scripts\export_rentabilidad_personal_v1.ps1'),'-Desde',$config.from,'-Hasta',$hasta,'-SourcePath',(Join-Path $config.sourceRoot 'PartesTrabajo\Partes 7.0.accdb'),'-OutputPath',(Join-Path $run 'personal_v1.json'))
         & $ps64 @pa
         if($LASTEXITCODE -ne 0){& $ps32 @pa}}}
-    & $node (Join-Path $root 'scripts\prepare-data.mjs') $run
+    & $node (Join-Path $root 'scripts\prepare-data.mjs') $run $hist
     if($LASTEXITCODE -ne 0){throw 'Fallo al conciliar las extracciones.'}
     $mode=if($config.scheduled){'scheduled'}else{'pending'}
     if($clave){$env:RENTABILIDAD_CLAVE_PERSONAL=$clave}else{Remove-Item Env:\RENTABILIDAD_CLAVE_PERSONAL -ErrorAction SilentlyContinue}

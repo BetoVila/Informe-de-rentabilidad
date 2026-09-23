@@ -14,7 +14,7 @@ Get-ChildItem -LiteralPath $ultimo.FullName -File | Where-Object { $_.Name -noti
 $hasta=(Get-Date).AddDays(-1).ToString('yyyy-MM-dd')
 & $py (Join-Path $src 'scripts\export_rentabilidad_gesruta_actividad_v1.py') --root (Join-Path $config.sourceRoot 'Gesruta') --output (Join-Path $Salida 'actividad_v1.json') --from-date $config.from --to-date $hasta --lugares (Join-Path $config.publicPath 'lugares-provincias.csv') --gps (Join-Path $root 'cache\lugares_gps.json') --triangulado $Triangulado --horas (Join-Path $root 'cache\horas_vehiculo_mes.json')
 if($LASTEXITCODE -ne 0){throw 'Fallo la actividad'}
-& $node (Join-Path $src 'scripts\prepare-data.mjs') $Salida
+& $node (Join-Path $src 'scripts\prepare-data.mjs') $Salida (Join-Path $root 'historicos')
 if($LASTEXITCODE -ne 0){throw 'Fallo prepare-data'}
 & $node (Join-Path $src 'scripts\build.mjs') (Join-Path $Salida 'current.json.gz') $Salida pending $config.at
 if($LASTEXITCODE -ne 0){throw 'Fallo build'}

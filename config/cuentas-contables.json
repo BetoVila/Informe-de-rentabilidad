@@ -42,6 +42,23 @@
     {"id": "extraordinarios", "label": "Gastos extraordinarios y pérdidas", "cats": ["extraordinarios"], "partes": [], "nota": "No existe en los partes de Access."},
     {"id": "impuesto_sociedades", "label": "Impuesto de sociedades", "cats": ["impuesto_sociedades"], "partes": [], "nota": "Sobre el resultado del ejercicio; no es coste de explotación ni existe en los partes de Access."}
   ],
+  "_conceptos": "Tipo de servicio de cada linea de factura de GesRuta, por su cuenta contable (CUECON). El texto libre del concepto (2.000 variantes) no sirve para filtrar; la cuenta si. Gana el prefijo MAS LARGO.",
+  "conceptosFacturacion": [
+    {"prefijos": ["7050000000"], "label": "Portes nacionales"},
+    {"prefijos": ["7050000006"], "label": "Portes regionales"},
+    {"prefijos": ["7050000002"], "label": "Camión por horas"},
+    {"prefijos": ["705002"], "label": "Áridos: toneladas transportadas"},
+    {"prefijos": ["7050031001"], "label": "Hormigón: m³ transportados"},
+    {"prefijos": ["7050031002"], "label": "Hormigón: m³ mínimos"},
+    {"prefijos": ["7050032001"], "label": "Hormigón: horas, esperas y complementos"},
+    {"prefijos": ["7050032002"], "label": "Hormigón: desplazamientos"},
+    {"prefijos": ["705003"], "label": "Hormigón: otros servicios"},
+    {"prefijos": ["705"], "label": "Otros servicios de transporte"},
+    {"prefijos": ["700", "701", "702", "703"], "label": "Venta de productos y chatarra"},
+    {"prefijos": ["75", "77", "79"], "label": "Otros ingresos (vehículos vendidos, alquileres, diversos)"},
+    {"prefijos": ["6"], "label": "Cuenta de gasto en factura (revisar)"},
+    {"prefijos": [""], "label": "Sin cuenta contable"}
+  ],
   "sociedades": {"1": "Razo", "2": "Agetrans"},
   "titularASociedad": {"RAZO": "Razo", "AGETRANS": "Agetrans"}
 }

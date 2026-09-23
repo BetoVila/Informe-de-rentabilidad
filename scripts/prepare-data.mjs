@@ -29,7 +29,10 @@ const parts=a.parts.map(r=>{
  return {id:String(r.IdParteTrabajo),machineId:r.IdMaquina,date:r.Fecha.slice(0,10),plate,plateLabel:machine?.matricula||'Sin matrícula',category:categories.get(String(machine?.categoria))?.nombre||'Sin categoría Access',owner:companies.get(String(machine?.titular))?.nombre||'Sin titular',partClient:clients.get(String(r.IdCliente))?.nombre||'Sin cliente en parte',plant:plants.get(String(r['IdCliente/Planta']))?.nombre||'',station:String(r.IdGasoilEstacionServicio||''),direct,structure,rate,stored:direct+structure,componentDirect,recalculated:componentDirect*(1+rate),residual:direct-componentDirect,...values,km:kmOk,kmExcluded:kmRaw-kmOk,hours:Number(r.HorasTrabajo)||0,litres:Number(r.GasoilLitros)||0,adblueLitres:Number(r.AdBlueLitros)||0,accessRevenue:Number(r.FacturacionDiariaTotal)||0,trips:Number(r.Viajes)||0,m3:Number(r.MetrosCubicos)||0,tonnes:Number(r.Toneladas)||0,loaded:Number(r.KmCargado)||0,empty:Number(r.KmVacio)||0};
 });
 const machinesByPlate=new Map(a.machines.map(r=>[plateKey(r.matricula),r]));
-const lines=g.lines.map(r=>({...r,load:r.load||'Sin carga',concept:r.concept||'Sin concepto',category:categories.get(String(machinesByPlate.get(r.plate)?.categoria))?.nombre||'Sin ficha Access'}));
+// Tipo de servicio de la línea por su CUENTA contable (CUECON): portes nacionales, áridos por toneladas, hormigón por m³…
+// El texto libre del concepto (2.000 variantes distintas) se conserva en conceptText, pero no sirve para segmentar.
+const tipoServicio=(code)=>{let best='Sin cuenta contable',len=-1;for(const c of cuentasCfg.conceptosFacturacion||[])for(const p of c.prefijos)if(String(code||'').startsWith(p)&&p.length>len){best=c.label;len=p.length;}return best;};
+const lines=g.lines.map(r=>({...r,load:r.load||'Sin carga',conceptText:r.concept||'Sin concepto',concept:r.kind==='Linea GesRuta'?tipoServicio(r.account):'Ajuste de cabecera',category:categories.get(String(machinesByPlate.get(r.plate)?.categoria))?.nombre||'Sin ficha Access'}));
 if(a.metadata.desde!==g.metadata.desde||a.metadata.hasta!==g.metadata.hasta)throw new Error('Periodos distintos entre fuentes');
 const to=g.metadata.hasta,month=(d)=>d.slice(0,7);
 const ownerOfPlate=new Map();for(const p of parts)if(p.plate&&!ownerOfPlate.has(p.plate))ownerOfPlate.set(p.plate,p.owner);
@@ -87,12 +90,52 @@ if(contab?.metadata?.disponible){
  ledger={meta:{fuente:contab.metadata.fuente,desde:contab.metadata.desde,hasta:contab.metadata.hasta,leido:contab.metadata.leido,maxFechaPorSociedad:contab.metadata.maxFechaPorSociedad,lastClosed,intragrupoMetodo:contab.intragrupo?.metodo||''},accounts:Object.fromEntries([...used].map(c=>[c,contab.accounts[c]||''])),categories:{gastos:cuentasCfg.gastos.map(c=>({id:c.id,label:c.label})),ingresos:cuentasCfg.ingresos.map(c=>({id:c.id,label:c.label}))},puente:cuentasCfg.puente,sociedades:cuentasCfg.sociedades,titularASociedad:cuentasCfg.titularASociedad,intragrupo,rows};
 }
 
-// ---- telemática: km y litros medidos por el propio camión (Movertis, vía el ERP), solo días fiables
+// ---- telemática: km y litros medidos por el propio camión, por matrícula y día. Tres fuentes, un solo conjunto:
+//  1) el ERP (Movertis, razo_movertis_dia: solo días fiables) manda cuando existe el día;
+//  2) el HISTÓRICO bajado de Wialon en este PC (historicos\wialon_hist\_resumen.jsonl, desde ago-2025) rellena los días que
+//     el ERP no tiene (el ERP empezó a bajar en ago-2026), con la misma regla de fiabilidad: contador leído y km posibles;
+//  3) los km por día de Locatel que trae el ERP (sin litros). Un día sin lectura no cuenta como cero.
+const KM_MAX_DIA=1500,LITROS_MAX_DIA=900;
 let telemetry=null;
-if(movertis?.metadata?.disponible){
- const rows=movertis.rows.map(r=>({plate:plateKey(r.p),date:r.d,km:r.km,litres:r.l})).filter(r=>r.plate);
- const clases=Object.fromEntries(Object.entries(movertis.clases||{}).map(([m,c])=>[plateKey(m),c]).filter(([k])=>k));
- telemetry={meta:{fuente:movertis.metadata.fuente,desde:movertis.metadata.desde,hasta:movertis.metadata.hasta,diasCamion:movertis.metadata.diasCamion,diasFiables:movertis.metadata.diasFiables,diasDescartados:movertis.metadata.diasDescartados,unidades:movertis.metadata.unidades,leido:movertis.metadata.leido},clases,rows};
+{
+ const rows=new Map(),src={erp:null,historico:null,locatel:null};
+ const put=(plate,date,km,litres,s)=>{if(!plate||!date||rows.has(plate+'|'+date))return false;rows.set(plate+'|'+date,{plate,date,km,litres,src:s});return true;};
+ const span=(list)=>list.length?{desde:list.reduce((a,r)=>r.date<a?r.date:a,list[0].date),hasta:list.reduce((a,r)=>r.date>a?r.date:a,list[0].date),dias:list.length,unidades:new Set(list.map(r=>r.plate)).size}:null;
+ let clases={};
+ if(movertis?.metadata?.disponible){
+  const erp=movertis.rows.map(r=>({plate:plateKey(r.p),date:r.d,km:r.km,litres:r.l})).filter(r=>r.plate);
+  for(const r of erp)put(r.plate,r.date,r.km,r.litres,'erp');
+  clases=Object.fromEntries(Object.entries(movertis.clases||{}).map(([m,c])=>[plateKey(m),c]).filter(([k])=>k));
+  src.erp={...span(erp),diasCamion:movertis.metadata.diasCamion,diasFiables:movertis.metadata.diasFiables,diasDescartados:movertis.metadata.diasDescartados,leido:movertis.metadata.leido};
+ }
+ const histDir=process.argv[3]||path.resolve(root,'..','..','historicos');
+ const histFile=path.join(histDir,'wialon_hist','_resumen.jsonl');
+ try{
+  const text=await fs.readFile(histFile,'utf8');
+  const ok=[],vistos=new Set();let descartados=0,lineas=0;
+  for(const line of text.split('\n')){
+   if(!line.trim())continue;lineas++;let r;try{r=JSON.parse(line);}catch(e){descartados++;continue;}
+   const plate=plateKey(r.mat||String(r.unidad||'').replace(/-/g,'')),date=r.dia;
+   if(!plate||!date||vistos.has(plate+'|'+date)){continue;}vistos.add(plate+'|'+date);
+   const km=Number(r.km);
+   if(!r.km_fuente||!Number.isFinite(km)||km<0||km>KM_MAX_DIA){descartados++;continue;}   // sin contador o km imposibles en un día: no es dato
+   const lit=r.tiene_fuel&&Number.isFinite(Number(r.litros))&&Number(r.litros)>0&&Number(r.litros)<=LITROS_MAX_DIA?round(Number(r.litros),2):null;
+   ok.push({plate,date,km:round(km,2),litres:lit});
+  }
+  let nuevos=0;for(const r of ok)if(put(r.plate,r.date,r.km,r.litres,'historico'))nuevos++;
+  src.historico={...span(ok),lineas,descartados,nuevosSobreErp:nuevos,fichero:histFile};
+ }catch(e){if(e.code!=='ENOENT')throw e;}
+ if(locatelSrc?.metadata?.disponible){
+  // solo tramos de UN día (from = to): son los km del día de esa matrícula
+  const loc=(locatelSrc.rows||[]).filter(r=>r.from&&r.from===r.to).map(r=>({plate:plateKey(r.p),date:r.from,km:Number(r.km)})).filter(r=>r.plate&&Number.isFinite(r.km)&&r.km>=0&&r.km<=KM_MAX_DIA);
+  let n=0;for(const r of loc)if(put(r.plate,r.date,round(Number(r.km),2),null,'locatel'))n++;
+  src.locatel=loc.length?{...span(loc),nuevos:n}:null;
+ }
+ const all=[...rows.values()].sort((x,y)=>x.date<y.date?-1:x.date>y.date?1:x.plate.localeCompare(y.plate));
+ if(all.length){
+  const sp=span(all),porFuente={};for(const r of all)porFuente[r.src]=(porFuente[r.src]||0)+1;
+  telemetry={meta:{fuente:'Localizador: ERP (Movertis) + histórico bajado (Wialon) + Locatel (ERP)',desde:sp.desde,hasta:sp.hasta,diasCamion:all.length,diasFiables:all.length,diasDescartados:(src.erp?.diasDescartados||0)+(src.historico?.descartados||0),unidades:sp.unidades,leido:src.erp?.leido||new Date().toISOString(),fuentes:src,porFuente},clases,rows:all};
+ }
 }
 
 // ---- Locatel (CANbus, vía el ERP): km y consumo reales por matrícula y tramo. Hoy la copia local puede no tener aún estas
@@ -139,7 +182,7 @@ const sources=[
  {id:'surtidor',name:'Surtidor nave',state:!fuel.surtidor?'sin':(fuel.surtidor.meta.fuentes.base.maxFecha&&fuel.surtidor.meta.fuentes.base.maxFecha<to.slice(0,8)+'00'?'parcial':'ok'),to:fuel.surtidor?.meta.maxFecha||null,note:!fuel.surtidor?'Sin datos del surtidor.':'GesproWin: la base llega hasta el '+fuel.surtidor.meta.fuentes.base.maxFecha+'; se completa con las exportaciones de texto.'},
  {id:'nomina',name:'Nómina',state:payroll?'ok':'sin',to:lastPeriod,note:payroll?'Resumen mensual de la gestoría; el último mes llega ~10 días después de cerrar.':'Sin resúmenes de nómina.'},
  {id:'contabilidad',name:'Contabilidad',state:ledger?'ok':'sin',to:ledger?.meta.lastClosed||null,note:ledger?'Gastos e ingresos reales de CxConta (traspasados al ERP cada noche). Cerrada hasta '+ledger.meta.lastClosed+'; el mes en curso no se compara.':'Sin contabilidad: el gasto que se ve es solo el de los partes de Access, que no es el real.'},
- {id:'movertis',name:'Movertis',state:telemetry?'parcial':'pendiente',to:telemetry?.meta.hasta||null,note:telemetry?'Km y litros medidos por el camión, leídos del ERP (que ya los baja de Movertis). Solo hay datos desde '+telemetry.meta.desde+': el histórico anterior aún no está cargado. '+telemetry.meta.diasDescartados+' días-camión sin lectura fiable no se cuentan.':'Kilómetros y consumo medidos por el camión: sin lectura en esta pasada.'},
+ {id:'movertis',name:'Movertis',state:telemetry?(telemetry.meta.fuentes.historico?'ok':'parcial'):'pendiente',to:telemetry?.meta.hasta||null,note:telemetry?'Km y litros medidos por el camión, del '+telemetry.meta.desde+' al '+telemetry.meta.hasta+': '+(telemetry.meta.fuentes.erp?'ERP (Movertis) desde '+telemetry.meta.fuentes.erp.desde:'')+(telemetry.meta.fuentes.historico?'; histórico bajado de Wialon desde '+telemetry.meta.fuentes.historico.desde+' ('+telemetry.meta.fuentes.historico.dias+' días-camión)':'; sin histórico anterior al ERP')+'. '+telemetry.meta.diasDescartados+' días-camión sin lectura fiable no se cuentan.':'Kilómetros y consumo medidos por el camión: sin lectura en esta pasada.'},
  {id:'locatel',name:'Locatel',state:locatel?'ok':(locatelSrc?.metadata?'sin':'pendiente'),to:locatel?.meta.hasta||null,note:locatel?('Km y consumo (CANbus) medidos por el camión, leídos del ERP (que los baja de Locatel): '+locatel.meta.registros+' tramos de '+locatel.meta.unidades+' vehículos.'):(locatelSrc?.metadata?'Conectado al ERP, pero sus emisiones de Locatel aún no están en la copia local del ERP (0 registros). En cuanto lleguen, se usan sin tocar nada.':'Kilómetros y consumo (CANbus) por GPS: falta el acceso automático.')}
 ];
 
@@ -209,7 +252,9 @@ const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadA
  'Consumo declarado = litros declarados en los partes / km declarados × 100. NO es consumo real: los partes traen km imposibles (no se cuentan los de más de '+KM_MAX_PARTE+' km en un solo parte) y faltan en muchos días en que el camión circula. El consumo real sale de los litros de la tarjeta Solred y del surtidor y de los km del localizador (Movertis, Locatel); ver Conciliación. Las horas de Access pueden ser aproximadas.',
  'Combustible: los litros y el importe de los partes se cruzan con la tarjeta Solred (importe con IVA; sin IVA = importe / 1,21, que coincide con el del parte al céntimo) y con el surtidor de la nave (solo litros). Solred llega por cuenta: si falta la de una sociedad, se avisa en lugar de darlo por bueno.',
  'Nómina: coste de empresa exacto de la gestoría (devengos + Seguridad Social + dietas), por mes y sección. La sección es el trabajo que realiza cada persona. Los grupos de menos de 3 personas se pliegan en otro para que un total no sea el sueldo de nadie. Si un mes aparece en varios ficheros se usa el más reciente y se anota la diferencia.',
- 'Movertis y Locatel: kilómetros y litros medidos por el propio camión. Movertis se lee del ERP (que ya lo baja y valida; solo días fiables, un día sin lectura no cuenta como cero) y por ahora cubre desde el 20/08/2026; Locatel (CANbus) y el histórico anterior están pendientes. Un día-camión está «activo» si circula 30 km o más; «sin parte» si en ese día no hay ningún parte de Access de esa matrícula.'
+ 'Movertis y Locatel: kilómetros y litros medidos por el propio camión, por matrícula y día. Manda el ERP (Movertis, solo días fiables); los días que el ERP no tiene se toman del histórico bajado de Wialon en este PC (desde agosto de 2025, con la misma regla: contador leído y como máximo '+KM_MAX_DIA+' km al día) y de los km diarios de Locatel del ERP. Un día sin lectura no cuenta como cero. Un día-camión está «activo» si circula 30 km o más; «sin parte» si en ese día no hay ningún parte de Access de esa matrícula.',
+ 'Vehículos y Clientes: mismo motor que «Margen por viaje». Cada viaje real (albarán) lleva su ingreso facturado y el coste REAL de la contabilidad repartido por sus bases medidas (litros → combustible, horas → personal, km → flota, ingreso → indirectos; subcontratado = factura real del subcontratista). El material (compra de áridos) se atribuye por cliente y se descuenta del ingreso para dar el ingreso de transporte y servicios. Sin contabilidad cerrada en el periodo no hay coste real y se dice.',
+ 'Tipo de servicio: cada línea de factura de GesRuta se clasifica por su cuenta contable (portes nacionales, áridos por toneladas, hormigón por m³, venta de productos…), no por el texto libre del concepto.'
 ]};
 
 // ---- capa PRIVADA de personal (con nombres): solo se escribe en la carpeta de trabajo; build.mjs la cifra

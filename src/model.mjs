@@ -165,7 +165,11 @@ export function createModel(data) {
     const byMonth=months.map(m=>{const rs=rows.filter(r=>r.month===m),ig=con?igByMonth.find(x=>x.key===m):null,i=rs.filter(r=>r.kind==='i').reduce((s,r)=>s+r.amount,0)-(ig?ig.income:0),g=rs.filter(r=>r.kind==='g').reduce((s,r)=>s+r.amount,0)-(ig?ig.expense:0);return {key:m,income:i,expenses:g,result:i-g,marginPct:divide(i-g,i)};});
     const byCompany=Object.values(names).filter(n=>wanted.includes(n)).map(n=>{const rs=rows.filter(r=>names[r.company]===n),ig=con?igByCompany.find(x=>x.key===n):null,i=rs.filter(r=>r.kind==='i').reduce((s,r)=>s+r.amount,0)-(ig?ig.income:0),g=rs.filter(r=>r.kind==='g').reduce((s,r)=>s+r.amount,0)-(ig?ig.expense:0);return {key:n,income:i,expenses:g,result:i-g,marginPct:divide(i-g,i)};});
     const partial=months.length>0&&(f.from.slice(0,7)===months[0]&&f.from.slice(8)!=='01'||(f.to.slice(0,7)===months[months.length-1]&&f.to<monthEnd(months[months.length-1])));
-    return {income,expenses,result:income-expenses,marginPct:divide(income-expenses,income),months,excludedMonths,partial,expenseCategories:cat('g'),incomeCategories:cat('i'),byMonth,byCompany,lastClosed:closed,consolidado:con,intragrupo};
+    // Detalle por CUENTA contable (para desplegar cada naturaleza). El ajuste intragrupo se hace por categoría, no por cuenta.
+    const accMap=new Map();
+    for(const r of rows){const k=r.kind+'|'+r.cat+'|'+r.cuenta;let x=accMap.get(k);if(!x){x={cuenta:r.cuenta,label:ledger.accounts?.[r.cuenta]||'',kind:r.kind,cat:r.cat,amount:0};accMap.set(k,x);}x.amount+=r.amount;}
+    const accounts=[...accMap.values()].filter(a=>Math.abs(a.amount)>.5).sort((a,b)=>b.amount-a.amount);
+    return {income,expenses,result:income-expenses,marginPct:divide(income-expenses,income),months,excludedMonths,partial,expenseCategories:cat('g'),incomeCategories:cat('i'),accounts,byMonth,byCompany,lastClosed:closed,consolidado:con,intragrupo};
   }
   // Coste de personal ACUMULADO por tramo (sección de la nómina) en el periodo y sociedades elegidos. Agregado, sin
   // nombres: suma el coste de empresa de la gestoría por tipo de trabajo (conductor hormigonera/nacional/bañera,
@@ -214,6 +218,7 @@ export function createModel(data) {
     const partKm=new Map();
     for(const p of data.parts){if(p.date<from||p.date>to)continue;const k=p.plate+'|'+p.date;partKm.set(k,(partKm.get(k)||0)+p.km);}
     const has=(r)=>partKm.has(r.plate+'|'+r.date),active=rows.filter(r=>r.km>=30),withPart=active.filter(has),without=active.filter(r=>!has(r));
+    const porFuente={};for(const r of rows)porFuente[r.src||'erp']=(porFuente[r.src||'erp']||0)+1;   // de dónde sale cada día-camión del periodo
     const withFuel=active.filter(r=>r.litres>0),litres=sum(withFuel,'litres'),kmFuel=sum(withFuel,'km'),kmWith=sum(withPart,'km');
     const partKmSame=withPart.reduce((s,r)=>s+partKm.get(r.plate+'|'+r.date),0);
     const byPlate=new Map();
@@ -233,7 +238,7 @@ export function createModel(data) {
     const motor=invRows.filter(r=>r.motor),trailers=invRows.filter(r=>r.clase==='remolque'),otros=invRows.filter(r=>!r.motor&&r.clase!=='remolque');
     const motorNoSensor=motor.filter(r=>!r.sensor).sort((a,b)=>b.km-a.km);
     const sensorInv={motor:motor.length,conSensor:motor.filter(r=>r.sensor).length,sinSensor:motorNoSensor.length,sinSensorPlates:motorNoSensor.map(r=>r.label),remolques:trailers.length,otros:otros.length,rows:motor.slice().sort((a,b)=>b.km-a.km)};
-    return {from,to,km:sum(active,'km'),litres,kmFuel,consumption:divide(litres*100,kmFuel),activeDays:active.length,daysWithoutPart:without.length,pctWithoutPart:divide(without.length,active.length),kmWithoutPart:sum(without,'km'),kmWithPart:kmWith,ratio:divide(partKmSame,kmWith),plates:byPlate.size,plateRows,sensorInv};
+    return {from,to,km:sum(active,'km'),litres,kmFuel,consumption:divide(litres*100,kmFuel),activeDays:active.length,daysWithoutPart:without.length,pctWithoutPart:divide(without.length,active.length),kmWithoutPart:sum(without,'km'),kmWithPart:kmWith,ratio:divide(partKmSame,kmWith),plates:byPlate.size,plateRows,sensorInv,dias:rows.length,porFuente,recortado:from!==f.from||to!==f.to};
   }
   // ---- Actividad operativa (GesRuta): viajes reales (albarán de cantera), km, m³/t e importe, por mes/cliente/vehículo.
   const activity=data.actividad||null;
@@ -296,6 +301,12 @@ export function createModel(data) {
   // Margen NETO por cliente y zona: reparte el coste REAL de la contabilidad a cada viaje por su base (litros→combustible,
   // horas→personal, km→flota fija, ingreso→directos e indirectos), escalado al ingreso capturado en los viajes. Así el
   // conjunto cuadra con el margen contable. Marca la fiabilidad (fracción de ingreso con km/horas MEDIDOS por localizador).
+  // El reparto es MES A MES: el gasto de cada mes del libro va a los viajes de ese mes (nunca a otro). Dentro del mes, cada
+  // partida (combustible, personal, flota) se divide entre los viajes propios MEDIDOS (los que llevan litros/horas/km del
+  // localizador) y los NO medidos por su peso en el ingreso; los medidos se la reparten por su base real y los no medidos
+  // por su ingreso. Así un mes sin traza no cuelga su gasto de los meses con traza, ni las bañeras medidas cargan con el
+  // gasoil de las hormigoneras sin traza. Un mes sin contabilidad cerrada usa los coeficientes del último mes cerrado
+  // (coste ESTIMADO, marcado). El impuesto de sociedades no es coste del viaje (margen antes de impuestos).
   function _reparto(f){
     if(!activity||!ledger)return null;
     const lv=ledgerView(f);if(!lv||lv.income<=0)return null;
@@ -304,31 +315,68 @@ export function createModel(data) {
     const wc=new Set(wanted.map(w=>A.co.indexOf(w)).filter(i=>i>=0));
     const rows=A.rows.filter(r=>{const m=A.mo[r[M]];return m>=from&&m<=to&&wc.has(r[C]);});
     if(!rows.length||A.rows[0].length<21)return null;      // hace falta impro (índice 19) + día (índice 20)
-    // Viaje SUBCONTRATADO (IMPPRO>0): su coste es lo que pagamos al subcontratista (IMPPRO real por línea, cuadra con la
-    // cuenta 607), NO la flota propia. Viaje PROPIO: combustible + personal + flota por sus bases medidas.
-    const sub=r=>(r[IMPRO]||0)>0;
-    let SL=0,SD=0,SK=0,SI=0,SP=0;for(const r of rows){SI+=r[IMP]||0;SP+=r[IMPRO]||0;if(!sub(r)){SL+=r[LIT]||0;SD+=r[DUR]||0;SK+=r[KMR]||0;}}
-    const catAmt=id=>{const c=lv.expenseCategories.find(x=>x.id===id);return c?c.amount:0;};
+    const sub=r=>(r[IMPRO]||0)>0,nameOf=r=>A.cli[r[CI]],mesOf=r=>A.mo[r[M]];
+    const baseOf={lit:r=>r[LIT]||0,dur:r=>r[DUR]||0,km:r=>r[KMR]||0};
     const BASE={combustible:'lit',personal:'dur',dietas:'dur',repuestos:'km',reparaciones:'km',seguros:'km',amortizacion:'km',alquileres:'km',peajes:'km',neumaticos:'km'};
-    const DIR=new Set(['aridos','subcontratacion']);   // DIRECTOS: no van por base de viaje (subcontratación por IMPPRO real; áridos por cliente)
-    const bucket={lit:0,dur:0,km:0,imp:0};
-    for(const c of lv.expenseCategories){if(DIR.has(c.id))continue;bucket[BASE[c.id]||'imp']+=c.amount;}
-    const S={lit:SL,dur:SD,km:SK,imp:SI},scale=SI/lv.income;   // coste soportado por los viajes = coste × (ingreso capturado / ingreso libro)
-    const coef={};for(const b of ['lit','dur','km','imp'])coef[b]=S[b]?bucket[b]/S[b]*scale:0;   // flota (km) solo entre viajes propios
-    // Subcontratación: coste REAL por viaje = IMPPRO de sus líneas, reescalado para cuadrar exacto con la cuenta 607 del libro.
-    const factorS=SP?catAmt('subcontratacion')*scale/SP:0;
-    const nameOf=r=>A.cli[r[CI]];
-    // Áridos (compraventa): no hay coste de material por línea → sigue por CLIENTE según el margen de inggas, sobre viajes propios.
-    const cliIng=new Map(),cliMa=new Map();
-    for(const r of rows)if(!sub(r))cliIng.set(nameOf(r),(cliIng.get(nameOf(r))||0)+(r[IMP]||0));
-    if(A.margen)for(const g of A.margen.rows){if(!wc.has(g.c)||g.m<from||g.m>to)continue;cliMa.set(g.cli,(cliMa.get(g.cli)||0)+(g.ma||0));}
-    let sumMa=0;for(const k of cliIng.keys())sumMa+=cliMa.get(k)||0;
-    const fMa=sumMa?catAmt('aridos')*scale/sumMa:0;
-    const dRate=new Map();for(const [k,ing] of cliIng)if(ing>0)dRate.set(k,(cliMa.get(k)||0)*fMa/ing);
-    const cost=r=>sub(r)
-      ? (r[IMPRO]||0)*factorS+(r[IMP]||0)*coef.imp
-      : (r[LIT]||0)*coef.lit+(r[DUR]||0)*coef.dur+(r[KMR]||0)*coef.km+(r[IMP]||0)*(coef.imp+(dRate.get(nameOf(r))||0));
-    return {A,rows,cost,nameOf,dRate,sub,factorS,coef,income:lv.income,gasto:lv.expenses,margenLibroPct:lv.marginPct,scale,from,to,ix:{C,M,CI,MI,DI,OI,M3,T,IMP,KMR,LIT,DUR,TRM,IMPRO}};
+    const DIR=new Set(['aridos','subcontratacion','impuesto_sociedades']);   // no van por base: subcontratación por IMPPRO real, áridos por cliente, el impuesto no es coste del viaje
+    // Gasto del libro por MES y naturaleza (mismas sociedades y mismo ajuste intragrupo que ledgerView).
+    const names=ledger.sociedades,closed=new Set(lv.months),catM=new Map();
+    for(const r of ledger.rows){if(r.kind!=='g'||!closed.has(r.month)||!wanted.includes(names[r.company]))continue;const x=catM.get(r.month)||{};x[r.cat]=(x[r.cat]||0)+r.amount;catM.set(r.month,x);}
+    if(f.consolidado)for(const ig of lv.intragrupo.byMonth){const x=catM.get(ig.key);if(x)x.subcontratacion=(x.subcontratacion||0)-ig.expense;}
+    const incomeM=new Map(lv.byMonth.map(x=>[x.key,x.income]));
+    // Bases de cada mes: ingreso total, IMPPRO de los subcontratados y, por partida, base e ingreso de los viajes propios medidos / no medidos.
+    const S=new Map();
+    for(const r of rows){
+      const m=mesOf(r);let s=S.get(m);if(!s){s={SI:0,SP:0,ingOwn:0,meas:{lit:{base:0,ing:0},dur:{base:0,ing:0},km:{base:0,ing:0}},unm:{lit:0,dur:0,km:0},cliIng:new Map()};S.set(m,s);}
+      const ing=r[IMP]||0;s.SI+=ing;
+      if(sub(r)){s.SP+=r[IMPRO]||0;continue;}
+      s.ingOwn+=ing;s.cliIng.set(nameOf(r),(s.cliIng.get(nameOf(r))||0)+ing);
+      for(const b of ['lit','dur','km']){const v=baseOf[b](r);if(v>0){s.meas[b].base+=v;s.meas[b].ing+=ing;}else s.unm[b]+=ing;}
+    }
+    // Material (áridos comprados) por cliente y mes, según el P&L de inggas: no hay coste de material por línea.
+    const cliMaM=new Map();
+    if(A.margen)for(const g of A.margen.rows){if(!wc.has(g.c)||g.m<from||g.m>to)continue;let mm=cliMaM.get(g.m);if(!mm){mm=new Map();cliMaM.set(g.m,mm);}mm.set(g.cli,(mm.get(g.cli)||0)+(g.ma||0));}
+    // Coeficientes por mes.
+    const K=new Map();let last=null;
+    for(const m of [...S.keys()].sort()){
+      const s=S.get(m),cats=catM.get(m);
+      if(!cats){K.set(m,null);continue;}                    // sin contabilidad cerrada: se resuelve después con el último mes cerrado
+      const inc=incomeM.get(m)||0,scale=inc>0?s.SI/inc:1;    // coste soportado por los viajes = gasto del mes × (ingreso capturado / ingreso libro)
+      const bucket={lit:0,dur:0,km:0,imp:0};
+      for(const [id,amt] of Object.entries(cats)){if(DIR.has(id))continue;bucket[BASE[id]||'imp']+=amt;}
+      const k={m,scale,coef:{},coefU:{},imp:0,factorS:0,dRate:new Map(),estimado:false,gasto:0};
+      const subAmt=cats.subcontratacion||0;if(s.SP>0)k.factorS=subAmt*scale/s.SP;else bucket.imp+=subAmt;   // subcontratación: IMPPRO real reescalado a la cuenta 607 del mes
+      const mm=cliMaM.get(m)||new Map();let sumMa=0;for(const c of s.cliIng.keys())sumMa+=mm.get(c)||0;
+      const arAmt=cats.aridos||0;
+      if(sumMa>0){const fMa=arAmt*scale/sumMa;for(const [c,ing] of s.cliIng)if(ing>0)k.dRate.set(c,(mm.get(c)||0)*fMa/ing);}else bucket.imp+=arAmt;
+      for(const b of ['lit','dur','km']){
+        const meas=s.meas[b],unm=s.unm[b],tot=meas.ing+unm;
+        if(!(tot>0)){bucket.imp+=bucket[b];k.coef[b]=0;k.coefU[b]=0;continue;}   // sin viajes propios en el mes: todo por ingreso
+        const amt=bucket[b]*scale,pm=amt*(meas.ing/tot),pu=amt*(unm/tot);
+        k.coef[b]=meas.base>0?pm/meas.base:0;k.coefU[b]=unm>0?pu/unm:0;
+      }
+      k.imp=s.SI>0?bucket.imp*scale/s.SI:0;
+      k.gasto=Object.entries(cats).filter(([id])=>id!=='impuesto_sociedades').reduce((a,[,v])=>a+v,0);
+      K.set(m,k);last=k;
+    }
+    const firstK=[...K.values()].find(Boolean);
+    for(const [m,k] of K)if(!k)K.set(m,(last||firstK)?{...(last||firstK),estimado:true,m}:null);   // mes sin cerrar: coeficientes del último cerrado
+    const VACIO={combustible:0,personal:0,flota:0,indirectos:0,aridos:0,subcontrata:0,estimado:true};
+    const desglose=r=>{
+      const k=K.get(mesOf(r));if(!k)return VACIO;
+      const ing=r[IMP]||0;
+      if(sub(r))return {combustible:0,personal:0,flota:0,indirectos:ing*k.imp,aridos:0,subcontrata:(r[IMPRO]||0)*k.factorS,estimado:k.estimado};
+      const part=b=>{const v=baseOf[b](r);return v>0?v*k.coef[b]:ing*k.coefU[b];};
+      return {combustible:part('lit'),personal:part('dur'),flota:part('km'),indirectos:ing*k.imp,aridos:ing*(k.dRate.get(nameOf(r))||0),subcontrata:0,estimado:k.estimado};
+    };
+    const cost=r=>{const d=desglose(r);return d.combustible+d.personal+d.flota+d.indirectos+d.aridos+d.subcontrata;};
+    const dRateOf=r=>{const k=K.get(mesOf(r));return k?(k.dRate.get(nameOf(r))||0):0;};
+    // Coeficientes MEDIOS del periodo, solo para explicarlos: coste de los viajes medidos / sus bases medidas.
+    const coef={lit:0,dur:0,km:0,imp:0};{const num={lit:0,dur:0,km:0,imp:0},den={lit:0,dur:0,km:0,imp:0};for(const [m,k] of K){const s=S.get(m);if(!k||!s)continue;for(const b of ['lit','dur','km']){num[b]+=k.coef[b]*s.meas[b].base;den[b]+=s.meas[b].base;}num.imp+=k.imp*s.SI;den.imp+=s.SI;}for(const b in coef)coef[b]=den[b]>0?num[b]/den[b]:0;}
+    let SI=0;for(const s of S.values())SI+=s.SI;
+    const mesesEstimados=[...K.entries()].filter(([,k])=>k&&k.estimado).map(([m])=>m).sort();
+    const isoc=lv.expenseCategories.filter(c=>c.id==='impuesto_sociedades').reduce((a,c)=>a+c.amount,0);
+    return {A,rows,cost,desglose,dRateOf,nameOf,sub,coef,K,mesesEstimados,income:lv.income,gasto:lv.expenses-isoc,margenLibroPct:divide(lv.income-(lv.expenses-isoc),lv.income),scale:SI/lv.income,from,to,ix:{C,M,CI,MI,DI,OI,M3,T,IMP,KMR,LIT,DUR,TRM,IMPRO}};
   }
   function netaView(f){
     const R=_reparto(f);if(!R)return null;
@@ -338,17 +386,17 @@ export function createModel(data) {
     const cerrar=x=>{x.coste=Math.round(x.coste);x.ingreso=Math.round(x.ingreso);x.margen=x.ingreso-x.coste;x.margenPct=x.ingreso?x.margen/x.ingreso:null;x.fiable=x.ingreso?x.medido/x.ingreso:0;return x;};
     const grp=fn=>{const m=new Map();for(const r of rows){const k=fn(r)||'(sin asignar)';let x=m.get(k);if(!x){x=blank(k);m.set(k,x);}add(x,r);}return [...m.values()].map(cerrar).sort((a,b)=>b.ingreso-a.ingreso);};
     const tot=blank('');for(const r of rows)add(tot,r);cerrar(tot);
-    return {tot,byClient:grp(r=>A.cli[r[CI]]),byZona:grp(r=>A.prov[r[OI]]),coef:R.coef,income:Math.round(R.income),gasto:Math.round(R.gasto),margenLibroPct:R.margenLibroPct,scale:R.scale,from:R.from,to:R.to};
+    return {tot,byClient:grp(r=>A.cli[r[CI]]),byZona:grp(r=>A.prov[r[OI]]),coef:R.coef,mesesEstimados:R.mesesEstimados,income:Math.round(R.income),gasto:Math.round(R.gasto),margenLibroPct:R.margenLibroPct,scale:R.scale,from:R.from,to:R.to};
   }
   // Margen NETO por VIAJE individual (tabla paginada en la pestaña «Margen por viaje»): mismo reparto, sin agregar.
   function netaTrips(f){
     const R=_reparto(f);if(!R)return null;
-    const {A,rows,cost,nameOf,dRate,sub,factorS,coef,ix}=R,{C,M,MI,DI,OI,M3,T,IMP,KMR,LIT,DUR,TRM,IMPRO}=ix;
+    const {A,rows,cost,desglose,dRateOf,nameOf,sub,ix}=R,{C,M,MI,DI,OI,M3,T,IMP,KMR,LIT,DUR,TRM,IMPRO}=ix;
     const TR=['medido','repartido','estimado','sin traza'];
     const hhmm=s=>s?String(s).slice(11,16):null;
-    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=!R.sub(r)&&(dRate.get(nameOf(r))||0)>1;const x={mes:A.mo[r[M]],dia:(A.dia&&A.dia[r[20]])||A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],carga:A.pt[r[13]]||A.loc[r[6]]||'—',descarga:A.pt[r[14]]||A.loc[r[7]]||'—',mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(R.sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':''),emp:A.co[r[C]],locO:A.loc[r[6]]||null,locD:A.loc[r[7]]||null,lit:(r[LIT]||0)>0?+Number(r[LIT]).toFixed(1):null,horm:!!r[12],sub:sub(r)};
-      // desglose del coste real del viaje, con las mismas bases que cost(r): sirve para el detalle desplegable
-      x.desg=sub(r)?{subcontrata:(r[IMPRO]||0)*factorS,indirectos:(r[IMP]||0)*coef.imp}:{combustible:(r[LIT]||0)*coef.lit,personal:(r[DUR]||0)*coef.dur,flota:(r[KMR]||0)*coef.km,indirectos:(r[IMP]||0)*coef.imp,aridos:(r[IMP]||0)*(dRate.get(nameOf(r))||0)};
+    return rows.map(r=>{const d=desglose(r),ing=Math.round(r[IMP]),cst=Math.round(d.combustible+d.personal+d.flota+d.indirectos+d.aridos+d.subcontrata),alto=!sub(r)&&dRateOf(r)>1;const x={mes:A.mo[r[M]],dia:(A.dia&&A.dia[r[20]])||A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],carga:A.pt[r[13]]||A.loc[r[6]]||'—',descarga:A.pt[r[14]]||A.loc[r[7]]||'—',mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':'')+(d.estimado?' (mes sin cerrar)':''),emp:A.co[r[C]],locO:A.loc[r[6]]||null,locD:A.loc[r[7]]||null,lit:(r[LIT]||0)>0?+Number(r[LIT]).toFixed(1):null,horm:!!r[12],sub:sub(r),costeEstimado:!!d.estimado};
+      // desglose del coste real del viaje (mismo reparto mensual que cost(r)): sirve para el detalle desplegable
+      x.desg=sub(r)?{subcontrata:d.subcontrata,indirectos:d.indirectos}:{combustible:d.combustible,personal:d.personal,flota:d.flota,indirectos:d.indirectos,aridos:d.aridos};
       // triangulado v2 (índices 21..31): hora real de inicio/fin, orden del día, minutos de conducción/espera, método, confianza, chofer del tacógrafo
       if(r.length>=32){const ti=r[21]||null,tf=r[22]||null;x.tini=hhmm(ti);x.tfin=tf?hhmm(tf)+(ti&&tf.slice(0,10)!==ti.slice(0,10)?' +1':''):null;x.orden=r[23]||null;x.cond=r[24]==null?null:Math.round(r[24]);x.espera=r[25]==null?null:Math.round(r[25]);x.otros=r[26]==null?null:Math.round(r[26]);x.metodo=(A.met&&A.met[r[27]])||null;x.conf=(A.conf&&A.conf[r[28]])||null;x.chofer=(A.chot&&A.chot[r[29]])||null;x.nocturna=!!r[30];x.medido=!!r[31];x.mapaKey=(x.medido&&x.mat&&x.mat!=='—'&&x.dia)?x.mat+'_'+x.dia:null;
         if(r.length>=34){x.kmCarg=r[32]==null?null:Math.round(r[32]);x.kmVac=r[33]==null?null:Math.round(r[33]);}
@@ -358,6 +406,81 @@ export function createModel(data) {
         if(r.length>=64){x.tCarga=r[35]||null;x.tCargaFin=r[36]||null;x.tDesc=r[37]||null;x.tDescFin=r[38]||null;x.disp=r[39];x.desc=r[40];x.sinDato=r[41];x.minFuente=(A.mfu&&A.mfu[r[42]])||null;x.coherente=r[43]==null?null:!!r[43];x.transc=r[44];x.litC=r[45];x.litV=r[46];x.distOd=r[47];x.obraMin=r[48];x.viajesDia=r[49];x.motivo=(A.mot&&A.mot[r[50]])||null;x.fechaGes=(A.dia&&A.dia[r[51]])||null;x.choferGes=(A.chot&&A.chot[r[52]])||null;x.choferOk=r[53]==null?null:!!r[53];x.tipo=(A.tipo&&A.tipo[r[54]])||null;x.larga=!!r[55];x.espejo=!!r[56];x.jIni=r[57]||null;x.jFin=r[58]||null;x.kmFuente=(A.kmf&&A.kmf[r[59]])||null;x.litRaw=r[60];x.litCal=r[61];x.viaje=r[62]||null;x.cantera=r[63]||null;}
         x.kmAlb=r[8]||0;}
       return x;});
+  }
+  // ---- Vista REAL por dimensión (vehículo, cliente, mes, tipo, ruta): el MISMO reparto que «Margen por viaje», agregado.
+  // Cada viaje real suma su ingreso facturado y su coste real (combustible por litros, personal por horas, flota por km,
+  // indirectos por ingreso; subcontratado = factura real). El «material» es la compra de áridos atribuida por cliente:
+  // ingreso de transporte y servicios = ingreso facturado − material. Sin contabilidad cerrada no hay coste (real=false).
+  const IX={C:0,M:1,CI:2,MI:3,OI:4,DI:5,LI:6,LD:7,KM:8,M3:9,T:10,IMP:11,HORM:12,PO:13,PD:14,KMR:15,LIT:16,DUR:17,TRM:18,IMPRO:19,DIA:20};
+  const plateKeyOf=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  function realView(f,dim='plate'){
+    if(!activity)return null;
+    const A=activity,from=f.from.slice(0,7),to=f.to.slice(0,7),wanted=f.companies?.length?f.companies:['Razo','Agetrans'];
+    const wc=new Set(wanted.map(w=>A.co.indexOf(w)).filter(i=>i>=0));
+    let rows=A.rows.filter(r=>{const m=A.mo[r[IX.M]];return m>=from&&m<=to&&wc.has(r[IX.C]);});
+    const plates=f.plates?.length?new Set(f.plates.map(plateKeyOf)):null;   // segmentador de vehículo del informe
+    if(plates)rows=rows.filter(r=>plates.has(plateKeyOf(A.mat[r[IX.MI]])));
+    if(!rows.length)return null;
+    const R=_reparto(f);                                  // coeficientes fijos del periodo (no cambian al filtrar)
+    const sub=r=>(r[IX.IMPRO]||0)>0,plateOf=r=>A.mat[r[IX.MI]]||'',cliOf=r=>A.cli[r[IX.CI]]||'(sin asignar)';
+    const tipoOf=r=>{const t=r.length>=64&&A.tipo?A.tipo[r[54]]:'';return t||(r[IX.HORM]?'hormigonera':(sub(r)?'subcontratado':''));};
+    const keyFns={plate:r=>plateOf(r)||'(sin matrícula)',client:cliOf,month:r=>A.mo[r[IX.M]],tipo:tipoOf,ruta:r=>A.prov[r[IX.OI]]+' → '+A.prov[r[IX.DI]],carga:r=>A.pt[r[IX.PO]]||A.loc[r[IX.LI]]||'(sin punto)',descarga:r=>A.pt[r[IX.PD]]||A.loc[r[IX.LD]]||'(sin punto)'};
+    const keyOf=keyFns[dim]||keyFns.plate;
+    const blank=k=>({key:k,viajes:0,ingreso:0,ingPropio:0,material:0,coste:0,combustible:0,personal:0,flota:0,indirectos:0,subcontrata:0,km:0,kmMed:0,horas:0,litros:0,kmLit:0,m3:0,t:0,medido:0,subViajes:0,subIng:0,viajesMed:0,kmCarg:0,kmVac:0,cond:0,espera:0,costeEstimado:0,dias:new Set(),mats:new Set(),clis:new Set(),tipos:new Map()});
+    const add=(x,r)=>{
+      const ing=r[IX.IMP]||0,es=sub(r);x.viajes++;x.ingreso+=ing;x.m3+=r[IX.M3]||0;x.t+=r[IX.T]||0;x.dias.add(r[IX.DIA]);x.mats.add(plateOf(r));x.clis.add(cliOf(r));
+      const tp=tipoOf(r);x.tipos.set(tp,(x.tipos.get(tp)||0)+1);
+      if(es){x.subViajes++;x.subIng+=ing;}
+      else{x.ingPropio+=ing;x.km+=r[IX.KMR]||0;x.horas+=(r[IX.DUR]||0)/60;x.litros+=r[IX.LIT]||0;if((r[IX.LIT]||0)>0)x.kmLit+=r[IX.KMR]||0;if(r[IX.TRM]<=1)x.kmMed+=r[IX.KMR]||0;}
+      if(r[IX.TRM]<=1||es)x.medido+=ing;
+      if(r.length>=32&&r[31]){x.viajesMed++;if(r[24]!=null)x.cond+=r[24];if(r[25]!=null)x.espera+=r[25];}
+      if(r.length>=34){if(r[32]!=null)x.kmCarg+=r[32];if(r[33]!=null)x.kmVac+=r[33];}
+      if(R){
+        const d=R.desglose(r);
+        x.combustible+=d.combustible;x.personal+=d.personal;x.flota+=d.flota;x.indirectos+=d.indirectos;x.material+=d.aridos;x.subcontrata+=d.subcontrata;
+        x.coste+=d.combustible+d.personal+d.flota+d.indirectos+d.aridos+d.subcontrata;if(d.estimado)x.costeEstimado++;
+      }
+    };
+    const cerrar=x=>{
+      x.dias=x.dias.size;x.matriculas=x.mats.size;x.clientes=x.clis.size;delete x.mats;delete x.clis;
+      x.tipo=[...x.tipos.entries()].sort((a,b)=>b[1]-a[1])[0]?.[0]||'';x.tipos=Object.fromEntries(x.tipos);
+      x.ingTransporte=x.ingreso-x.material;x.propio=x.subViajes<x.viajes/2;
+      x.margen=R?x.ingreso-x.coste:null;x.margenPct=R&&x.ingreso?x.margen/x.ingreso:null;x.margenTransPct=R&&x.ingTransporte?x.margen/x.ingTransporte:null;
+      x.fiable=x.ingreso?x.medido/x.ingreso:0;
+      const ingKmBase=x.ingPropio-x.material;   // por km y por hora: solo viajes propios (los subcontratados no llevan km ni horas nuestros)
+      x.ingKm=divide(ingKmBase,x.km);x.ingHora=divide(ingKmBase,x.horas);
+      x.margenKm=R?divide(ingKmBase-(x.combustible+x.personal+x.flota+x.indirectos*(x.ingreso?x.ingPropio/x.ingreso:1)),x.km):null;
+      x.margenHora=R?divide(ingKmBase-(x.combustible+x.personal+x.flota+x.indirectos*(x.ingreso?x.ingPropio/x.ingreso:1)),x.horas):null;
+      x.costeKm=R?divide(x.combustible+x.personal+x.flota,x.km):null;x.l100=x.kmLit>0?x.litros/x.kmLit*100:null;
+      return x;};
+    const agrupar=(rs,fn,porMes)=>{const m=new Map();for(const r of rs){const k=fn(r);let x=m.get(k);if(!x){x=blank(k);m.set(k,x);}add(x,r);}return [...m.values()].map(cerrar).sort((a,b)=>porMes?(a.key<b.key?-1:1):b.ingreso-a.ingreso);};
+    const groups=agrupar(rows,keyOf,dim==='month');
+    const tot=blank('TOTAL');for(const r of rows)add(tot,r);cerrar(tot);
+    // detalle de un grupo: sus viajes reagrupados por mes, cliente, matrícula, ruta, tipo y lugares de carga/descarga
+    const detail=key=>{const rs=rows.filter(r=>keyOf(r)===key);return {byMonth:agrupar(rs,keyFns.month,true),byClient:agrupar(rs,keyFns.client),byPlate:agrupar(rs,keyFns.plate),byRuta:agrupar(rs,keyFns.ruta),byTipo:agrupar(rs,keyFns.tipo),byCarga:agrupar(rs,keyFns.carga),byDescarga:agrupar(rs,keyFns.descarga),viajes:rs.length};};
+    return {dim,groups,tot,detail,real:!!R,coef:R?R.coef:null,mesesEstimados:R?R.mesesEstimados:[],scale:R?R.scale:null,income:R?R.income:null,gasto:R?R.gasto:null,margenLibroPct:R?R.margenLibroPct:null,from,to};
+  }
+  // Localizador por matrícula en el periodo (todos los días, con y sin viaje): km, días activos, litros del sensor.
+  function telemetryByPlate(f){
+    const out=new Map();if(!telemetry)return out;
+    for(const r of telemetry.rows){if(r.date<f.from||r.date>f.to)continue;let x=out.get(r.plate);if(!x){x={plate:r.plate,dias:0,activos:0,km:0,litros:0,kmFuel:0,diasFuel:0,desde:r.date,hasta:r.date,clase:telemetry.clases?.[r.plate]||''};out.set(r.plate,x);}
+      x.dias++;if(r.km>=30)x.activos++;x.km+=r.km;if(r.litres>0){x.litros+=r.litres;x.kmFuel+=r.km;x.diasFuel++;}if(r.date<x.desde)x.desde=r.date;if(r.date>x.hasta)x.hasta=r.date;}
+    for(const x of out.values())x.l100=x.kmFuel>0?x.litros/x.kmFuel*100:null;
+    return out;
+  }
+  // Tarjeta Solred por matrícula en los meses del periodo: litros y euros (sin IVA) de gasóleo. Solo los meses con fichero.
+  function solredByPlate(f){
+    const out=new Map(),sol=data.fuel?.solred;if(!sol)return out;
+    const from=f.from.slice(0,7),to=f.to.slice(0,7);
+    for(const r of sol.rows){if(r.kind!=='gasoleo'||!r.plate||r.month<from||r.month>to)continue;let x=out.get(r.plate);if(!x){x={plate:r.plate,litros:0,base:0,n:0,meses:new Set()};out.set(r.plate,x);}x.litros+=r.litros||0;x.base+=r.base||0;x.n+=r.n||0;x.meses.add(r.month);}
+    for(const x of out.values())x.meses=[...x.meses].sort();
+    return out;
+  }
+  // Partes de Access por matrícula en el periodo (DECLARADO, solo como referencia).
+  function partsByPlate(f){
+    const out=new Map();
+    for(const p of data.parts){if(p.date<f.from||p.date>f.to||!p.plate)continue;let x=out.get(p.plate);if(!x){x={plate:p.plate,partes:0,km:0,horas:0,litros:0,coste:0,owner:p.owner,category:p.category};out.set(p.plate,x);}x.partes++;x.km+=p.km;x.horas+=p.hours;x.litros+=p.litres;x.coste+=p.stored;}
+    return out;
   }
   // Puntos GEO del periodo elegido (para el MAPA): agrega los viajes filtrados por su punto de origen/destino y une la
   // coordenada real del localizador (paradas GPS de la flota). Respeta periodo y sociedad.
@@ -372,5 +495,5 @@ export function createModel(data) {
     for(const r of rows){bump(r[PO],'orig',r);bump(r[PD],'dest',r);}
     return {puntos:[...pts.values()].map(p=>({...p,t:Math.round(p.t),m3:Math.round(p.m3),ing:Math.round(p.ing)})).sort((a,b)=>b.viajes-a.viajes)};
   }
-  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,ownFleet,telemetryView,activityView,marginView,netaView,netaTrips,zonasGeo};
+  return {run,select,aggregate,group,weights,factor,pool,imputed,payrollMonths,reconcilePersonnel,personnelByTramo,reconcileFuel,ledgerView,bridge,societyOf,plateSociety,ownFleet,telemetryView,activityView,marginView,netaView,netaTrips,zonasGeo,realView,telemetryByPlate,solredByPlate,partsByPlate};
 }
