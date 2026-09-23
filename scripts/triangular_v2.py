@@ -2153,20 +2153,37 @@ def main():
                                       "viajes_con_traza": c_["viajes"], "pct_geografia_albaran": round(100.0 * c_["ok"] / c_["viajes"], 1),
                                       "sin_ciclo": c_["sin_ciclo"], "otra_planta": c_["otra_planta"], "clase": (flota.get(m) or {}).get("clase") or ""}
                                      for m, c_ in sorted(coh.items(), key=lambda kv: kv[1]["ok"] / kv[1]["viajes"]) if c_["viajes"] >= 30]
-    par_l = collections.defaultdict(lambda: {"n": 0, "min": 0, "mats": set()})
+    # Roberto (23/09): una magnitud que resume muchos viajes es un ABANICO: media Y mediana, p90 y desviacion tipica, no un dato unico.
+    def _est(xs):
+        v = sorted(xs); n_ = len(v)
+        if not n_:
+            return None, None, None
+        med = v[n_ // 2] if n_ % 2 else (v[n_ // 2 - 1] + v[n_ // 2]) / 2.0
+        p90 = v[min(n_ - 1, int(round(0.9 * (n_ - 1))))]
+        mu = sum(v) / n_; sd = (sum((z - mu) ** 2 for z in v) / (n_ - 1)) ** 0.5 if n_ > 1 else 0.0
+        return round(med, 1), round(p90, 1), round(sd, 1)
+    par_l = collections.defaultdict(lambda: {"n": 0, "min": 0, "mats": set(), "l": []})
     for x in viajes_out:
         if x["espejo_de"]:
             continue
         for p in (x.get("paradas") or []):
-            e = par_l[(p["rol"], p["lugar"] or "")]; e["n"] += 1; e["min"] += p["min"] or 0; e["mats"].add(x["matricula"])
-    hall["paradas_por_lugar"] = [{"rol": k[0], "lugar": k[1] or None, "paradas": e["n"], "minutos": e["min"], "media_min": round(e["min"] / e["n"], 1), "camiones": len(e["mats"])}
-                                 for k, e in sorted(par_l.items(), key=lambda kv: -kv[1]["min"]) if e["n"] >= 5][:200]
-    esp_c = collections.defaultdict(lambda: {"n": 0, "esp": 0.0, "cond": 0.0})
+            e = par_l[(p["rol"], p["lugar"] or "")]; e["n"] += 1; e["min"] += p["min"] or 0; e["mats"].add(x["matricula"]); e["l"].append(p["min"] or 0)
+    def _row_par(k, e):
+        med, p90, sd = _est(e["l"])
+        return {"rol": k[0], "lugar": k[1] or None, "paradas": e["n"], "minutos": e["min"], "media_min": round(e["min"] / e["n"], 1),
+                "mediana_min": med, "p90_min": p90, "desv_min": sd, "camiones": len(e["mats"])}
+    hall["paradas_por_lugar"] = [_row_par(k, e) for k, e in sorted(par_l.items(), key=lambda kv: -kv[1]["min"]) if e["n"] >= 5][:200]
+    esp_c = collections.defaultdict(lambda: {"n": 0, "esp": 0.0, "cond": 0.0, "le": [], "lc": []})
     for x in viajes_out:
         if x["medido"] and not x["espejo_de"] and x["cliente"] and x["min_espera"] is not None:
             e = esp_c[x["cliente"]]; e["n"] += 1; e["esp"] += x["min_espera"] or 0; e["cond"] += x["min_conduccion"] or 0
-    hall["espera_por_cliente"] = [{"cliente": c_, "viajes_medidos": e["n"], "min_espera_total": round(e["esp"]), "min_espera_medio": round(e["esp"] / e["n"], 1), "min_conduccion_medio": round(e["cond"] / e["n"], 1)}
-                                  for c_, e in sorted(esp_c.items(), key=lambda kv: -kv[1]["esp"]) if e["n"] >= 10]
+            e["le"].append(x["min_espera"] or 0); e["lc"].append(x["min_conduccion"] or 0)
+    def _row_esp(c_, e):
+        med, p90, sd = _est(e["le"]); medc, _p, _s = _est(e["lc"])
+        return {"cliente": c_, "viajes_medidos": e["n"], "min_espera_total": round(e["esp"]), "min_espera_medio": round(e["esp"] / e["n"], 1),
+                "min_espera_mediana": med, "min_espera_p90": p90, "min_espera_desv": sd,
+                "min_conduccion_medio": round(e["cond"] / e["n"], 1), "min_conduccion_mediana": medc}
+    hall["espera_por_cliente"] = [_row_esp(c_, e) for c_, e in sorted(esp_c.items(), key=lambda kv: -kv[1]["esp"]) if e["n"] >= 10]
     st = collections.defaultdict(lambda: {"n": 0, "casas": set(), "motivo": None, "desde": None, "hasta": None})
     for x in viajes_out:
         if x["metodo"] == "sin_traza" and x["motivo"] in ("camion_ajeno", "sin_telemetria_o_pendiente_locatel", "pendiente_bajada", "sin_matricula", "sin_traza_en_esas_fechas_locatel"):
