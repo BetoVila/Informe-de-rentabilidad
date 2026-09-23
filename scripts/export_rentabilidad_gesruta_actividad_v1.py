@@ -437,7 +437,12 @@ def main():
                                "taco": rs.get("horas_del_tacografo"), "chofer_ok": (rs.get("chofer_coincide_gesruta") or {}).get("True"),
                                "chofer_no": (rs.get("chofer_coincide_gesruta") or {}).get("False"),
                                "nocturnas": (rs.get("jornadas") or {}).get("nocturnas"), "sin_ciclo": rs.get("viajes_sin_ciclo"),
-                               "sobrantes_h": rs.get("horas_sobrantes_sin_viaje"), "largas": rs.get("larga_distancia_pendiente_pasada_2"),
+                               "sobrantes_h": rs.get("horas_sobrantes_sin_viaje"),
+                               "largas": (rs.get("larga_distancia") or {}).get("total") if isinstance(rs.get("larga_distancia"), dict) else rs.get("larga_distancia_pendiente_pasada_2"),
+                               "largas_con_traza": (rs.get("larga_distancia") or {}).get("con_traza") if isinstance(rs.get("larga_distancia"), dict) else None,
+                               "largas_medidas": (rs.get("larga_distancia") or {}).get("medidos") if isinstance(rs.get("larga_distancia"), dict) else None,
+                               "espejos": rs.get("espejos_intercompania"),
+                               "taco_descartado": sum((rs.get("tacografo_descartado") or {}).values()),
                                "repetidas": rs.get("cantera_repetida_error_grabacion"), "sin_traza": sum((rs.get("sin_traza_por_motivo") or {}).values())}
                 # cobertura HONESTA: sobre los viajes con traza disponible (2025 no tiene traza bajada; no es hueco del metodo)
                 try:
@@ -498,8 +503,13 @@ def main():
             # confianza, chofer que llevaba el camion (tacografo) y jornada nocturna. TODO VISIBLE en el informe.
             t["tini"] = tr.get("t_ini"); t["tfin"] = tr.get("t_fin"); t["ord"] = tr.get("orden_dia")
             t["mcon"] = tr.get("min_conduccion"); t["mesp"] = tr.get("min_espera"); t["motr"] = tr.get("min_otros")
-            t["met"] = tr.get("metodo"); t["conf"] = tr.get("confianza"); t["chot"] = tr.get("chofer_tacografo")
+            t["met"] = (tr.get("metodo") or "") + (" · espejo" if tr.get("espejo_de") else "")
+            t["conf"] = tr.get("confianza"); t["chot"] = tr.get("chofer_tacografo")
             t["noct"] = bool(tr.get("jornada_nocturna")); t["med"] = bool(tr.get("medido")); t["mfu"] = tr.get("min_fuente")
+            t["kmc"] = tr.get("km_cargado"); t["kmv"] = tr.get("km_vacio")
+            # paradas y esperas del viaje (>= 5 min): hora, minutos, lugar (nombre del maestro) y que hacia (carga/descarga/espera)
+            t["par"] = [[(p.get("t") or "")[11:16], p.get("min"), (lugar.get(p.get("lugar"), {}).get("nom", "") or p.get("lugar")) if p.get("lugar") else "", p.get("rol") or ""]
+                        for p in (tr.get("paradas") or [])]
         elif tr:
             t["ord"] = tr.get("orden_dia"); t["met"] = tr.get("metodo"); t["conf"] = tr.get("confianza"); t["med"] = False
         else:

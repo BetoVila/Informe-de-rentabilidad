@@ -171,8 +171,12 @@ if(actividadSrc?.metadata?.disponible){
   const po=intern(pt,ptIx,r.on||''),pd=intern(pt,ptIx,r.dn||'');
   const dd=intern(dia,diaIx,r.dia||'');
   // 21..31: triangulado v2 (hora real inicio/fin, nº del día, min conducción/espera/otros, método, confianza, chofer tacógrafo, nocturno, medido)
+  // 32..33: km cargado / km en vacio del viaje (contador CAN; null si no se vieron la carga y la descarga)
   const v2=[r.tini||'',r.tfin||'',r.ord||0,r.mcon==null?null:r.mcon,r.mesp==null?null:r.mesp,r.motr==null?null:r.motr,
-   intern(met,metIx,r.met||''),intern(conf,confIx,r.conf||''),intern(chot,chotIx,r.chot?String(r.chot):''),r.noct?1:0,r.med?1:0];
+   intern(met,metIx,r.met||''),intern(conf,confIx,r.conf||''),intern(chot,chotIx,r.chot?String(r.chot):''),r.noct?1:0,r.med?1:0,
+   r.kmc==null?null:r.kmc,r.kmv==null?null:r.kmv,
+   // 34: paradas y esperas del viaje (>= 5 min): [hh:mm, minutos, lugar (interno en pt), que hacia (0 carga, 1 descarga, 2 espera, 3 fuera)]
+   (r.par||[]).map(p=>[p[0],p[1],intern(pt,ptIx,p[2]||''),({carga:0,descarga:1,espera:2,fuera:3})[p[3]]??3])];
   return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3,r.impro||0,dd].concat(v2);
  });
  // Margen operativo de GesRuta (inggas): P&L por mes×cliente. Antes del coste real de flota/personal/indirectos.

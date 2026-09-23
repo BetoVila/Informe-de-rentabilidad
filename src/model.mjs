@@ -328,7 +328,7 @@ export function createModel(data) {
     const cost=r=>sub(r)
       ? (r[IMPRO]||0)*factorS+(r[IMP]||0)*coef.imp
       : (r[LIT]||0)*coef.lit+(r[DUR]||0)*coef.dur+(r[KMR]||0)*coef.km+(r[IMP]||0)*(coef.imp+(dRate.get(nameOf(r))||0));
-    return {A,rows,cost,nameOf,dRate,sub,factorS,coef,income:lv.income,gasto:lv.expenses,margenLibroPct:lv.marginPct,scale,from,to,ix:{C,M,CI,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM,IMPRO}};
+    return {A,rows,cost,nameOf,dRate,sub,factorS,coef,income:lv.income,gasto:lv.expenses,margenLibroPct:lv.marginPct,scale,from,to,ix:{C,M,CI,MI,DI,OI,M3,T,IMP,KMR,LIT,DUR,TRM,IMPRO}};
   }
   function netaView(f){
     const R=_reparto(f);if(!R)return null;
@@ -343,12 +343,17 @@ export function createModel(data) {
   // Margen NETO por VIAJE individual (tabla paginada en la pestaña «Margen por viaje»): mismo reparto, sin agregar.
   function netaTrips(f){
     const R=_reparto(f);if(!R)return null;
-    const {A,rows,cost,nameOf,dRate,ix}=R,{M,MI,DI,OI,M3,T,IMP,KMR,DUR,TRM}=ix;
+    const {A,rows,cost,nameOf,dRate,sub,factorS,coef,ix}=R,{C,M,MI,DI,OI,M3,T,IMP,KMR,LIT,DUR,TRM,IMPRO}=ix;
     const TR=['medido','repartido','estimado','sin traza'];
     const hhmm=s=>s?String(s).slice(11,16):null;
-    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=!R.sub(r)&&(dRate.get(nameOf(r))||0)>1;const x={mes:A.mo[r[M]],dia:(A.dia&&A.dia[r[20]])||A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],carga:A.pt[r[13]]||A.loc[r[6]]||'—',descarga:A.pt[r[14]]||A.loc[r[7]]||'—',mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(R.sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':'')};
+    return rows.map(r=>{const ing=Math.round(r[IMP]),cst=Math.round(cost(r)),alto=!R.sub(r)&&(dRate.get(nameOf(r))||0)>1;const x={mes:A.mo[r[M]],dia:(A.dia&&A.dia[r[20]])||A.mo[r[M]],cliente:nameOf(r),ruta:A.prov[r[OI]]+' → '+A.prov[r[DI]],carga:A.pt[r[13]]||A.loc[r[6]]||'—',descarga:A.pt[r[14]]||A.loc[r[7]]||'—',mat:A.mat[r[MI]]||'—',m3:Math.round(r[M3]),t:Math.round(r[T]),km:Math.round(r[KMR]),horas:r[DUR]?+(r[DUR]/60).toFixed(1):null,ingreso:ing,coste:cst,margen:ing-cst,margenPct:ing?(ing-cst)/ing:null,fiab:(R.sub(r)?'subcontrata':(TR[r[TRM]]||'—'))+(alto?' ⚠':''),emp:A.co[r[C]],locO:A.loc[r[6]]||null,locD:A.loc[r[7]]||null,lit:(r[LIT]||0)>0?+Number(r[LIT]).toFixed(1):null,horm:!!r[12],sub:sub(r)};
+      // desglose del coste real del viaje, con las mismas bases que cost(r): sirve para el detalle desplegable
+      x.desg=sub(r)?{subcontrata:(r[IMPRO]||0)*factorS,indirectos:(r[IMP]||0)*coef.imp}:{combustible:(r[LIT]||0)*coef.lit,personal:(r[DUR]||0)*coef.dur,flota:(r[KMR]||0)*coef.km,indirectos:(r[IMP]||0)*coef.imp,aridos:(r[IMP]||0)*(dRate.get(nameOf(r))||0)};
       // triangulado v2 (índices 21..31): hora real de inicio/fin, orden del día, minutos de conducción/espera, método, confianza, chofer del tacógrafo
-      if(r.length>=32){const ti=r[21]||null,tf=r[22]||null;x.tini=hhmm(ti);x.tfin=tf?hhmm(tf)+(ti&&tf.slice(0,10)!==ti.slice(0,10)?' +1':''):null;x.orden=r[23]||null;x.cond=r[24]==null?null:Math.round(r[24]);x.espera=r[25]==null?null:Math.round(r[25]);x.otros=r[26]==null?null:Math.round(r[26]);x.metodo=(A.met&&A.met[r[27]])||null;x.conf=(A.conf&&A.conf[r[28]])||null;x.chofer=(A.chot&&A.chot[r[29]])||null;x.nocturna=!!r[30];x.medido=!!r[31];x.mapaKey=(x.medido&&x.mat&&x.mat!=='—'&&x.dia)?x.mat+'_'+x.dia:null;}
+      if(r.length>=32){const ti=r[21]||null,tf=r[22]||null;x.tini=hhmm(ti);x.tfin=tf?hhmm(tf)+(ti&&tf.slice(0,10)!==ti.slice(0,10)?' +1':''):null;x.orden=r[23]||null;x.cond=r[24]==null?null:Math.round(r[24]);x.espera=r[25]==null?null:Math.round(r[25]);x.otros=r[26]==null?null:Math.round(r[26]);x.metodo=(A.met&&A.met[r[27]])||null;x.conf=(A.conf&&A.conf[r[28]])||null;x.chofer=(A.chot&&A.chot[r[29]])||null;x.nocturna=!!r[30];x.medido=!!r[31];x.mapaKey=(x.medido&&x.mat&&x.mat!=='—'&&x.dia)?x.mat+'_'+x.dia:null;
+        if(r.length>=34){x.kmCarg=r[32]==null?null:Math.round(r[32]);x.kmVac=r[33]==null?null:Math.round(r[33]);}
+        // 34: paradas y esperas del viaje [hh:mm, minutos, lugar, qué hacía]
+        if(r.length>=35&&Array.isArray(r[34]))x.paradas=r[34].map(p=>({t:p[0],min:p[1],lugar:A.pt[p[2]]||'',rol:['carga','descarga','espera','fuera'][p[3]]||''}));}
       return x;});
   }
   // Puntos GEO del periodo elegido (para el MAPA): agrega los viajes filtrados por su punto de origen/destino y une la

@@ -26,7 +26,7 @@ tacografo (actividad y tarjeta, dentro de la traza de Wialon) y los albaranes de
      de hoy. Nunca se cuenta un ciclo dos veces.
 Salida = esquema v1 + aditivos (ver meta). Hora de Madrid sin tzdata ni pytz (regla UE). SOLO LECTURA. Nunca inventa.
 """
-import argparse, bisect, collections, datetime as dt, glob, gzip, json, os, statistics, sys
+import argparse, bisect, collections, datetime as dt, glob, gzip, json, math, os, statistics, sys
 
 D = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, D)
@@ -96,8 +96,10 @@ def cargar_trazas(dirs):
             for e in x.get("conductor_eventos") or []:
                 if e.get("k") == "tco_activity_type1" and isinstance(e.get("v"), (int, float)):
                     act.append((int(e["t"]), int(e["v"])))
-                elif e.get("k") == "tco_driver1_id" and isinstance(e.get("v"), str) and e["v"].startswith("h:"):
-                    drv.append((int(e["t"]), e["v"]))
+                elif e.get("k") == "tco_driver1_id":
+                    # tarjeta en la ranura 1 (hash) o SIN tarjeta (None): hay que ver cuando se saca, no solo cuando se mete
+                    v = e.get("v")
+                    drv.append((int(e["t"]), v if isinstance(v, str) and v.startswith("h:") else None))
             tr[(mat, dia)] = {"fuente": fuente, "pts": pts, "act": act, "drv": drv}
     return tr
 
@@ -107,7 +109,7 @@ def coser(trazas):
     for (mat, dia), v in trazas.items():
         flujo[mat].extend(v["pts"]); acts[mat].extend(v["act"]); drvs[mat].extend(v["drv"])
     for mat in flujo:
-        flujo[mat].sort(key=lambda q: q["t"]); acts[mat].sort(); drvs[mat].sort()
+        flujo[mat].sort(key=lambda q: q["t"]); acts[mat].sort(key=lambda e: e[0]); drvs[mat].sort(key=lambda e: e[0])
     return flujo, acts, drvs
 
 
@@ -197,20 +199,35 @@ def _integrar(serie, d0, d1):
     return out
 
 
-def tacografo_tramo(acts, drvs, d0, d1):
+def tacografo_tramo(acts, drvs, d0, d1, mov_s=0):
+    """Desglose del tacografo de la ranura 1 en [d0, d1], SOLO si es fiable: (1) hay tarjeta en la ranura 1 al menos la
+    mitad del tramo y (2) la conduccion registrada cubre al menos la mitad del tiempo que el camion se movio segun la traza
+    (con tarjeta en la ranura 1 el tacografo pasa solo a conduccion al moverse). Medido 23/09: en 5 camiones (5735JVZ, 4029KXY,
+    8111JSB, 8810GKT, 6081FHD) el localizador no recibe el tacografo: sin tarjeta y la actividad congelada en 'descanso' con el
+    camion en marcha. Ahi el desglose NO se usa (se usa la traza) y la fila lo dice (min_coherente/motivo_min)."""
     segs = _integrar(acts, d0, d1)
     cubierto = sum(segs.values())
     dur = max(1, d1 - d0)
-    res = {"min_conduccion": None, "min_otros": None, "min_disponible": None, "min_descanso": None, "tacografo": False, "conductor": None}
-    if cubierto >= 0.5 * dur:
-        for v, nombre in ACT.items():
-            res["min_" + nombre] = round(segs.get(v, 0) / 60.0, 1)
-        res["tacografo"] = True
+    res = {"min_conduccion": None, "min_otros": None, "min_disponible": None, "min_descanso": None, "tacografo": False,
+           "conductor": None, "coherente": None, "motivo": None}
     d = _integrar(drvs, d0, d1)
+    con_tarjeta = sum(d.values())
     if d:
         h, s = max(d.items(), key=lambda kv: kv[1])
         if s >= 0.5 * dur:
             res["conductor"] = h
+    if cubierto < 0.5 * dur:
+        res["motivo"] = "sin_datos_de_tacografo"
+        return res
+    if con_tarjeta < 0.5 * dur:
+        res.update({"coherente": False, "motivo": "sin_tarjeta_en_ranura_1"})
+        return res
+    if mov_s >= 300 and segs.get(3, 0) < 0.5 * mov_s:
+        res.update({"coherente": False, "motivo": "tacografo_no_refleja_la_conduccion"})
+        return res
+    for v, nombre in ACT.items():
+        res["min_" + nombre] = round(segs.get(v, 0) / 60.0, 1)
+    res.update({"tacografo": True, "coherente": True})
     return res
 
 
@@ -226,16 +243,29 @@ def medir(j, fuente, t0, t1, tablas, d0, d1, acts, drvs):
         if prev is not None and prev["t"] >= d0 and es_mov(q) and (q["t"] - prev["t"]) <= 900:
             cond += q["t"] - prev["t"]
         prev = q
-    tc = tacografo_tramo(acts, drvs, d0, d1)
+    tc = tacografo_tramo(acts, drvs, d0, d1, cond)
     m["min_conduccion_traza"] = round(cond / 60.0, 1)
+    m["min_coherente"], m["motivo_min"] = tc["coherente"], tc["motivo"]
     if tc["tacografo"]:
         m.update({k: tc[k] for k in ("min_conduccion", "min_otros", "min_disponible", "min_descanso")})
         m["min_fuente"] = "tacografo"
+        # desglose del tacografo = PARTICION de la duracion: conduccion + otros + disponible + descanso + sin_dato = duracion
+        m["min_sin_dato"] = round(max(0.0, (m["duracion_min"] or 0) - sum(tc[k] or 0 for k in ("min_conduccion", "min_otros", "min_disponible", "min_descanso"))), 1)
     else:
-        m.update({"min_conduccion": m["min_conduccion_traza"], "min_otros": None, "min_disponible": None, "min_descanso": None, "min_fuente": "traza"})
+        m.update({"min_conduccion": m["min_conduccion_traza"], "min_otros": None, "min_disponible": None, "min_descanso": None,
+                  "min_fuente": "traza", "min_sin_dato": None})
+    # min_espera = COMPLEMENTO de la conduccion (todo lo que no es conducir). NO es una categoria mas: no se suma al desglose.
     m["min_espera"] = round(max(0.0, (m["duracion_min"] or 0) - (m["min_conduccion"] or 0)), 1)
     m["conductor_hash"] = tc["conductor"]
     return m
+
+
+def km_litros(pts, fuente, tablas, a, b):
+    """(km, litros) del contador entre a y b (None si el tramo es vacio o no tiene contador)."""
+    if a is None or b is None or b <= a:
+        return 0.0, 0.0
+    x = v1.medir({"fuente": fuente, "pts": pts}, a, b, tablas, a, b)
+    return x.get("km"), (x.get("litros_calibrados") if x.get("litros_calibrados") is not None else x.get("litros"))
 
 
 # ---------------------------------------------------------------- geografia: clasificar paradas y cortar ciclos
@@ -595,10 +625,13 @@ def sin_dato(metodo, motivo, j=None):
     return {"metodo": metodo, "motivo": motivo, "km": None, "duracion_min": None, "litros": None, "litros_calibrados": None,
             "km_fuente": None, "repartido": None, "medido": False, "confianza": None, "t_ini": None, "t_fin": None,
             "min_conduccion": None, "min_espera": None, "min_otros": None, "min_disponible": None, "min_descanso": None,
-            "min_fuente": None, "conductor_hash": None, "jornada": j, "orden_ciclo": None, "geo_score": None}
+            "min_sin_dato": None, "min_fuente": None, "min_coherente": None, "motivo_min": None,
+            "conductor_hash": None, "jornada": j, "orden_ciclo": None, "geo_score": None,
+            "km_cargado": None, "km_vacio": None, "litros_cargado": None, "litros_vacio": None, "min_transcurridos": None}
 
 
-SUMABLES = ("km", "litros", "litros_calibrados", "duracion_min", "min_conduccion", "min_conduccion_traza", "min_espera", "min_otros", "min_disponible", "min_descanso")
+SUMABLES = ("km", "litros", "litros_calibrados", "duracion_min", "min_conduccion", "min_conduccion_traza", "min_espera", "min_otros",
+            "min_disponible", "min_descanso", "min_sin_dato", "km_cargado", "km_vacio", "litros_cargado", "litros_vacio", "min_transcurridos")
 
 
 def medir_ciclo(j, c, k, nc, fuente, tablas, acts, drvs, prestada=False):
@@ -619,6 +652,19 @@ def medir_ciclo(j, c, k, nc, fuente, tablas, acts, drvs, prestada=False):
         c0 = max(j["c0"], j.get("arranque") or 0) if (not prestada and k == 0) else c["t0"]
         c1 = j["c1"] if (not prestada and k == nc - 1) else c["t1"]
         m = medir(j, fuente, c0, c1, tablas, c["t0"], c["t1"], acts, drvs)
+        # CARGADO / VACIO (tarifas): vacio = del inicio del ciclo a llegar a cargar; cargado = de salir de la carga a llegar a
+        # la descarga. Solo si se conocen las dos visitas; si no, null (no se inventa el reparto).
+        ca, de = c.get("carga") or {}, c.get("descarga") or {}
+        if ca.get("t_in") is not None and de.get("t_in") is not None and c["t0"] <= ca["t_in"] <= ca.get("t_out", ca["t_in"]) <= de["t_in"] <= c["t1"]:
+            kv, lv = km_litros(j["pts"], fuente, tablas, c["t0"], ca["t_in"])
+            kc, lc = km_litros(j["pts"], fuente, tablas, ca.get("t_out", ca["t_in"]), de["t_in"])
+            m.update({"km_vacio": kv, "km_cargado": kc, "litros_vacio": lv, "litros_cargado": lc})
+        # hitos del ciclo (hora real de llegar a cargar, salir cargado y llegar a descargar): los usa la pasada de largo
+        # recorrido para conciliar con los ciclos locales y salen al JSON como t_carga / t_carga_fin / t_descarga
+        m.update({"t_carga_in": ca.get("t_in"), "t_carga_out": ca.get("t_out", ca.get("t_in")), "t_descarga_in": de.get("t_in"), "t_descarga_out": de.get("t_out", de.get("t_in"))})
+    m.setdefault("km_cargado", None); m.setdefault("km_vacio", None); m.setdefault("litros_cargado", None); m.setdefault("litros_vacio", None)
+    m.setdefault("t_carga_in", None); m.setdefault("t_carga_out", None); m.setdefault("t_descarga_in", None); m.setdefault("t_descarga_out", None)
+    m.setdefault("min_transcurridos", m.get("duracion_min"))
     m.update({"repartido": False, "medido": True, "t_ini": c["t0"], "t_fin": c["t1"], "jornada": j, "orden_ciclo": k + 1,
               "motivo": c.get("falta"), "prestada": prestada})
     return m
@@ -685,7 +731,8 @@ def reparto(tramos, fuente, tablas, acts, drvs, k, motivo, j):
             "min_otros": round(tot["min_otros"] / k, 1) if hay["taco"] else None, "min_disponible": round(tot["min_disponible"] / k, 1) if hay["taco"] else None,
             "min_descanso": round(tot["min_descanso"] / k, 1) if hay["taco"] else None, "min_fuente": "tacografo" if hay["taco"] else "traza",
             "conductor_hash": None, "metodo": "dia", "repartido": True, "medido": False, "confianza": "baja", "motivo": motivo,
-            "t_ini": None, "t_fin": None, "jornada": j, "orden_ciclo": None, "geo_score": None}
+            "t_ini": None, "t_fin": None, "jornada": j, "orden_ciclo": None, "geo_score": None,
+            "tramos": [(a, b, jj) for (a, b, jj) in tramos], "k_reparto": k}   # para recortarlo si un viaje largo pisa sus tramos
 
 
 def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, drvs, diag, permitir_ciclos=True, viajes_sig=None):
@@ -749,6 +796,376 @@ def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, dr
         diag["ciclos_sobrantes"] += len(j["sobrantes"])
         j["min_sobrantes"] = round(sum((c["t1"] - c["t0"]) / 60.0 for c in j["sobrantes"]), 0)
         diag["min_sobrantes"] += j["min_sobrantes"]
+    return res
+
+
+# ---------------------------------------------------------------- LARGO RECORRIDO (nacional, >= LARGA_KM)
+def zona_larga(cod, coords, casa):
+    """Geocerca de un lugar para LARGO recorrido: (lat, lon, radio_km, fuente). A cientos de km la zona de destino es
+    inconfundible, asi que con coordenada de localidad (centro del pueblo) se admite un radio amplio: el almacen puede estar
+    a varios km; lo que decide es la PARADA real dentro. 'dudoso' se admite con radio amplio y confianza baja."""
+    c = coords.get((casa, cod)) if cod else None
+    if not c:
+        return None
+    f = c["fuente"]
+    if f == "gps_aprendida":
+        r = min(1.5, max(0.6, 2.0 * (c.get("radio_m") or 150) / 1000.0))
+    elif f in ("gesruta", "nominatim_exacto"):
+        r = 2.0
+    elif f == "nominatim_localidad":
+        r = 8.0
+    elif f == "dudoso":
+        r = 10.0
+    else:
+        r = 4.0
+    return (c["lat"], c["lon"], r, f)
+
+
+def visitas_zona(pts, ts, zona, t0, t1, min_parada_s=600):
+    """Visitas de la traza a una geocerca entre t0 y t1: tramos contiguos de puntos dentro del radio que contienen una PARADA
+    real (>= min_parada_s parado). Devuelve [{t_in, t_out, parado_s}] en orden. Pasar por delante por la autovia no cuenta."""
+    lat, lon, r, _ = zona
+    dlat = r / 111.0
+    dlon = r / (111.0 * max(0.2, math.cos(math.radians(lat))))
+    i0, i1 = bisect.bisect_left(ts, t0), bisect.bisect_right(ts, t1)
+    out, cur, prev = [], None, None
+    for k in range(i0, i1):
+        q = pts[k]
+        dentro = abs(q["lat"] - lat) <= dlat and abs(q["lon"] - lon) <= dlon and v1.hav((q["lat"], q["lon"]), (lat, lon)) <= r
+        if dentro:
+            if cur is None:
+                cur = {"t_in": q["t"], "t_out": q["t"], "parado_s": 0}
+            else:
+                dtm = q["t"] - prev["t"]
+                if q["f"] == "locatel":
+                    cur["parado_s"] += int((q.get("parada_min") or 0) * 60)
+                elif (q["s"] or 0) <= V_PARADO and dtm <= 900:
+                    cur["parado_s"] += dtm
+                cur["t_out"] = q["t"]
+        elif cur is not None:
+            if cur["parado_s"] >= min_parada_s:
+                out.append(cur)
+            cur = None
+        prev = q
+    if cur is not None and cur["parado_s"] >= min_parada_s:
+        out.append(cur)
+    return out
+
+
+def km_prefijo(pts, tablas=None):
+    """Km acumulados punto a punto, para medir km entre dos instantes en O(log n). Manda el CONTADOR CAN (reduccion monotona
+    como el ERP: ignora retrocesos pequenos, rebasa un reset o un salto imposible); donde no hay contador, el GPS (mismo
+    filtro que v1.km_gps). El GPS se queda corto donde la traza tiene huecos; el contador no."""
+    tk = (tablas or {}).get("tabla_km")
+    acc, buena, tb = [0.0], None, None
+    for k in range(1, len(pts)):
+        a, b = pts[k - 1], pts[k]
+        paso = None
+        v = v1.aplicar_tabla(b.get("kmc"), tk) if b.get("kmc") is not None else None
+        if v is not None:
+            if buena is None:
+                buena, tb = v, b["t"]
+            else:
+                d = v - buena
+                tope = max(5.0, 2.5 * max(1.0, (b["t"] - tb) / 60.0))
+                if 0 <= d <= tope:
+                    paso = d
+                    buena, tb = v, b["t"]
+                elif d > tope or -d > tope:
+                    buena, tb = v, b["t"]          # reset o salto: se rebasa sin sumar
+                    paso = 0.0
+                else:
+                    paso = 0.0                     # jitter hacia atras
+        if paso is None:
+            g = v1.hav((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+            paso = g if 0.02 <= g <= 20 else 0.0
+        acc.append(acc[-1] + paso)
+    return acc
+
+
+def linea_txt(x):
+    """NUMERO de lineas.dbf como entero en texto ('247008'), venga como '247008.0', 247008.0 o '247008'."""
+    if x is None or x == "":
+        return None
+    try:
+        return str(int(float(x)))
+    except (TypeError, ValueError):
+        return str(x)
+
+
+def epoch_dia(d, dias=0):
+    x = d + dt.timedelta(days=dias)
+    return int(dt.datetime(x.year, x.month, x.day, tzinfo=dt.timezone.utc).timestamp())
+
+
+def triangular_larga(m, idxs, dem, pts, jornadas, coords, fuente, tablas, acts, drvs, ocupados, diag, zonas_conocidas=None, salida=None, repartos=None):
+    """Viajes de largo recorrido de UN camion sobre su traza CONTINUA (cargan una tarde, duermen y descargan a 500 km al dia
+    siguiente; o cargan el viernes y salen el domingo). Reglas MEDIDAS en la traza real (6301LYJ, lanzadera Santiago-Meco /
+    Illescas-Santiago, marzo 2026):
+      - la FECHA del albaran nacional es la de CARGA: la estancia del camion en la zona de ORIGEN (visita con parada) tiene que
+        cubrir esa fecha (+-1 dia); la carga termina al SALIR de la zona (L.t_out);
+      - la DESCARGA es la primera estancia en la zona de DESTINO tras recorrer entre 0,8 y 1,8 veces la distancia (contador CAN),
+        en <= distancia/55 + 18 h y sin huecos de traza > 3 h entre medias;
+      - el viaje ACABA al terminar la jornada en que llega (descargar y aparcar), al salir de la zona o al empezar a CARGAR el
+        siguiente viaje local (zona de destino amplia), lo que antes ocurra: el camion puede quedarse el dia entero en la base
+        de destino y eso ya no es de este viaje;
+      - el viaje EMPIEZA al acabar el viaje anterior del camion o, si no se conoce, al salir de la ultima parada >= 20 min en un
+        lugar conocido (p. ej. la descarga del viaje anterior en Meco), y nunca antes de la jornada en que llega al origen:
+        asi el 'vacio' es el reposicionamiento real (Meco -> Illescas, 70 km) y no se come otro viaje cargado.
+    km_vacio = [inicio, llegada al origen]; km_cargado = [salida del origen, llegada al destino]; km = [inicio, fin] (contador);
+    duracion_min = HORAS DE TRABAJO (lo que cae dentro de jornadas: sin los descansos > 8 h); min_transcurridos = fin - inicio.
+    Dos albaranes del MISMO dia y mismo origen-destino sobre el mismo par fisico = grupaje (se reparte, marcado).
+    CONCILIACION con los ciclos LOCALES del mismo camion (la maquina del dia corre antes y estira el primer/ultimo ciclo hasta el
+    arranque/fin de la jornada, cuando el camion aun venia de descargar a 500 km): nunca dos viajes sobre el mismo minuto de traza.
+    El largo manda (carga y descarga vistas en geocerca, km que cuadran con la distancia); el ciclo local que lo pisa se
+      - ABSORBE como grupaje si envuelve al largo con el mismo origen (y sin destino o el mismo): dos albaranes, un viaje fisico;
+      - RECORTA al tramo fuera del largo y se vuelve a medir ('recortado_por_viaje_largo_del_camion_*', confianza <= media);
+      - DESCUENTA del largo si cae entero dentro (entrega intermedia con su propio ciclo);
+      - queda SIN CICLO si lo que le sobra no llega a MIN_MIN_CICLO ('tiempo_del_dia_ocupado_por_viaje_largo_del_camion')."""
+    res = {}
+    if not pts:
+        return res
+    ts = [q["t"] for q in pts]
+    acc = km_prefijo(pts, tablas)
+
+    def km_entre(a, b):
+        i, k = bisect.bisect_left(ts, a), bisect.bisect_right(ts, b) - 1
+        return acc[k] - acc[i] if k > i else 0.0
+
+    def hueco_max_h(a, b):
+        i, k = bisect.bisect_left(ts, a), bisect.bisect_right(ts, b)
+        g = max((ts[x + 1] - ts[x] for x in range(i, min(k, len(ts)) - 1)), default=0)
+        return g / 3600.0
+
+    def jornada_de(t):
+        return next((j for j in jornadas if j["c0"] <= t <= j["c1"]), None)
+
+    # paradas >= 20 min en LUGARES CONOCIDOS del camion (origenes/destinos de sus albaranes): marcan donde acaba un viaje
+    paradas_conocidas = []
+    if zonas_conocidas:
+        for s in paradas_flujo(pts):
+            if s["t_out"] - s["t_in"] < 1200:
+                continue
+            for (la, lo, r) in zonas_conocidas:
+                if abs(s["lat"] - la) <= r / 111.0 and v1.hav((s["lat"], s["lon"]), (la, lo)) <= r:
+                    paradas_conocidas.append(s)
+                    break
+    fin_conocidas = [s["t_out"] for s in paradas_conocidas]
+
+    # ciclos locales ya medidos del camion: {t0, t1, i (albaran), tc/tco/td (hitos de carga y descarga)}
+    ocup = sorted((x for x in ocupados if x.get("t0") is not None and x.get("t1") is not None), key=lambda x: x["t0"])
+    ivs = [(x["t0"], x["t1"]) for x in ocup]
+
+    def recortar_local(x, a, b, tipo):
+        """El ciclo local x se queda con [a, b] (fuera del largo) y se vuelve a medir sobre la traza continua."""
+        i = x["i"]
+        r0 = salida[i] if salida is not None else None
+        if r0 is None:
+            return
+        x["t0"], x["t1"] = a, b
+        if b - a < MIN_MIN_CICLO * 60:
+            res[i] = sin_dato("sin_ciclo", "tiempo_del_dia_ocupado_por_viaje_largo_del_camion", r0.get("jornada"))
+            x["absorbido"] = True
+            diag["larga_anula_local"] += 1
+            return
+        a2, b2 = bisect.bisect_left(ts, a - 3600), bisect.bisect_right(ts, b + 3600)
+        pj = {"pts": pts[a2:b2]}
+        mr = medir(pj, fuente, a, b, tablas, a, b, acts, drvs)
+        tc, tco, td, tdo = x.get("tc"), x.get("tco"), x.get("td"), x.get("tdo")
+        if tc is not None and td is not None and a <= tc <= (tco or tc) <= td <= b:
+            kv, lv = km_litros(pj["pts"], fuente, tablas, a, tc)
+            kc, lc = km_litros(pj["pts"], fuente, tablas, tco or tc, td)
+            if tdo is not None and tdo > b:
+                tdo = None
+        else:
+            kv = lv = kc = lc = None
+            tc = tco = td = tdo = None
+        mr.update({"km_vacio": kv, "km_cargado": kc, "litros_vacio": lv, "litros_cargado": lc,
+                   "metodo": r0.get("metodo") or "geo", "confianza": "media" if r0.get("confianza") == "alta" else (r0.get("confianza") or "baja"),
+                   "medido": True, "repartido": False, "t_ini": a, "t_fin": b, "jornada": r0.get("jornada"), "orden_ciclo": r0.get("orden_ciclo"),
+                   "geo_score": r0.get("geo_score"), "prestada": r0.get("prestada"), "t_carga_in": tc, "t_carga_out": tco, "t_descarga_in": td, "t_descarga_out": tdo,
+                   "motivo": "recortado_por_viaje_largo_del_camion_" + tipo + ("; " + r0["motivo"] if r0.get("motivo") else "")})
+        mr.setdefault("min_transcurridos", mr.get("duracion_min"))
+        res[i] = mr
+        diag["larga_recorta_local"] += 1
+
+    asig = []                    # [L, U, o, d, t_ini, t_fin, [idx], conf, dia, vacio_desconocido]
+    orden = sorted(idxs, key=lambda i: (dem[i]["dia"], v1.natkey(dem[i]["v"]), v1.natkey(dem[i]["cant"])))
+    for i in orden:
+        t = dem[i]
+        casa = t["c"]
+        d0 = dt.date.fromisoformat(t["dia"])
+        zo, zd = zona_larga(t["o"], coords, casa), zona_larga(t["d"], coords, casa)
+        if not zo or not zd:
+            res[i] = sin_dato("sin_ciclo", "larga_sin_coordenada_de_" + ("origen" if not zo else "destino"))
+            diag["larga_sin_coordenada"] += 1
+            continue
+        a_fecha, b_fecha = epoch_dia(d0, -1), epoch_dia(d0, 2)          # la estancia en el origen cubre la fecha +-1 dia
+        if b_fecha < ts[0] or a_fecha - 5 * 86400 > ts[-1]:
+            res[i] = sin_dato("sin_traza", "sin_traza_en_esas_fechas")
+            continue
+        vo = [L for L in visitas_zona(pts, ts, zo, a_fecha - 2 * 86400, b_fecha + 2 * 86400) if L["t_out"] >= a_fecha and L["t_in"] <= b_fecha]
+        dist = t.get("dist_od") or 0.0
+        max_s = (dist / 55.0 + 18.0) * 3600
+        mejor, grupo = None, None
+        for L in vo:
+            vd = visitas_zona(pts, ts, zd, L["t_out"], L["t_out"] + max_s)
+            for U in vd:
+                if U["t_in"] <= L["t_out"]:
+                    continue
+                k = km_entre(L["t_out"], U["t_in"])
+                if k < 0.8 * dist or k > 1.8 * dist + 40:
+                    continue
+                if hueco_max_h(L["t_out"], U["t_in"]) > 3:
+                    continue
+                JU = jornada_de(U["t_in"])
+                t_fin = min(U["t_out"], JU["fin"]) if JU else U["t_out"]
+                # si el camion ya esta CARGANDO el siguiente viaje local antes de salir de la zona (zona amplia), el largo acaba ahi
+                nxt = min((x["tc"] for x in ocup if x.get("tc") and U["t_in"] < x["tc"] < t_fin), default=None)
+                if nxt is not None:
+                    t_fin = nxt
+                g = next((x for x in asig if x[0]["t_out"] == L["t_out"] and x[1]["t_in"] == U["t_in"] and x[2] == t["o"] and x[3] == t["d"] and x[8] == t["dia"]), None)
+                if g is None and any(not (t_fin <= x[4] or L["t_out"] >= x[5]) for x in asig):
+                    continue
+                dep = dt.date.fromisoformat(fecha_de(L["t_out"]))
+                off = 0 if a_fecha <= L["t_out"] <= b_fecha and dep >= d0 else abs((dep - d0).days)
+                score = (off, U["t_in"] - L["t_out"])
+                if mejor is None or score < mejor[0]:
+                    mejor, grupo = (score, L, U, t_fin), g
+                break                               # la PRIMERA llegada valida al destino tras esta salida
+        if mejor is None:
+            motivo = "larga_sin_carga_vista" if not vo else "larga_sin_descarga_vista"
+            res[i] = sin_dato("sin_ciclo", motivo)
+            diag["larga_" + motivo] += 1
+            continue
+        (off, _), L, U, t_fin = mejor
+        if grupo is not None:
+            grupo[6].append(i)
+            continue
+        # inicio: fin del viaje anterior del camion, o fin de la ultima parada en un lugar conocido (fuera del origen), y nunca
+        # antes de la jornada en que el camion llega al origen
+        J = jornada_de(L["t_in"])
+        # viajes del camion que acaban antes de SALIR del origen: el camion puede llegar al origen descargando el viaje anterior
+        # (su destino es el origen de este), y este no empieza hasta que aquel acaba
+        previos = [x1 for x0, x1 in ivs if x1 <= L["t_out"]] + [x[5] for x in asig if x[5] <= L["t_out"]]
+        k = bisect.bisect_right(fin_conocidas, L["t_in"]) - 1
+        ult_conocida = None
+        while k >= 0:
+            s = paradas_conocidas[k]
+            if not (abs(s["lat"] - zo[0]) <= zo[2] / 111.0 and v1.hav((s["lat"], s["lon"]), (zo[0], zo[1])) <= zo[2]):
+                ult_conocida = s["t_out"]
+                break
+            k -= 1
+        cands = [x for x in ([max(previos)] if previos else []) + ([ult_conocida] if ult_conocida else []) + ([J["ini"]] if J else [])]
+        t_ini = max(cands) if cands else L["t_in"]
+        if any(x0 < L["t_in"] < x1 for x0, x1 in ivs):
+            t_ini = max(t_ini, L["t_in"])
+            diag["larga_solapa_ciclo_local"] += 1
+        t_ini = min(t_ini, L["t_out"])
+        vacio_desconocido = False
+        if t_ini < L["t_in"]:
+            i0, i1 = bisect.bisect_left(ts, t_ini), bisect.bisect_right(ts, L["t_in"])
+            for x in range(i1 - 1, i0, -1):
+                if ts[x] - ts[x - 1] > 3 * 3600:
+                    t_ini = ts[x]
+                    break
+            # si la traza ARRANCA con el camion ya en marcha (falta el dia anterior), no se sabe de donde venia: el tramo hasta el
+            # origen puede ser otro viaje cargado. No se imputa: vacio desconocido y el viaje empieza al llegar al origen.
+            p = bisect.bisect_left(ts, t_ini)
+            if p < len(ts) and (p == 0 or ts[p] - ts[p - 1] > 3 * 3600) and es_mov(pts[p]):
+                t_ini, vacio_desconocido = L["t_in"], True
+                diag["larga_vacio_desconocido"] += 1
+        conf = "alta" if off == 0 and zo[3] != "dudoso" and zd[3] != "dudoso" else ("baja" if "dudoso" in (zo[3], zd[3]) or off >= 2 else "media")
+        asig.append([L, U, t["o"], t["d"], t_ini, t_fin, [i], conf, t["dia"], vacio_desconocido])
+    asig.sort(key=lambda x: x[4])
+    for (L, U, o, d, t_ini, t_fin, ids, conf, _dia, vacio_desconocido) in asig:
+        # ---- CONCILIACION con los ciclos locales que pisan [t_ini, t_fin] (ver docstring); se clasifica con sus limites ACTUALES,
+        # porque un ciclo local ya recortado por otro largo del mismo dia no debe volver a contarse
+        restar = []
+        for x in ocup:
+            if x.get("absorbido") or x["t1"] <= t_ini or x["t0"] >= t_fin:
+                continue
+            tx = dem[x["i"]]
+            if x["t0"] <= L["t_out"] and x["t1"] >= U["t_in"]:
+                if tx["o"] == o and (not tx["d"] or tx["d"] == d):
+                    ids.append(x["i"])
+                    x["absorbido"] = True
+                    diag["larga_absorbe_local"] += 1            # 2 albaranes del mismo origen sobre el mismo viaje fisico
+                    continue
+                p1, p2 = (x["t0"], t_ini), (t_fin, x["t1"])
+                a_, b_ = max((p1, p2), key=lambda p: ((km_entre(p[0], p[1]) if p[1] > p[0] else -1.0), p[1] - p[0]))
+                tipo = "envuelve"
+            elif x["t0"] >= t_ini and x["t1"] <= t_fin:
+                restar.append(x)
+                diag["larga_local_intermedio"] += 1
+                continue
+            elif x["t0"] < t_fin < x["t1"]:
+                a_, b_, tipo = t_fin, x["t1"], "llegada"
+            else:
+                a_, b_, tipo = x["t0"], t_ini, "salida"
+            recortar_local(x, a_, b_, tipo)
+        a, b = bisect.bisect_left(ts, t_ini - 3600), bisect.bisect_right(ts, t_fin + 3600)
+        pj = {"pts": pts[a:b]}
+        mt = medir(pj, fuente, t_ini, t_fin, tablas, t_ini, t_fin, acts, drvs)
+        kv, lv = (None, None) if vacio_desconocido else ((0.0, 0.0) if t_ini >= L["t_in"] else km_litros(pj["pts"], fuente, tablas, t_ini, L["t_in"]))
+        kc, lc = km_litros(pj["pts"], fuente, tablas, L["t_out"], U["t_in"])
+        trabajo = sum(max(0, min(t_fin, j["fin"]) - max(t_ini, j["ini"])) for j in jornadas if j["fin"] > t_ini and j["ini"] < t_fin) / 60.0
+        mt.update({"km_vacio": kv, "km_cargado": kc, "litros_vacio": lv, "litros_cargado": lc,
+                   "min_transcurridos": round((t_fin - t_ini) / 60.0, 1), "duracion_min": round(trabajo, 1),
+                   "min_espera": round(max(0.0, trabajo - (mt.get("min_conduccion") or 0)), 1),
+                   "metodo": "geo", "confianza": conf, "medido": True, "repartido": False, "t_ini": t_ini, "t_fin": t_fin,
+                   "jornada": jornada_de(L["t_out"]), "orden_ciclo": None, "geo_score": 2 * MATCH,
+                   "t_carga_in": L["t_in"], "t_carga_out": L["t_out"], "t_descarga_in": U["t_in"], "t_descarga_out": min(U["t_out"], t_fin),
+                   "motivo": "vacio_desconocido_traza_empieza_en_marcha" if vacio_desconocido else None})
+        for x in restar:
+            rl_ = salida[x["i"]] if salida is not None else None
+            if not rl_:
+                continue
+            for kk in SUMABLES:
+                if mt.get(kk) is not None and rl_.get(kk) is not None:
+                    mt[kk] = round(max(0.0, mt[kk] - rl_[kk]), 2)
+            mt["motivo"] = "descontado_viaje_local_intermedio" + ("; " + mt["motivo"] if mt.get("motivo") else "")
+        # ---- viajes REPARTIDOS del mismo camion (sin hora: reparto de ciclos sobrantes del dia) cuyos tramos pisan el largo: se
+        # recortan al tiempo fuera del largo y se reparten de nuevo; si no queda tramo util, sin ciclo. Nada se cuenta dos veces.
+        if salida is not None and repartos:
+            for xi in repartos:
+                r0 = salida[xi]
+                if not r0 or not r0.get("tramos"):
+                    continue
+                nuevos, cambiado = [], False
+                for (a_, b_, jj) in r0["tramos"]:
+                    if b_ <= t_ini or a_ >= t_fin:
+                        nuevos.append((a_, b_, jj))
+                        continue
+                    cambiado = True
+                    if a_ < t_ini:
+                        nuevos.append((a_, t_ini, jj))
+                    if b_ > t_fin:
+                        nuevos.append((t_fin, b_, jj))
+                if not cambiado:
+                    continue
+                nuevos = [(a_, b_, jj) for a_, b_, jj in nuevos if b_ - a_ >= 600]
+                if not nuevos:
+                    rn = sin_dato("sin_ciclo", "tiempo_del_dia_ocupado_por_viaje_largo_del_camion", r0.get("jornada"))
+                    diag["larga_anula_reparto"] += 1
+                else:
+                    rn = reparto(nuevos, fuente, tablas, acts, drvs, r0.get("k_reparto") or 1, str(r0.get("motivo") or "") + "; recortado_por_viaje_largo_del_camion", nuevos[0][2])
+                    diag["larga_recorta_reparto"] += 1
+                if r0.get("pendiente_pasada_nacional"):
+                    rn["pendiente_pasada_nacional"] = True
+                res[xi] = rn
+                salida[xi] = rn                        # el siguiente largo del camion ya ve los tramos recortados
+        n = len(ids)
+        for i in ids:
+            r = dict(mt)
+            if n > 1:
+                for kk in SUMABLES:
+                    if r.get(kk) is not None:
+                        r[kk] = round(r[kk] / n, 2)
+                r.update({"repartido": True, "confianza": "media", "motivo": "grupaje_%d_albaranes_mismo_viaje" % n})
+                diag["larga_grupaje"] += 1
+            res[i] = r
+            diag["larga_medidos"] += 1
     return res
 
 
@@ -881,12 +1298,29 @@ def main():
     apr, disc = ({}, []) if a.sin_aprender else v1.aprender(dem, trazas, internas_dia, ref)
     coords = v1.mejor(ref, apr)
     discrepantes = {(x["casa"], x["codigo"]) for x in disc}
+    # indice espacial de los lugares conocidos: rotula las paradas de espera de cada viaje con el lugar a < 700 m
+    grid_lug = collections.defaultdict(list)
+    for (casa_, cod_), c_ in coords.items():
+        grid_lug[(int(c_["lat"] * 100), int(c_["lon"] * 100))].append((c_["lat"], c_["lon"], cod_))
+
+    def lugar_cerca(lat, lon):
+        gi, gj = int(lat * 100), int(lon * 100)
+        mejor = None
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                for (la, lo, cod_) in grid_lug.get((gi + di, gj + dj), ()):
+                    d_ = v1.hav((lat, lon), (la, lo))
+                    if d_ <= 0.7 and (mejor is None or d_ < mejor[0]):
+                        mejor = (d_, cod_)
+        return mejor[1] if mejor else None
 
     flujo, acts, drvs = coser(trazas)
     fuente_mat = {}
     for (mat, dia), v in trazas.items():
         fuente_mat.setdefault(mat, collections.Counter())[v["fuente"]] += 1
-    jornadas_mat = {mat: jornadas_de(pts, paradas_flujo(pts), rest_s) for mat, pts in flujo.items()}
+    par_mat = {mat: paradas_flujo(pts) for mat, pts in flujo.items()}          # paradas de cada camion (tambien para las esperas por viaje)
+    par_t = {mat: [p["t_in"] for p in pl] for mat, pl in par_mat.items()}
+    jornadas_mat = {mat: jornadas_de(pts, par_mat[mat], rest_s) for mat, pts in flujo.items()}
     por_fecha = collections.defaultdict(list)
     for mat, js in jornadas_mat.items():
         for j in js:
@@ -902,8 +1336,29 @@ def main():
         t["cargas"] = cg
         d = dist_od(t)
         t["dist_od"] = round(d, 1) if d is not None else None
-        t["larga"] = t["tipo"] == "nacional" or (d is not None and d >= LARGA_KM)
+        # LARGO = por DISTANCIA. «nacional» en GesRuta es el tipo de servicio (portes), no la distancia: hay portes de 30 km
+        # que caben en una jornada y van por la maquina de ciclos como los aridos.
+        t["larga"] = d is not None and d >= LARGA_KM
         por_dia[(t["mat"], t["dia"])].append(idx)
+    # ESPEJOS intercompania: el mismo porte fisico sale en Razo y en Agetrans (Agetrans lo vende y se lo subcontrata a Razo):
+    # mismo camion, mismo nº de ticket / carta de porte, mismo dia. Se triangula UNA vez, en la linea de la casa duena del
+    # camion (la que lo tiene en su ficha sin proveedor; si no se sabe, Razo); la otra hereda la medida marcada 'espejo_de'
+    # para que los totales de grupo no la cuenten dos veces.
+    espejo_de = {}
+    g_esp = collections.defaultdict(list)
+    for i, t in enumerate(dem):
+        if t["mat"] and t["cant"]:
+            g_esp[(t["mat"], t["cant"], t["dia"])].append(i)
+    for ids in g_esp.values():
+        if len({dem[i]["c"] for i in ids}) < 2:
+            continue
+        dueno = next((dem[i].get("dueno") for i in ids if dem[i].get("dueno")), None)
+        prim = next((i for i in ids if dem[i]["c"] == dueno), None)
+        if prim is None:
+            prim = next((i for i in ids if dem[i]["c"] == "Razo"), ids[0])
+        for i in ids:
+            if dem[i]["c"] != dem[prim]["c"]:
+                espejo_de[i] = prim
     salida = [None] * len(dem)
     pos_dem = {id(t): i for i, t in enumerate(dem)}
     diag = collections.Counter()
@@ -964,31 +1419,27 @@ def main():
         for j in jor:
             if j["horas"] > MAX_JORNADA_H:
                 diag["jornadas_largas"] += 1
-        larga_dia = any(j["horas"] > MAX_JORNADA_H for j in jor)
         i_rep = [i for i in idxs if any(c.get("repetida") for c in dem[i]["cargas"])]
-        i_larga = [i for i in idxs if i not in i_rep and (dem[i]["larga"] or larga_dia)]
-        i_arid = [i for i in idxs if i not in i_rep and i not in i_larga]
+        # los ESPEJOS no compiten por ciclos (heredan la medida de su linea principal) y los LARGOS van por su propia pasada
+        i_larga = [i for i in idxs if i not in i_rep and i not in espejo_de and dem[i]["larga"]]
+        i_arid = [i for i in idxs if i not in i_rep and i not in espejo_de and not dem[i]["larga"]]
         res = {}
         for i in i_rep:
             res[i] = sin_dato("cantera_repetida", "mismo_numero_de_cantera_en_varias_lineas_del_ano", jor[0] if jor else None)
         if i_arid:
             dnext = (dt.date.fromisoformat(d) + dt.timedelta(days=1)).isoformat()
-            sig = [dem[i] for i in por_dia.get((m, dnext), []) if not dem[i]["larga"]]
+            sig = [dem[i] for i in por_dia.get((m, dnext), []) if not dem[i]["larga"] and i not in espejo_de]
             r = triangular_dia([dem[i] for i in i_arid], jor, prestados, fuente, coords, sens.get(m), acts.get(m, []), drvs.get(m, []), diag, viajes_sig=sig)
             res.update(dict(zip(i_arid, r)))
-        if i_larga:
-            r = triangular_dia([dem[i] for i in i_larga], jor, [], fuente, coords, sens.get(m), acts.get(m, []), drvs.get(m, []), diag, permitir_ciclos=False)
-            for x in r:
-                x["pendiente_pasada_nacional"] = True
-            res.update(dict(zip(i_larga, r)))
-        for i in idxs:
-            salida[i] = res[i]
+        for i, r in res.items():
+            salida[i] = r
         if a.diag:
             dias_diag.append({"matricula": m, "fecha": d, "viajes": len(idxs), "larga": len(i_larga), "repetidas": len(i_rep), "prestados": len(prestados),
+                              "espejos": sum(1 for i in idxs if i in espejo_de),
                               "jornadas": [{"ini": iso_min(j["ini"]), "fin": iso_min(j["fin"]), "horas": j["horas"], "nocturna": j["nocturna"],
                                             "paradas": len(j["paradas"]), "modo": j["modo"], "ciclos": len(j["ciclos"] or []),
                                             "asignados": j["asignados"], "sobrantes": len(j["sobrantes"]), "min_sobrantes": j.get("min_sobrantes", 0)} for j in jor],
-                              "medidos": sum(1 for i in idxs if salida[i].get("medido"))})
+                              "medidos": sum(1 for i in idxs if (salida[i] or {}).get("medido"))})
 
     # ---- SEGUNDA PASADA por camion: albaranes que agrupan VARIOS DIAS. GesRuta no guarda la fecha por ticket (la linea no
     # tiene fecha ni vehiculo; el albaran lleva FECHA/FECHAACORD y puede agrupar entregas de una semana), asi que un ticket
@@ -996,7 +1447,7 @@ def main():
     # nº de ticket (los numeros de cantera son cronologicos). La fecha real pasa a ser la de la traza. Marcado y visible.
     recuperados = 0
     for m in flujo:
-        idx_sc = [i for i in range(len(dem)) if dem[i]["mat"] == m and salida[i] and salida[i]["metodo"] == "sin_ciclo" and not dem[i]["larga"]]
+        idx_sc = [i for i in range(len(dem)) if dem[i]["mat"] == m and salida[i] and salida[i]["metodo"] == "sin_ciclo" and not dem[i]["larga"] and i not in espejo_de]
         if not idx_sc:
             continue
         sob = sorted(((c, j) for j in jornadas_mat[m] for c in j["sobrantes"]), key=lambda cj: cj[0]["t0"])
@@ -1035,6 +1486,87 @@ def main():
     diag["ciclos_sobrantes"] = sum(len(j["sobrantes"]) for js in jornadas_mat.values() for j in js)
     diag["min_sobrantes"] = sum((c["t1"] - c["t0"]) / 60.0 for js in jornadas_mat.values() for j in js for c in j["sobrantes"])
 
+    # ---- PASADA DE LARGO RECORRIDO (>= LARGA_KM) sobre la traza CONTINUA de cada camion (los viajes cruzan descansos y dias)
+    ocupados = collections.defaultdict(list)          # ciclos locales ya medidos: intervalo, albaran e hitos (para conciliar)
+    for i, r in enumerate(salida):
+        if r and r.get("medido") and r.get("t_ini") is not None and r.get("t_fin") is not None:
+            ocupados[dem[i]["mat"]].append({"t0": r["t_ini"], "t1": r["t_fin"], "i": i, "tc": r.get("t_carga_in"), "tco": r.get("t_carga_out"),
+                                            "td": r.get("t_descarga_in"), "tdo": r.get("t_descarga_out")})
+    larga_mat = collections.defaultdict(list)
+    for i, t in enumerate(dem):
+        if salida[i] is None and t["larga"] and i not in espejo_de:
+            larga_mat[t["mat"]].append(i)
+    zonas_mat = collections.defaultdict(set)          # lugares conocidos de cada camion (origenes y destinos de sus albaranes)
+    for t in dem:
+        if t["mat"] in larga_mat:
+            for cod in (t["o"], t["d"]):
+                z = zona_larga(cod, coords, t["c"])
+                if z:
+                    zonas_mat[t["mat"]].add((round(z[0], 4), round(z[1], 4), z[2]))
+    rep_mat = collections.defaultdict(list)           # viajes REPARTIDOS del dia (sin hora): sus tramos se recortan si un largo los pisa
+    for i, r in enumerate(salida):
+        if r and r.get("repartido") and r.get("tramos") and i not in espejo_de:
+            rep_mat[dem[i]["mat"]].append(i)
+    for m, ids in larga_mat.items():
+        if m not in flujo:
+            continue
+        fuente_m = ((fuente_mat.get(m) or collections.Counter()).most_common(1) or [("wialon", 0)])[0][0]
+        rl = triangular_larga(m, ids, dem, flujo[m], jornadas_mat.get(m, []), coords, fuente_m, sens.get(m), acts.get(m, []), drvs.get(m, []), ocupados[m], diag,
+                              zonas_conocidas=sorted(zonas_mat[m]), salida=salida, repartos=rep_mat[m])
+        for i, r in rl.items():
+            salida[i] = r
+
+    # ---- LARGOS SIN CASAR: reparto del dia sobre el tiempo LIBRE del camion (sus jornadas de esa fecha menos lo ya medido),
+    # marcado baja/repartido y pendiente_pasada_nacional, como antes de esta pasada: nada empeora para quien ya lo consumia.
+    # Se casaran cuando la traza del camion este completa en dias seguidos (el dia de la vuelta tambien).
+    ocup2 = collections.defaultdict(list)
+    for i, r in enumerate(salida):
+        if r and r.get("medido") and r.get("t_ini") is not None and r.get("t_fin") is not None:
+            ocup2[dem[i]["mat"]].append((r["t_ini"], r["t_fin"]))
+    pend_larga = collections.defaultdict(list)
+    for i, r in enumerate(salida):
+        if r and r.get("metodo") == "sin_ciclo" and str(r.get("motivo") or "").startswith("larga_") and i not in espejo_de:
+            pend_larga[(dem[i]["mat"], dem[i]["dia"])].append(i)
+    for (m, d), ids in pend_larga.items():
+        oc = sorted(ocup2[m])
+        tramos = []
+        for j in por_fecha.get((m, d), []):
+            a_, b_ = j["ini"], j["fin"]
+            for x0, x1 in oc:
+                if x1 <= a_ or x0 >= b_:
+                    continue
+                if x0 > a_:
+                    tramos.append((a_, x0, j))
+                a_ = max(a_, x1)
+            if b_ > a_:
+                tramos.append((a_, b_, j))
+        tramos = [(a_, b_, j) for a_, b_, j in tramos if b_ - a_ >= 600]
+        if not tramos or sum(b_ - a_ for a_, b_, _ in tramos) < 1800:
+            continue                                   # sin tiempo libre ese dia: se queda sin dato (sin_ciclo)
+        fuente_m = ((fuente_mat.get(m) or collections.Counter()).most_common(1) or [("wialon", 0)])[0][0]
+        motivo_orig = collections.Counter(salida[i]["motivo"] for i in ids).most_common(1)[0][0]
+        rp = reparto(tramos, fuente_m, sens.get(m), acts.get(m, []), drvs.get(m, []), len(ids), "larga_sin_casar_reparto_del_dia (" + motivo_orig + ")", tramos[0][2])
+        for i in ids:
+            x = dict(rp)
+            x["pendiente_pasada_nacional"] = True
+            salida[i] = x
+            diag["larga_reparto_del_dia"] += 1
+
+    # ---- ESPEJOS: heredan la medida de su linea principal, marcados (el ERP y los totales de grupo la saltan)
+    for i, p in espejo_de.items():
+        r = dict(salida[p]) if salida[p] else sin_dato("sin_ciclo", "espejo_sin_linea_principal")
+        cp = dem[p]["cargas"]
+        r["espejo_de"] = {"empresa": dem[p]["c"], "viaje": dem[p]["v"], "cantera": dem[p]["cant"],
+                          "linea": linea_txt(cp[0]["linea"]) if len(cp) == 1 else None}
+        if r.get("medido") or r.get("km") is not None:
+            r["motivo"] = "espejo_intercompania" + ("; " + r["motivo"] if r.get("motivo") else "")
+        salida[i] = r
+        diag["espejos"] += 1
+    for i in range(len(dem)):
+        if salida[i] is None:
+            salida[i] = sin_dato("sin_ciclo", "sin_procesar")
+            diag["sin_procesar"] += 1
+
     viajes_out = []
     for t, r in zip(dem, salida):
         co, cd = coords.get((t["c"], t["o"])), coords.get((t["c"], t["d"]))
@@ -1046,8 +1578,31 @@ def main():
         lk = enlace.get(ch) or [] if ch else []
         if isinstance(lk, dict):
             lk = [lk]
-        chofer_taco = next((str(e.get("codigo_gesruta")).strip() for e in lk if isinstance(e, dict) and e.get("casa") == t["c"] and e.get("codigo_gesruta")), None) \
-            or next((str(e.get("codigo_gesruta")).strip() for e in lk if isinstance(e, dict) and e.get("codigo_gesruta")), None)
+        # una tarjeta puede estar enlazada a VARIOS codigos (la misma persona con dos fichas, o un codigo por casa): coincide si el
+        # codigo del albaran es uno de los suyos; como chofer_tacografo se muestra ese y, si no, el primero de su casa
+        eqc = lambda a_, b_: str(a_).lstrip("0") == str(b_).lstrip("0")  # noqa: E731
+        cods_lk = [str(e.get("codigo_gesruta")).strip() for e in lk if isinstance(e, dict) and e.get("codigo_gesruta")]
+        cods_casa = [str(e.get("codigo_gesruta")).strip() for e in lk if isinstance(e, dict) and e.get("casa") == t["c"] and e.get("codigo_gesruta")]
+        cand = cods_casa or cods_lk
+        chofer_taco = next((c_ for c_ in cand if chofer_ges and eqc(c_, chofer_ges)), None) or (cand[0] if cand else None)
+        # paradas y esperas del viaje (>= 5 min) sobre las paradas del flujo del camion: carga / descarga (por los hitos) o
+        # espera; lugar = origen/destino del viaje si es su carga/descarga, si no el lugar conocido mas cercano (< 700 m)
+        par_v = []
+        if medido and r.get("t_ini") is not None and r.get("t_fin") is not None and t["mat"] in par_mat:
+            pl_, pt_ = par_mat[t["mat"]], par_t[t["mat"]]
+            tc_, tco_, td_, tdo_ = r.get("t_carga_in"), r.get("t_carga_out"), r.get("t_descarga_in"), r.get("t_descarga_out")
+            for p_ in pl_[bisect.bisect_left(pt_, r["t_ini"] - 60):]:
+                if p_["t_in"] > r["t_fin"]:
+                    break
+                if p_["t_out"] - p_["t_in"] < 300 or p_["t_out"] < r["t_ini"]:
+                    continue
+                if tc_ is not None and p_["t_in"] <= (tco_ or tc_) and p_["t_out"] >= tc_:
+                    rol_, lug_ = "carga", t["o"]
+                elif td_ is not None and p_["t_in"] <= (tdo_ or td_) + 60 and p_["t_out"] >= td_:
+                    rol_, lug_ = "descarga", t["d"]
+                else:
+                    rol_, lug_ = "espera", lugar_cerca(p_["lat"], p_["lon"])
+                par_v.append({"t": iso_min(p_["t_in"]), "min": int((p_["t_out"] - p_["t_in"]) // 60), "lugar": lug_, "rol": rol_})
         viajes_out.append({
             "empresa": t["c"], "viaje": t["v"], "cantera": t["cant"], "matricula": t["mat"],
             "fecha": fecha_de(r["t_ini"]) if medido and r.get("t_ini") else t["dia"], "fecha_gesruta": t["dia"],
@@ -1059,13 +1614,20 @@ def main():
             "jornada_ini": iso_min(j["ini"]) if j else None, "jornada_fin": iso_min(j["fin"]) if j else None,
             "jornada_nocturna": bool(j and j.get("nocturna")), "jornada_prestada": bool(r.get("prestada")),
             "min_conduccion": r.get("min_conduccion"), "min_espera": r.get("min_espera"), "min_otros": r.get("min_otros"),
-            "min_disponible": r.get("min_disponible"), "min_descanso": r.get("min_descanso"), "min_fuente": r.get("min_fuente"),
+            "min_disponible": r.get("min_disponible"), "min_descanso": r.get("min_descanso"), "min_sin_dato": r.get("min_sin_dato"),
+            "min_fuente": r.get("min_fuente"), "min_coherente": r.get("min_coherente"), "motivo_min": r.get("motivo_min"),
+            "min_transcurridos": r.get("min_transcurridos"),
+            "km_cargado": r.get("km_cargado"), "km_vacio": r.get("km_vacio"), "litros_cargado": r.get("litros_cargado"), "litros_vacio": r.get("litros_vacio"),
             "conductor_hash": ch, "chofer_tacografo": chofer_taco, "chofer_gesruta": chofer_ges,
-            "chofer_coincide": (None if not (chofer_taco and chofer_ges) else chofer_taco.lstrip("0") == chofer_ges.lstrip("0")),
+            "chofer_coincide": (None if not (chofer_taco and chofer_ges) else any(eqc(c_, chofer_ges) for c_ in cods_lk)),
+            "t_carga": iso_min(r.get("t_carga_in")), "t_carga_fin": iso_min(r.get("t_carga_out")),
+            "t_descarga": iso_min(r.get("t_descarga_in")), "t_descarga_fin": iso_min(r.get("t_descarga_out")),
             "viajes_dia": len(por_dia[(t["mat"], t["dia"])]),
-            "albara": cargas[0]["albara"] if len(cargas) == 1 else None, "linea": cargas[0]["linea"] if len(cargas) == 1 else None,
+            "albara": cargas[0]["albara"] if len(cargas) == 1 else None, "linea": linea_txt(cargas[0]["linea"]) if len(cargas) == 1 else None,
             "cliente": cargas[0]["cliente"] if cargas else None, "n_cargas_clave": len(cargas) if cargas else None,
+            "espejo_de": r.get("espejo_de"),
             "pendiente_pasada_nacional": bool(r.get("pendiente_pasada_nacional")),
+            "paradas": par_v,
             "coord_origen": co["fuente"] if co else None, "coord_destino": cd["fuente"] if cd else None,
             "coord_revisar": ((t["c"], t["o"]) in discrepantes) or ((t["c"], t["d"]) in discrepantes)})
     for (m, d), idxs in por_dia.items():
@@ -1077,7 +1639,20 @@ def main():
     arid = [x for x in viajes_out if not x["larga_distancia"]]
     larg = [x for x in viajes_out if x["larga_distancia"]]
     nmed = sum(1 for x in viajes_out if x["medido"])
-    resumen = {"viajes": tot, "aridos": len(arid), "larga_distancia_pendiente_pasada_2": len(larg),
+    larg_c = [x for x in larg if x["metodo"] != "sin_traza" and not x["espejo_de"]]
+    resumen = {"viajes": tot, "aridos": len(arid),
+               "larga_distancia": {"total": len(larg), "con_traza": len(larg_c), "medidos": sum(1 for x in larg_c if x["medido"]),
+                                   "pct_medidos_con_traza": round(100.0 * sum(1 for x in larg_c if x["medido"]) / max(1, len(larg_c)), 1),
+                                   "sin_ciclo_por_motivo": dict(collections.Counter(x["motivo"] for x in larg_c if x["metodo"] == "sin_ciclo")),
+                                   "grupaje": diag["larga_grupaje"], "solapa_ciclo_local": diag["larga_solapa_ciclo_local"],
+                                   "reparto_del_dia_sin_casar": diag["larga_reparto_del_dia"], "vacio_desconocido": diag["larga_vacio_desconocido"],
+                                   "conciliacion_con_ciclos_locales": {"absorbidos_como_grupaje": diag["larga_absorbe_local"], "recortados": diag["larga_recorta_local"],
+                                                                        "anulados_sin_tiempo": diag["larga_anula_local"], "intermedios_descontados": diag["larga_local_intermedio"],
+                                                                        "repartos_recortados": diag["larga_recorta_reparto"], "repartos_anulados": diag["larga_anula_reparto"]},
+                                   "km_cargado": round(sum(x["km_cargado"] or 0 for x in larg_c if x["medido"]), 0),
+                                   "km_vacio": round(sum(x["km_vacio"] or 0 for x in larg_c if x["medido"]), 0)},
+               "espejos_intercompania": diag["espejos"], "sin_procesar": diag["sin_procesar"],
+               "tacografo_descartado": dict(collections.Counter(x["motivo_min"] for x in viajes_out if x["min_coherente"] is False)),
                "por_metodo": {k: {"viajes": n, "pct": round(100.0 * n / tot, 1)} for k, n in met.most_common()},
                "medido_por_viaje": {"viajes": nmed, "pct": round(100.0 * nmed / tot, 1),
                                     "aridos_pct": round(100.0 * sum(1 for x in arid if x["medido"]) / max(1, len(arid)), 1)},
@@ -1117,8 +1692,15 @@ def main():
             "jornada": "flujo continuo por camion; corte por descanso > rest_h o hueco de datos, NUNCA por medianoche; fechada por su primer movimiento",
             "ciclo": "del fin del ciclo anterior a la salida de la descarga (v1); el ultimo hasta el fin de la jornada; primero/ultimo con el ralenti de borde",
             "asignacion": "por grupos (origen, destino) en orden de GesRuta (cronologico dentro de cada cantera, no entre canteras); respaldo: alineamiento monotono por programacion dinamica",
-            "tacografo": "min_conduccion/otros/disponible/descanso de los cambios de actividad del tacografo dentro de la traza (min_fuente=tacografo); si no cubre el viaje, conduccion por movimiento (traza). conductor_hash = tarjeta (hash) que llevaba el camion; chofer_tacografo = su codigo GesRuta si esta enlazado",
-            "larga_distancia": "origen-destino >= 200 km, tipo nacional del ancla, o jornada > 24 h: salen como dia (repartido) con pendiente_pasada_nacional=true",
+            "tacografo": "min_conduccion/otros/disponible/descanso = actividad de la RANURA 1 del tacografo que viene en la traza, sobre la ventana t_ini..t_fin; solo se usa (min_fuente=tacografo, min_coherente=true) si hay tarjeta en la ranura 1 al menos la mitad del viaje y la conduccion registrada cubre al menos la mitad del movimiento de la traza; si no, min_coherente=false con motivo_min (sin_tarjeta_en_ranura_1 | tacografo_no_refleja_la_conduccion) y la conduccion sale del movimiento (min_fuente=traza). conductor_hash = tarjeta (hash) de la ranura 1; chofer_tacografo = su codigo GesRuta si esta enlazado",
+            "minutos": "con min_fuente=tacografo: conduccion + otros + disponible + descanso + sin_dato = min_transcurridos (t_fin - t_ini). duracion_min = HORAS DE TRABAJO (= min_transcurridos en aridos; en largo recorrido, sin los descansos > rest_h entre jornadas). min_espera = duracion_min - conduccion (trabajo sin conducir): es el COMPLEMENTO, no una categoria mas; no se suma al desglose",
+            "cargado_vacio": "km_vacio = del inicio del viaje a llegar a cargar; km_cargado = de salir de la carga a llegar a la descarga (contador CAN); null si no se ven las dos visitas",
+            "larga_distancia": "origen-destino >= 200 km (por DISTANCIA; 'nacional' es el tipo de servicio, no la distancia). Se casan sobre la traza CONTINUA del camion (cruzan descansos y dias): la fecha del albaran es la de CARGA; carga = estancia con parada en la zona de origen que cubre esa fecha (+-1 dia); descarga = primera estancia con parada en la de destino tras recorrer 0,8-1,8 veces la distancia (contador CAN), en <= dist/55 + 18 h y sin huecos de traza > 3 h. Inicio = fin del viaje anterior del camion / ultima parada >= 20 min en un lugar conocido / inicio de la jornada en que llega al origen (lo mas tarde); fin = fin de la jornada en que llega, salida de la zona o inicio de la carga del siguiente viaje local (lo primero). Conciliacion con los ciclos locales del mismo camion: el largo manda; el local que lo pisa se absorbe como grupaje (mismo origen), se recorta y se vuelve a medir (motivo recortado_por_viaje_largo_del_camion_*), se descuenta si cae dentro, o queda sin_ciclo. Grupaje = repartido. pendiente_pasada_nacional = largo sin casar repartido por el dia (se casara cuando la traza este completa)",
+            "espejos": "el mismo porte en Razo y en Agetrans (mismo camion, mismo ticket, mismo dia): se mide una vez en la casa duena del camion y la otra linea lo hereda con espejo_de = {empresa, viaje, cantera, linea} de la principal; los totales de grupo deben saltar las filas con espejo_de",
+            "linea": "linea = NUMERO de lineas.dbf del sistema anterior como entero en texto; (empresa, linea) es unico",
+            "hitos": "t_carga = llegada a cargar, t_carga_fin = salida cargado, t_descarga = llegada a descargar, t_descarga_fin = salida de la descarga (hora de Madrid; null si no se ve la visita); minutos de carga/descarga = diferencias. En largo recorrido son las estancias en las zonas de origen y destino",
+            "chofer": "chofer_coincide = el codigo de chofer del albaran (GesRuta) es uno de los enlazados a la tarjeta de la ranura 1 (una tarjeta puede tener varios codigos: dos fichas de la misma persona o un codigo por casa); chofer_tacografo = el codigo enlazado que coincide o, si no, el primero de su casa",
+            "paradas": "paradas = [{t (hora de Madrid), min, lugar, rol}]: paradas >= 5 min del camion dentro de [t_ini, t_fin]; rol = carga | descarga (por los hitos t_carga/t_descarga; lugar = origen/destino del viaje) | espera (tiempo parado fuera de la carga y la descarga; lugar = codigo del lugar conocido a < 700 m o null)",
             "litros": "crudo = reduccion monotona del contador; calibrados = tabla del sensor (ERP) + reduccion monotona"}
     json.dump({"meta": meta, "resumen": resumen, "viajes": viajes_out}, open(a.salida, "w", encoding="utf-8"), ensure_ascii=False)
     if a.diag:

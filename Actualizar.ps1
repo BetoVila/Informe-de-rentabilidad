@@ -86,7 +86,7 @@ try{
         Copy-Item -LiteralPath (Join-Path $run 'triangulado_v2.json') -Destination $tmp -Force
         if(Test-Path -LiteralPath $pub){[IO.File]::Replace($tmp,$pub,$pub+'.anterior')}else{[IO.File]::Move($tmp,$pub)}
         # El dia de cada camion en el mapa (compacto), junto al informe: dias\<MATRICULA>_<fecha>.html ("ver dia" en Por cliente).
-        & $py (Join-Path $root 'scripts\ver_dia_mapa.py') --v2 (Join-Path $run 'triangulado_v2.json') --diag (Join-Path $run 'triangulado_v2_diag.json') --wialon (Join-Path $hist 'wialon_hist') --locatel (Join-Path $hist 'locatel_hist') --todos --salida-dir (Join-Path $config.publicPath 'dias')
+        & $py (Join-Path $root 'scripts\ver_dia_mapa.py') --v2 (Join-Path $run 'triangulado_v2.json') --diag (Join-Path $run 'triangulado_v2_diag.json') --wialon (Join-Path $hist 'wialon_hist') --locatel (Join-Path $hist 'locatel_hist') --geocode (Join-Path $hist 'coords_lugares_por_casa.json') --todos --salida-dir (Join-Path $config.publicPath 'dias')
         if($LASTEXITCODE -ne 0){throw 'mapas de dias'}
     }
     $triArg=if(Test-Path -LiteralPath $tri2){$tri2}else{Join-Path $root 'cache\triangulado_v1.json'}
@@ -111,6 +111,15 @@ try{
     $incoming=Join-Path $config.publicPath ('informe.'+[guid]::NewGuid().ToString('N')+'.tmp')
     Copy-Item -LiteralPath $ready -Destination $incoming
     if(Test-Path -LiteralPath $target){[IO.File]::Replace($incoming,$target,$target+'.anterior')}else{[IO.File]::Move($incoming,$target)}
+    # Marco comun de costes (tarifas, ERP): reparto contable por sociedad, ano y mes en export\costes.json (opcional; sustitucion atomica).
+    Invoke-Opcional 'Costes (export)' {
+        & $node (Join-Path $root 'scripts\export_costes.mjs') (Join-Path $run 'current.json.gz') (Join-Path $run 'costes.json')
+        if($LASTEXITCODE -ne 0){throw 'costes'}
+        $exp=Join-Path $config.publicPath 'export';if(-not (Test-Path -LiteralPath $exp)){New-Item -ItemType Directory -Path $exp | Out-Null}
+        $pubc=Join-Path $exp 'costes.json';$tmpc=Join-Path $exp ('costes.'+[guid]::NewGuid().ToString('N')+'.tmp')
+        Copy-Item -LiteralPath (Join-Path $run 'costes.json') -Destination $tmpc -Force
+        if(Test-Path -LiteralPath $pubc){[IO.File]::Replace($tmpc,$pubc,$pubc+'.anterior')}else{[IO.File]::Move($tmpc,$pubc)}
+    }
     $last=(Get-Date).ToString('o');$dataTo=$hasta
     $state=if($config.scheduled){'ok'}else{'pending'}
     $faltan=if($script:avisos.Count){' Sin datos en esta lectura: '+($script:avisos -join ', ')+' (se indica arriba en el informe).'}else{''}

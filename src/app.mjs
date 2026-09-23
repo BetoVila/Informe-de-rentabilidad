@@ -11,7 +11,11 @@ const moneyCol=(label,key)=>({label,key,format:eur,numeric:true});
 const numberCol=(label,key,n=0)=>({label,key,format:v=>nf(v,n),numeric:true});
 const percentCol=(label,key)=>({label,key,format:pct,numeric:true,signed:true});
 const signedTone=(c,r)=>c.signed&&typeof r[c.key]==='number'?(r[c.key]>0?'pos strong':r[c.key]<0?'neg strong':''):'';
-let D,M,state,selection,current,baseline=null,tableState={page:0,query:'',sort:'',asc:false},tableDefinition;
+// Búsqueda sin tildes ni mayúsculas («coruña» = «CORUÑA» = «coruna»)
+const norm=s=>String(s??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLocaleLowerCase('es');
+// Estado de la tabla activa: búsqueda por palabras, filtros por columna, orden, página y filas desplegadas
+const freshTable=()=>({page:0,query:'',sort:'',asc:false,filters:{},showFilters:false,open:new Set(),forTitle:''});
+let D,M,state,selection,current,baseline=null,tableState=freshTable(),tableDefinition;
 const slicerDefs=[['plates','Vehículo','plate','plateLabel'],['clients','Cliente','clientId','client'],['categories','Tipo de vehículo','category','category'],['loads','Carga','load','load'],['concepts','Concepto de facturación','concept','concept']];
 let slicerOptions={},ledgerCtx={},zoneMode='salida',zonasAbiertas=new Set(),zonasVista={zonas:[],total:0};
 const hasFilters=()=>Boolean(state.plates.length||state.clients.length||state.categories.length||state.loads.length||state.concepts.length);
@@ -259,17 +263,114 @@ const groupColumns=()=>[{label:'Detalle',key:'label'},moneyCol('Ingresos sin IVA
 const ratioNote='Los ratios (por € de coste, por km y por hora) usan el coste imputable y los km y horas DECLARADOS en los partes: son orientativos. El cálculo completo (contabilidad, subcontratistas reales, km y horas de Movertis y Locatel) está en construcción y se irá afinando.';
 // Aviso de que el coste por vehículo o cliente es parcial: solo lo que los partes imputan.
 const partialWarn=()=>{const br=ledgerCtx.br;return br&&br.totalLedger>0?`<div class="warn"><strong>El coste que se ve aquí es parcial.</strong> Solo es lo que los partes de Access imputan a vehículos (el ${pct(br.coverage)} del gasto real de ${monthRange(br.months)}). Faltan subcontratación, compra de áridos y gastos generales (${eur(br.missing)}), así que el saldo de cada fila es aparente y sale por encima del real. El resultado real está en la contabilidad (pestaña Resumen).</div>`:'';};
-function setTable(title,subtitle,rows,columns,drill=null){tableDefinition={title,subtitle,rows,columns,drill};return `<section class="panel"><h2>${title}</h2><p class="sub">${subtitle}</p><div class="tabletools"><input id="tableSearch" type="search" placeholder="Buscar en todas las filas…" aria-label="Buscar en tabla" value="${esc(tableState.query)}"><span id="tableCount"></span></div><div id="tableArea"></div></section>`;}
+function setTable(title,subtitle,rows,columns,drill=null,detail=null){
+ if(tableState.forTitle!==title){tableState.filters={};tableState.query='';tableState.showFilters=false;tableState.open=new Set();tableState.page=0;tableState.forTitle=title;}
+ rows.forEach((r,i)=>{r.__i=i;});
+ for(const c of columns)if(c.filter===undefined)c.filter=filterKind(c,rows);
+ tableDefinition={title,subtitle,rows,columns,drill,detail};
+ const k=activeFilterCount(),open=tableState.showFilters||k>0;
+ return `<section class="panel"><h2>${title}</h2><p class="sub">${subtitle}</p><div class="tabletools"><div class="tabletools-l"><input id="tableSearch" type="search" placeholder="Buscar palabras (todas deben aparecer; da igual tildes o mayúsculas)…" aria-label="Buscar en tabla" value="${esc(tableState.query)}"><button id="tableFilters" type="button" class="${open?'on':''}" aria-expanded="${open}">Filtros${k?' · '+k:''}</button></div><span id="tableCount"></span></div><div id="tableFilterBar" class="filterbar" ${open?'':'hidden'}>${filterBarHtml(columns,rows)}</div><div id="tableChips" class="active-filters tchips"></div><div id="tableArea"></div></section>`;
+}
+// Qué filtro le toca a cada columna: fechas (desde/hasta), pocas opciones (desplegable), texto libre (contiene) o cifra (mín./máx.).
+function filterKind(c,rows){
+ if(c.html)return false;
+ if(c.numeric)return 'number';
+ let n=0,dateLike=true,sample=null;const set=new Set();
+ for(const r of rows){const v=r[c.key];if(v==null||v==='')continue;const s=String(v);n++;if(sample===null)sample=s;if(dateLike&&!/^\d{4}-\d{2}(-\d{2})?$/.test(s))dateLike=false;if(set.size<=400)set.add(s);}
+ if(!n)return false;
+ if(dateLike){c.dateLen=sample.length;return 'date';}
+ return set.size<=120?'select':'text';
+}
+function filterBarHtml(columns,rows){
+ const f=tableState.filters,out=[];
+ for(const c of columns){
+  if(!c.filter||c.filter==='number')continue;
+  const v=f[c.key];
+  if(c.filter==='date'){const t=c.dateLen===7?'month':'date';out.push(`<label class="fctl"><span>${esc(c.label)} desde</span><input type="${t}" data-tfilter="${esc(c.key)}" data-part="from" value="${esc(v?.from||'')}"></label><label class="fctl"><span>${esc(c.label)} hasta</span><input type="${t}" data-tfilter="${esc(c.key)}" data-part="to" value="${esc(v?.to||'')}"></label>`);continue;}
+  const freq=new Map();for(const r of rows){const x=r[c.key];if(x==null||x==='')continue;const s=String(x);freq.set(s,(freq.get(s)||0)+1);}
+  if(c.filter==='select'){const opts=[...freq.keys()].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));out.push(`<label class="fctl"><span>${esc(c.label)}</span><select data-tfilter="${esc(c.key)}"><option value="">Todos</option>${opts.map(o=>`<option value="${esc(o)}"${v===o?' selected':''}>${esc(o)}</option>`).join('')}</select></label>`);}
+  else{const opts=[...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,300).map(e=>e[0]).sort((a,b)=>a.localeCompare(b,'es'));const lid='dl_'+String(c.key).replace(/\W/g,'_');out.push(`<label class="fctl"><span>${esc(c.label)}</span><input type="search" list="${lid}" data-tfilter="${esc(c.key)}" placeholder="contiene…" value="${esc(v||'')}"><datalist id="${lid}">${opts.map(o=>`<option value="${esc(o)}">`).join('')}</datalist></label>`);}
+ }
+ const nums=columns.filter(c=>c.filter==='number');
+ if(nums.length){const n=f.__num||{};out.push(`<div class="fctl fnum"><span>Cifra entre (elige la columna)</span><div class="fnumrow"><select data-tnum="key"><option value="">— columna —</option>${nums.map(c=>`<option value="${esc(c.key)}"${n.key===c.key?' selected':''}>${esc(c.label)}</option>`).join('')}</select><input type="number" step="any" data-tnum="min" placeholder="mín." aria-label="mínimo" value="${esc(n.min??'')}"><input type="number" step="any" data-tnum="max" placeholder="máx." aria-label="máximo" value="${esc(n.max??'')}"></div></div>`);}
+ out.push(`<div class="fctl fact"><span>&nbsp;</span><button id="tableClearFilters" type="button">Quitar todos los filtros</button></div>`);
+ return out.join('');
+}
+const numSet=v=>v!==''&&v!=null&&!Number.isNaN(Number(v));
+function activeFilterCount(){let k=0;for(const [key,v] of Object.entries(tableState.filters)){if(key==='__num'){if(v&&v.key&&(numSet(v.min)||numSet(v.max)))k++;}else if(v&&typeof v==='object'){if(v.from)k++;if(v.to)k++;}else if(v!=null&&v!=='')k++;}return k;}
+function rowPasses(r,def){
+ const f=tableState.filters;
+ for(const c of def.columns){
+  const v=f[c.key];if(v==null||v===''||!c.filter||c.filter==='number')continue;
+  const raw=r[c.key];
+  if(c.filter==='select'){if(String(raw??'')!==v)return false;}
+  else if(c.filter==='date'){if(!v.from&&!v.to)continue;const s=String(raw??'').slice(0,c.dateLen);if(v.from&&s<v.from.slice(0,c.dateLen))return false;if(v.to&&s>v.to.slice(0,c.dateLen))return false;}
+  else{const s=norm(raw);for(const t of norm(v).split(/\s+/))if(t&&!s.includes(t))return false;}
+ }
+ const n=f.__num;
+ if(n&&n.key&&(numSet(n.min)||numSet(n.max))){const x=r[n.key];if(typeof x!=='number')return false;if(numSet(n.min)&&x<Number(n.min))return false;if(numSet(n.max)&&x>Number(n.max))return false;}
+ return true;
+}
+// Texto de la fila para la búsqueda por palabras (se calcula una vez por fila y tabla)
+const hayOf=(r,def)=>{if(r.__hayT!==def.title){r.__hay=def.columns.map(c=>c.html?'':norm(r[c.key])).join('\u0001');r.__hayT=def.title;}return r.__hay;};
+function chipsHtml(def){
+ const f=tableState.filters,out=[],lab=k=>def.columns.find(c=>c.key===k)?.label||k;
+ for(const [key,v] of Object.entries(f)){
+  if(key==='__num'){if(v&&v.key&&(numSet(v.min)||numSet(v.max)))out.push(`<button class="chip" data-tremove="__num" title="Quitar filtro">${esc(lab(v.key))}${numSet(v.min)?' ≥ '+esc(v.min):''}${numSet(v.max)?' ≤ '+esc(v.max):''} ×</button>`);}
+  else if(v&&typeof v==='object'){if(v.from)out.push(`<button class="chip" data-tremove="${esc(key)}" data-part="from" title="Quitar filtro">${esc(lab(key))} desde ${esc(v.from)} ×</button>`);if(v.to)out.push(`<button class="chip" data-tremove="${esc(key)}" data-part="to" title="Quitar filtro">${esc(lab(key))} hasta ${esc(v.to)} ×</button>`);}
+  else if(v!=null&&v!=='')out.push(`<button class="chip" data-tremove="${esc(key)}" title="Quitar filtro">${esc(lab(key))}: ${esc(v)} ×</button>`);
+ }
+ return out.join('');
+}
+function removeFilter(key,part){
+ const f=tableState.filters,bar=$('tableFilterBar'),q=s=>bar?bar.querySelector(s):null;
+ if(key==='__num'){delete f.__num;if(bar)bar.querySelectorAll('[data-tnum]').forEach(el=>{el.value='';});}
+ else if(part){if(f[key]&&typeof f[key]==='object'){delete f[key][part];if(!f[key].from&&!f[key].to)delete f[key];}const el=q(`[data-tfilter="${CSS.escape(key)}"][data-part="${part}"]`);if(el)el.value='';}
+ else{delete f[key];const el=q(`[data-tfilter="${CSS.escape(key)}"]`);if(el)el.value='';}
+ tableState.page=0;drawTable();
+}
+function applyFilterControl(el){
+ if(el.dataset.tfilter!==undefined){const k=el.dataset.tfilter,p=el.dataset.part;if(p){const cur=tableState.filters[k]&&typeof tableState.filters[k]==='object'?tableState.filters[k]:{};tableState.filters[k]={...cur,[p]:el.value};}else tableState.filters[k]=el.value;}
+ else if(el.dataset.tnum!==undefined){const bar=$('tableFilterBar'),g=n=>bar?.querySelector(`[data-tnum="${n}"]`)?.value??'';tableState.filters.__num={key:g('key'),min:g('min'),max:g('max')};}
+ else return;
+ tableState.page=0;drawTable();
+}
 function drawTable(){
  const def=tableDefinition;if(!def||!$('tableArea'))return;
- const query=tableState.query.toLocaleLowerCase('es');let rows=def.rows.filter(r=>!query||def.columns.some(c=>String(r[c.key]??'').toLocaleLowerCase('es').includes(query)));
- const count=rows.length;
+ const terms=norm(tableState.query).split(/\s+/).filter(Boolean);
+ let rows=def.rows.filter(r=>rowPasses(r,def)&&(!terms.length||(h=>terms.every(t=>h.includes(t)))(hayOf(r,def))));
+ const count=rows.length,k=activeFilterCount();
  if(tableState.sort){const key=tableState.sort;rows=rows.slice().sort((a,b)=>{const aa=a[key],bb=b[key];const res=typeof aa==='number'&&typeof bb==='number'?aa-bb:String(aa??'').localeCompare(String(bb??''),'es',{numeric:true});return tableState.asc?res:-res;});}
  tableState.page=Math.min(tableState.page,Math.max(0,Math.ceil(rows.length/50)-1));
  const view=rows.slice(tableState.page*50,tableState.page*50+50);
- $('tableCount').textContent=`${nf(count)} filas${query?' encontradas':''} · ${nf(def.rows.length)} en el ámbito. La búsqueda de tabla no modifica los indicadores.`;
- $('tableArea').innerHTML=count?`<div class="tablewrap"><table><thead><tr>${def.columns.map(c=>`<th scope="col" aria-sort="${tableState.sort===c.key?(tableState.asc?'ascending':'descending'):'none'}"><button data-sort="${c.key}">${esc(c.label)} ${tableState.sort===c.key?(tableState.asc?'↑':'↓'):'↕'}</button></th>`).join('')}</tr></thead><tbody>${view.map(r=>`<tr>${def.columns.map((c,i)=>`<td class="${c.numeric?'num':''} ${signedTone(c,r)||(c.numeric&&r[c.key]<0?'neg':'')}" title="${esc(c.format?c.format(r[c.key]):r[c.key])}">${i===0&&def.drill?`<button class="tablelink" data-drill="${def.drill}" data-key="${esc(r.key)}">${esc(r[c.key])} ↗</button>`:(c.html?String(c.format?c.format(r[c.key]):r[c.key]??''):esc(c.format?c.format(r[c.key]):r[c.key]))}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="pager"><span>${tableState.page*50+1}–${Math.min((tableState.page+1)*50,count)} de ${nf(count)} · todas las filas están disponibles</span><div><button data-page="-1" ${tableState.page===0?'disabled':''}>← Anterior</button><button data-page="1" ${(tableState.page+1)*50>=count?'disabled':''}>Siguiente →</button></div></div>`:`<div class="empty">No hay datos para esta combinación. Cambie los filtros o el texto de búsqueda.</div>`;
+ const chips=$('tableChips');if(chips)chips.innerHTML=chipsHtml(def);
+ const fb=$('tableFilters');if(fb){fb.textContent='Filtros'+(k?' · '+k:'');fb.classList.toggle('on',k>0||tableState.showFilters);}
+ $('tableCount').textContent=`${nf(count)} filas${(terms.length||k)?' encontradas':''} · ${nf(def.rows.length)} en el ámbito. La búsqueda y los filtros de la tabla no modifican los indicadores.`;
+ const ncol=def.columns.length,cls=c=>`${c.numeric?'num':''} ${c.center?'ctr':''}`;
+ const cell=(c,r,i)=>i===0&&def.drill?`<button class="tablelink" data-drill="${def.drill}" data-key="${esc(r.key)}">${esc(r[c.key])} ↗</button>`:(c.html?String(c.format?c.format(r[c.key]):r[c.key]??''):esc(c.format?c.format(r[c.key]):r[c.key]));
+ $('tableArea').innerHTML=count?`<div class="tablewrap"><table class="${def.detail?'expandable':''}"><thead><tr>${def.columns.map(c=>`<th scope="col" class="${cls(c)}" aria-sort="${tableState.sort===c.key?(tableState.asc?'ascending':'descending'):'none'}"><button data-sort="${c.key}">${esc(c.label)} ${tableState.sort===c.key?(tableState.asc?'↑':'↓'):'↕'}</button></th>`).join('')}</tr></thead><tbody>${view.map(r=>{const open=Boolean(def.detail)&&tableState.open.has(r.__i);return `<tr${def.detail?` class="exp${open?' open':''}" data-row="${r.__i}" title="Pincha para ${open?'plegar':'ver'} el detalle"`:''}>${def.columns.map((c,i)=>`<td class="${cls(c)} ${signedTone(c,r)||(c.numeric&&r[c.key]<0?'neg':'')}" title="${esc(c.format?c.format(r[c.key]):r[c.key])}">${i===0&&def.detail?`<span class="caret" aria-hidden="true">${open?'▾':'▸'}</span>`:''}${cell(c,r,i)}</td>`).join('')}</tr>${open?`<tr class="detailrow"><td colspan="${ncol}">${def.detail(r)}</td></tr>`:''}`;}).join('')}</tbody></table></div><div class="pager"><span>${tableState.page*50+1}–${Math.min((tableState.page+1)*50,count)} de ${nf(count)} · todas las filas están disponibles</span><div><button data-page="-1" ${tableState.page===0?'disabled':''}>← Anterior</button><button data-page="1" ${(tableState.page+1)*50>=count?'disabled':''}>Siguiente →</button></div></div>`:`<div class="empty">No hay datos para esta combinación. Cambie los filtros o el texto de búsqueda.</div>`;
 }
+// ---- Recuadros explicativos (.info): cada uno se puede ocultar y un botón general los oculta/muestra todos; se recuerda en el navegador.
+const INFO_KEY='rz_info_hidden',INFO_ALL='rz_info_all';
+const lsGet=(k,d)=>{try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v);}catch(e){return d;}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
+const hashStr=s=>{let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))|0;return (h>>>0).toString(36);};
+function wireInfo(){
+ document.querySelectorAll('#content .info, #message .info').forEach(el=>{
+  if(el.dataset.infoId)return;
+  const id=hashStr(el.textContent.trim().slice(0,160));el.dataset.infoId=id;
+  const btn=document.createElement('button');btn.className='info-x';btn.type='button';btn.dataset.infoHide=id;btn.title='Ocultar esta explicación';btn.textContent='Ocultar';el.appendChild(btn);
+  const min=document.createElement('div');min.className='info-min';min.innerHTML=`<span aria-hidden="true">ⓘ</span><button type="button" class="textbtn" data-info-show="${id}">Mostrar la explicación</button>`;el.after(min);
+ });
+ applyInfo();
+}
+function applyInfo(){
+ const all=lsGet(INFO_ALL,true),hidden=new Set(lsGet(INFO_KEY,[]));
+ const gb=$('infoToggle');if(gb)gb.textContent=all?'Ocultar explicaciones':'Mostrar explicaciones';
+ document.querySelectorAll('[data-info-id]').forEach(el=>{const off=!all||hidden.has(el.dataset.infoId);el.hidden=off;const min=el.nextElementSibling;if(min&&min.classList.contains('info-min'))min.hidden=!off||!all;});
+}
+function infoSet(id,hide){const hidden=new Set(lsGet(INFO_KEY,[]));if(hide)hidden.add(id);else hidden.delete(id);lsSet(INFO_KEY,[...hidden]);applyInfo();}
+function infoAll(){lsSet(INFO_ALL,!lsGet(INFO_ALL,true));applyInfo();}
 function partRows(){const map=new Map();for(const r of selection.costs){if(!map.has(r.id))map.set(r.id,{...r,allocation:0,allocated:0});const x=map.get(r.id);x.allocation+=r.share;x.allocated+=(state.costMode==='recalculated'?r.recalculated:r.stored)*r.share;}return [...map.values()].sort((a,b)=>b.date.localeCompare(a.date));}
 // Barras de viajes reales por mes (una serie), con todos los volúmenes en el tooltip.
 function activityChart(byMonth){
@@ -369,15 +470,43 @@ function viajesTab(){
  const t=M.netaTrips(state);
  if(!t)return panel('Margen por viaje','Margen neto de cada viaje real.','<div class="info">Necesita la triangulación (km y horas por viaje) y la contabilidad. No disponible para este periodo o empresa.</div>');
  const v2=t.some(x=>x.tini!=null||x.metodo);
- const cols=[{label:'Día',key:'dia'},{label:'Cliente',key:'cliente'},{label:'Ruta',key:'ruta'},{label:'Matrícula',key:'mat'}]
-  .concat(v2?[numberCol('Nº día','orden'),{label:'Inicio',key:'tini'},{label:'Fin',key:'tfin'}]:[])
-  .concat([numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km'),numberCol('Horas','horas',1)])
-  .concat(v2?[numberCol('Min. conducción','cond'),numberCol('Min. espera','espera'),{label:'Chofer (tacógrafo)',key:'chofer'}]:[])
-  .concat([moneyCol('Ingreso','ingreso'),moneyCol('Coste real','coste'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% neto','margenPct'),{label:'Fiabilidad',key:'fiab'}])
-  .concat(v2?[{label:'Método',key:'metodo'},{label:'Confianza',key:'conf'},{label:'Mapa',key:'mapaKey',html:true,format:v=>v?`<a class="noprint" href="dias/${encodeURIComponent(v)}.html" target="_blank" rel="noopener">ver día</a>`:'—'}]:[]);
+ const cols=[{label:'Día',key:'dia',center:true},{label:'Cliente',key:'cliente'},{label:'Lugar de carga',key:'carga'},{label:'Lugar de descarga',key:'descarga'},{label:'Provincias',key:'ruta'},{label:'Matrícula',key:'mat',center:true}]
+  .concat(v2?[numberCol('Nº día','orden'),{label:'Inicio',key:'tini',center:true},{label:'Fin',key:'tfin',center:true}]:[])
+  .concat([numberCol('m³','m3'),numberCol('Toneladas','t'),numberCol('Km','km')])
+  .concat(t.some(x=>x.kmCarg!=null)?[numberCol('Km cargado','kmCarg'),numberCol('Km vacío','kmVac')]:[])
+  .concat([numberCol('Horas','horas',1),numberCol('Litros','lit',1)])
+  .concat(v2?[numberCol('Min. conducción','cond'),numberCol('Min. espera','espera'),{label:'Chofer (tacógrafo)',key:'chofer',center:true}]:[])
+  .concat([moneyCol('Ingreso','ingreso'),moneyCol('Coste real','coste'),{...moneyCol('Margen neto','margen'),signed:true},percentCol('% neto','margenPct'),{label:'Fiabilidad',key:'fiab',center:true}])
+  .concat(v2?[{label:'Método',key:'metodo',center:true},{label:'Confianza',key:'conf',center:true},{label:'Mapa',key:'mapaKey',html:true,center:true,format:v=>v?`<a class="noprint" href="dias/${encodeURIComponent(v)}.html" target="_blank" rel="noopener">ver día</a>`:'—'}]:[]);
  const tri=D.actividad&&D.actividad.tri;
- const triHtml=tri?`<div class="info"><b>Triangulación v${tri.version||2}</b> (${esc(tri.generado||'')}): <b>${nf(tri.medido||0)}</b> de ${nf(tri.con_traza||tri.viajes||0)} viajes de áridos/nacional <b>con traza del localizador</b>${tri.desde_traza?` (${esc(tri.desde_traza)} → ${esc(tri.hasta_traza||'')})`:''} tienen <b>hora real de inicio y fin</b> (${tri.pct_con_traza!=null?tri.pct_con_traza:tri.pct||0} %); ${nf(tri.sin_traza||0)} viajes más son de fechas sin traza bajada (2025) o camiones sin localizador · confianza alta ${nf(tri.alta||0)} / media ${nf(tri.media||0)} · minutos del <b>tacógrafo</b> en ${nf(tri.taco||0)} viajes · el chofer del tacógrafo coincide con GesRuta en ${nf(tri.chofer_ok||0)} de ${nf((tri.chofer_ok||0)+(tri.chofer_no||0))} · jornadas nocturnas ${nf(tri.nocturnas||0)} · albaranes sin ciclo en la traza ${nf(tri.sin_ciclo||0)} (<b>sin dato, no cero</b>) · nº de cantera repetido (error de grabación) ${nf(tri.repetidas||0)} · largas distancias pendientes de la pasada de nacional ${nf(tri.largas||0)}. <b>Inicio/Fin</b> en hora de Madrid («+1» = acaba al día siguiente: viaje nocturno).</div>`:'';
- return `<div class="info">Cada <b>viaje real</b> con su <b>margen neto</b>: ingreso menos el coste real (combustible, personal, flota, subcontratación e indirectos). Ordena por «Margen neto» para ver los peores, o busca un cliente o matrícula. «Fiabilidad»: <b>medido/repartido</b> = km y horas del localizador; <b>subcontrata</b> = coste real de la factura del subcontratista (por línea, cuadra con la contabilidad); <b>estimado</b> = hormigón (horas de la traza GPS). El aviso <b>⚠</b> marca algún viaje propio suelto de clientes casi todo subcontratados, donde el reparto de áridos sale inflado — ahí fíate del margen por <b>cliente</b>.</div>`+triHtml+setTable('Margen por viaje','Los '+nf(t.length)+' viajes del periodo, ordenables y con búsqueda. Verde gana, rojo pierde.',t,cols);
+ const largasTxt=tri&&tri.largas_medidas!=null?`largo recorrido (≥200 km): <b>${nf(tri.largas_medidas||0)}</b> de ${nf(tri.largas_con_traza||0)} con traza medidos de carga a descarga aunque crucen días (horas = de trabajo, sin los descansos), con <b>km cargado y en vacío</b>`:`largas distancias pendientes de la pasada de nacional ${nf(tri&&tri.largas||0)}`;
+ const triHtml=tri?`<div class="info"><b>Triangulación v${tri.version||2}</b> (${esc(tri.generado||'')}): <b>${nf(tri.medido||0)}</b> de ${nf(tri.con_traza||tri.viajes||0)} viajes de áridos/nacional <b>con traza del localizador</b>${tri.desde_traza?` (${esc(tri.desde_traza)} → ${esc(tri.hasta_traza||'')})`:''} tienen <b>hora real de inicio y fin</b> (${tri.pct_con_traza!=null?tri.pct_con_traza:tri.pct||0} %); ${nf(tri.sin_traza||0)} viajes más son de fechas sin traza bajada, camiones ajenos o sin localizador · confianza alta ${nf(tri.alta||0)} / media ${nf(tri.media||0)} · ${largasTxt} · minutos del <b>tacógrafo</b> en ${nf(tri.taco||0)} viajes${tri.taco_descartado?` (en ${nf(tri.taco_descartado)} más el localizador no recibe el tacógrafo: se usa la traza)`:''} · el chofer del tacógrafo coincide con GesRuta en ${nf(tri.chofer_ok||0)} de ${nf((tri.chofer_ok||0)+(tri.chofer_no||0))} · jornadas nocturnas ${nf(tri.nocturnas||0)} · albaranes sin ciclo en la traza ${nf(tri.sin_ciclo||0)} (<b>sin dato, no cero</b>) · nº de cantera repetido (error de grabación) ${nf(tri.repetidas||0)}${tri.espejos?` · ${nf(tri.espejos)} portes que salen en Razo y en Agetrans (espejo intercompañía) medidos una vez y marcados «espejo»`:''}. <b>Inicio/Fin</b> en hora de Madrid («+1» = acaba al día siguiente).</div>`:'';
+ return `<div class="info">Cada <b>viaje real</b> con su <b>margen neto</b>: ingreso menos el coste real (combustible, personal, flota, subcontratación e indirectos). <b>Pincha en un viaje</b> para desplegar su detalle: lugares de carga y descarga, horario real, km cargado y en vacío, litros, minutos de conducción y de espera, desglose del coste y el mapa del día. Ordena por «Margen neto» para ver los peores; busca por palabras o abre «Filtros» para acotar por cliente, lugar, matrícula, fechas o cifras. «Fiabilidad»: <b>medido/repartido</b> = km y horas del localizador; <b>subcontrata</b> = coste real de la factura del subcontratista (por línea, cuadra con la contabilidad); <b>estimado</b> = hormigón (horas de la traza GPS). El aviso <b>⚠</b> marca algún viaje propio suelto de clientes casi todo subcontratados, donde el reparto de áridos sale inflado — ahí fíate del margen por <b>cliente</b>.</div>`+triHtml+setTable('Margen por viaje','Los '+nf(t.length)+' viajes del periodo, ordenables, con búsqueda por palabras y filtros por columna. Verde gana, rojo pierde. Pincha en una fila para desplegar el detalle del viaje.',t,cols,null,tripDetail);
+}
+// Detalle de un viaje (fila desplegada de «Margen por viaje»): lo que sabemos de ese viaje concreto, sin inventar nada.
+function tripDetail(t){
+ const row=(k,v)=>v==null||v===''||v==='—'?'':`<div><span class="k">${k}</span><span class="v">${v}</span></div>`;
+ const lugar=(p,l)=>esc(p)+(l&&!/^\(/.test(l)&&norm(l)!==norm(p)?` <small>(${esc(l)})</small>`:'');
+ const lab={combustible:'Combustible (por litros)',personal:'Personal (por horas)',flota:'Flota: reparaciones, seguros, amortización… (por km)',indirectos:'Gastos generales (por ingreso)',aridos:'Compra de áridos (por cliente)',subcontrata:'Subcontratista (factura real)'};
+ const costes=Object.entries(t.desg||{}).filter(([,v])=>Math.abs(v)>=0.5).map(([k,v])=>row(lab[k]||k,eur(v))).join('');
+ const l100=t.lit&&t.km?nf(t.lit/t.km*100,1)+' l/100 km':null;
+ const carga=(t.m3?nf(t.m3)+' m³':'')+(t.t?(t.m3?' · ':'')+nf(t.t)+' t':'');
+ return `<div class="tripdetail">
+  <div class="grp">${esc(t.emp||'')} · ${esc(t.dia||'')} · ${esc(t.cliente||'')}${t.horm?' · hormigón':''}${t.sub?' · subcontratado':''}</div>
+  ${row('Lugar de carga',lugar(t.carga,t.locO))}${row('Lugar de descarga',lugar(t.descarga,t.locD))}
+  ${row('Matrícula',esc(t.mat))}${row('Chofer (tacógrafo)',esc(t.chofer))}
+  ${row('Horario real (localizador)',t.tini?esc(t.tini)+' → '+esc(t.tfin||'?')+(t.orden?' · viaje nº '+t.orden+' del día':''):null)}
+  ${row('Horas de trabajo',t.horas!=null?nf(t.horas,1)+' h':null)}
+  ${row('Km del localizador',t.km?nf(t.km)+' km'+(t.kmCarg!=null?' <small>(cargado '+nf(t.kmCarg)+' · en vacío '+nf(t.kmVac)+')</small>':''):null)}
+  ${row('Combustible',t.lit?nf(t.lit,1)+' L'+(l100?' <small>('+l100+')</small>':''):null)}
+  ${row('Conducción / espera',t.cond!=null?nf(t.cond)+' min conduciendo · '+nf(t.espera)+' min parado o esperando'+(t.otros!=null?' · '+nf(t.otros)+' min otros trabajos':''):null)}
+  ${row('Carga transportada',carga)}
+  <div class="grp">Ingreso ${eur(t.ingreso)} − coste real ${eur(t.coste)} = <b class="${t.margen>=0?'pos':'neg'}">${eur(t.margen)}</b> (${pcm(t.margenPct)})</div>
+  ${costes}
+  ${row('Fiabilidad de la medida',esc(t.fiab)+(t.metodo?' · '+esc(t.metodo)+(t.conf?' / confianza '+esc(t.conf):''):''))}
+  ${t.paradas&&t.paradas.length?`<div class="grp">Paradas y esperas del viaje (≥ 5 min): ${t.paradas.map(p=>`<span class="stop ${esc(p.rol)}">${esc(p.t)} · ${nf(p.min)} min · ${esc(p.lugar||'lugar no conocido')} <small>${({carga:'cargando',descarga:'descargando',espera:'espera',fuera:'fuera de viaje'})[p.rol]||''}</small></span>`).join('')}</div>`:''}
+  ${t.mapaKey?`<div><span class="k">Mapa del día</span><a class="v noprint" href="dias/${encodeURIComponent(t.mapaKey)}.html${t.orden?'#v='+t.orden:''}" target="_blank" rel="noopener">ver la traza, las paradas y las esperas ↗</a></div>`:''}
+ </div>`;
 }
 let _map=null,_mapLayer=null,_mapMetric='viajes',_mapStyle='carreteras',_tileLayers=[];
 const ESRI='https://server.arcgisonline.com/ArcGIS/rest/services/';
@@ -437,8 +566,8 @@ function drawMapPoints(pts){
 // ---- Informe por CLIENTE: lista gana/pierde + ficha (KPIs, comparación de periodos, operaciones agrupables) ----
 let _cliSel=null,_cliGroupBy='mes',_cliGroups=[];
 const pcm=x=>x==null?'—':(x>=0?'+':'')+nf(x*100,1)+' %';
-const CLI_THEAD='<thead><tr><th>Fecha</th><th class="num">Nº</th><th>Inicio</th><th>Fin</th><th>Lugar de carga</th><th>Lugar de descarga</th><th>Matrícula</th><th>Chofer</th><th class="num">m³</th><th class="num">t</th><th class="num">km</th><th class="num">Horas</th><th class="num">Min. cond.</th><th class="num">Min. espera</th><th class="num">Ingreso</th><th class="num">Coste</th><th class="num">Margen</th><th class="num">%</th><th>Fiab.</th><th>Método</th><th>Conf.</th><th class="noprint">Mapa</th></tr></thead>';
-const cliTrow=t=>`<tr><td>${t.dia||t.mes}</td><td class="num">${t.orden||'—'}</td><td>${esc(t.tini||'—')}</td><td>${esc(t.tfin||'—')}</td><td>${esc(t.carga||t.ruta)}</td><td>${esc(t.descarga||'')}</td><td>${esc(t.mat||'—')}</td><td>${esc(t.chofer||'—')}</td><td class="num">${t.m3||'—'}</td><td class="num">${t.t||'—'}</td><td class="num">${nf(t.km)}</td><td class="num">${t.horas==null?'—':t.horas}</td><td class="num">${t.cond==null?'—':t.cond}</td><td class="num">${t.espera==null?'—':t.espera}</td><td class="num">${eur(t.ingreso)}</td><td class="num">${eur(t.coste)}</td><td class="num ${t.margen>=0?'pos':'neg'}" style="font-weight:600">${eur(t.margen)}</td><td class="num ${t.margen>=0?'pos':'neg'}">${pcm(t.margenPct)}</td><td>${esc(t.fiab||'')}</td><td>${esc(t.metodo||'—')}</td><td>${esc(t.conf||'—')}</td><td class="noprint">${t.tini&&t.mat&&t.mat!=='—'?`<a href="dias/${encodeURIComponent(t.mat)}_${esc(t.dia)}.html" target="_blank" rel="noopener">ver día</a>`:'—'}</td></tr>`;
+const CLI_THEAD='<thead><tr><th>Fecha</th><th class="num">Nº</th><th>Inicio</th><th>Fin</th><th>Lugar de carga</th><th>Lugar de descarga</th><th>Matrícula</th><th>Chofer</th><th class="num">m³</th><th class="num">t</th><th class="num">km</th><th class="num">Km carg.</th><th class="num">Km vacío</th><th class="num">Horas</th><th class="num">Min. cond.</th><th class="num">Min. espera</th><th class="num">Ingreso</th><th class="num">Coste</th><th class="num">Margen</th><th class="num">%</th><th>Fiab.</th><th>Método</th><th>Conf.</th><th class="noprint">Mapa</th></tr></thead>';
+const cliTrow=t=>`<tr><td>${t.dia||t.mes}</td><td class="num">${t.orden||'—'}</td><td>${esc(t.tini||'—')}</td><td>${esc(t.tfin||'—')}</td><td>${esc(t.carga||t.ruta)}</td><td>${esc(t.descarga||'')}</td><td>${esc(t.mat||'—')}</td><td>${esc(t.chofer||'—')}</td><td class="num">${t.m3||'—'}</td><td class="num">${t.t||'—'}</td><td class="num">${nf(t.km)}</td><td class="num">${t.kmCarg==null?'—':nf(t.kmCarg)}</td><td class="num">${t.kmVac==null?'—':nf(t.kmVac)}</td><td class="num">${t.horas==null?'—':t.horas}</td><td class="num">${t.cond==null?'—':t.cond}</td><td class="num">${t.espera==null?'—':t.espera}</td><td class="num">${eur(t.ingreso)}</td><td class="num">${eur(t.coste)}</td><td class="num ${t.margen>=0?'pos':'neg'}" style="font-weight:600">${eur(t.margen)}</td><td class="num ${t.margen>=0?'pos':'neg'}">${pcm(t.margenPct)}</td><td>${esc(t.fiab||'')}</td><td>${esc(t.metodo||'—')}</td><td>${esc(t.conf||'—')}</td><td class="noprint">${t.tini&&t.mat&&t.mat!=='—'?`<a href="dias/${encodeURIComponent(t.mat)}_${esc(t.dia)}.html" target="_blank" rel="noopener">ver día</a>`:'—'}</td></tr>`;
 function cliOpsHtml(trips){
  if(_cliGroupBy==='none'){const shown=trips.slice(0,400);return `<div class="cli-tablewrap"><table class="cli-optable">${CLI_THEAD}<tbody>${shown.map(cliTrow).join('')}</tbody></table></div>${trips.length>400?`<p class="sub">Mostrando 400 de ${nf(trips.length)} viajes. Agrupa para verlos todos organizados por grupos.</p>`:''}`;}
  const gk=t=>({mes:(t.dia||t.mes||'').slice(0,7),carga:t.carga,descarga:t.descarga,ruta:t.ruta,mat:t.mat})[_cliGroupBy]||'—';
@@ -472,13 +601,33 @@ function clienteDetWire(){
  const pr=$('cliPrint');if(pr)pr.onclick=()=>window.print();
  wireCliGroups();
 }
+// De cada 100 € de gasto contable: combustible, personal (conductores / estructura), vehículos, compras y estructura general.
+// Misma contabilidad y categorías que el resto del informe (config\cuentas-contables.json); el reparto conductor/estructura
+// del personal sale de la nómina por secciones (oficina y taller = estructura).
+const ESTR_FLOTA=['amortizacion','reparaciones','seguros','repuestos','alquileres','peajes','neumaticos'],ESTR_COMPRAS=['aridos','subcontratacion'];
+function estructuraPanel(){
+ const lv=ledgerCtx.lv;if(!lv||!lv.expenses)return '';
+ const amt=id=>lv.expenseCategories.filter(c=>c.id===id).reduce((s,c)=>s+c.amount,0);
+ const tot=lv.expenses,comb=amt('combustible'),pers=amt('personal')+amt('dietas'),flota=ESTR_FLOTA.reduce((s,id)=>s+amt(id),0),compras=ESTR_COMPRAS.reduce((s,id)=>s+amt(id),0);
+ const known=new Set(['combustible','personal','dietas','impuesto_sociedades',...ESTR_FLOTA,...ESTR_COMPRAS]),isoc=amt('impuesto_sociedades');
+ const gen=lv.expenseCategories.filter(c=>!known.has(c.id)).reduce((s,c)=>s+c.amount,0);
+ const pt=M.personnelByTramo?M.personnelByTramo(state):null,fe=pt&&pt.total?pt.structureCost/pt.total:null;
+ const persEst=fe!=null?pers*fe:0,persCond=pers-persEst;
+ const partes=[['Combustible',comb,'#d97706'],[fe!=null?'Personal: conductores':'Personal',persCond,'#2563eb']]
+  .concat(fe!=null?[['Personal de estructura (oficina, taller)',persEst,'#7c3aed']]:[])
+  .concat([['Vehículos: amortización, reparaciones, repuestos y neumáticos, seguros, peajes, renting',flota,'#0e9488'],['Compras: áridos y subcontratación',compras,'#64748b'],['Estructura general: otros servicios, tributos, financieros, otras compras, suministros, extraordinarios',gen,'#c1394b']]).concat(isoc?[['Impuesto de sociedades (sobre el resultado; no es coste de explotación)',isoc,'#94a3b8']]:[]);
+ const bar=partes.map(([l,v,c])=>`<span style="width:${(100*Math.max(0,v)/tot).toFixed(2)}%;background:${c}" title="${esc(l)}: ${pct(v/tot)}"></span>`).join('');
+ const rows=partes.map(([l,v,c])=>`<tr><td><i class="sw" style="background:${c}"></i>${esc(l)}</td><td class="num">${eur(v)}</td><td class="num">${pct(v/tot)}</td><td class="num">${pct(lv.income?v/lv.income:null)}</td></tr>`).join('');
+ const estrTot=gen+persEst;
+ return panel('De cada 100 € de gasto','Estructura del gasto real de la contabilidad en el periodo y sociedades elegidos'+(lv.consolidado?' (consolidado, sin la subcontratación entre Razo y Agetrans)':'')+'. <b>Coste de estructura</b> = estructura general + personal de oficina y taller: <b>'+pct(estrTot/tot)+'</b> del gasto, <b>'+pct(lv.income?estrTot/lv.income:null)+'</b> de los ingresos.'+(fe!=null?' El reparto conductores / estructura del personal aplica la proporción de la nómina por secciones ('+pct(fe)+' estructura).':''),`<div class="stackbar">${bar}</div><div class="tablewrap" style="max-height:none"><table class="estr"><thead><tr><th class="plain">Naturaleza del gasto</th><th class="plain num">Importe</th><th class="plain num">% del gasto</th><th class="plain num">% de ingresos</th></tr></thead><tbody>${rows}<tr class="total"><td>Gasto total</td><td class="num">${eur(tot)}</td><td class="num">100 %</td><td class="num">${pct(lv.income?tot/lv.income:null)}</td></tr></tbody></table></div>`);
+}
 function renderContent(){
  tableDefinition=null;let html='';
  if(state.tab==='summary'&&ledgerCtx.ledgerOn){
    const {lv,br,lvBase}=ledgerCtx,op=new Map(M.group(selection,state,'month').groups.map(m=>[m.key,m]));
    const plRows=lv.byMonth.map(m=>({key:m.key,label:monthName(m.key),income:m.income,expenses:m.expenses,result:m.result,marginPct:m.marginPct,gesruta:op.get(m.key)?.revenue??0,parts:op.get(m.key)?.[state.costMode==='stored'?'rawCost':state.costMode==='recalculated'?'calcCost':'realCost']??0}));
    const totalExp=lv.expenses||1,cats=lv.expenseCategories.filter(c=>c.amount>0).slice(0,11).map(c=>({label:c.label,cost:c.amount,note:nf(c.amount/totalExp*100,0)+' %'}));
-   html=`<div class="grid2">${panel('Ingresos y gastos por mes','Contabilidad real (CxConta), solo meses cerrados.'+(lvBase?' Líneas discontinuas: '+ledgerCtx.priorLabel.toLowerCase()+'.':''),`<div class="legend"><span><i style="background:var(--blue)"></i>Ingresos</span><span><i style="background:#169389"></i>Gastos</span>${lvBase?'<span style="color:var(--blue)"><i class="dash"></i>Ingresos (comparación)</span><span style="color:#169389"><i class="dash"></i>Gastos (comparación)</span>':''}</div>${plChart(lv.byMonth,lvBase?.byMonth)}`)}${panel('De qué está hecho el gasto real','Por naturaleza de la cuenta contable, en el periodo cerrado.',bars(cats,'cost'))}</div>${intercompanyPanel()}${fuelPersonnelPanel()}${ratiosPanel()}${metrics()}`;
+   html=`<div class="grid2">${panel('Ingresos y gastos por mes','Contabilidad real (CxConta), solo meses cerrados.'+(lvBase?' Líneas discontinuas: '+ledgerCtx.priorLabel.toLowerCase()+'.':''),`<div class="legend"><span><i style="background:var(--blue)"></i>Ingresos</span><span><i style="background:#169389"></i>Gastos</span>${lvBase?'<span style="color:var(--blue)"><i class="dash"></i>Ingresos (comparación)</span><span style="color:#169389"><i class="dash"></i>Gastos (comparación)</span>':''}</div>${plChart(lv.byMonth,lvBase?.byMonth)}`)}${panel('De qué está hecho el gasto real','Por naturaleza de la cuenta contable, en el periodo cerrado.',bars(cats,'cost'))}</div>${estructuraPanel()}${intercompanyPanel()}${fuelPersonnelPanel()}${ratiosPanel()}${metrics()}`;
    html+=setTable('Resultado mes a mes','Ingresos y gastos de la contabilidad. A la derecha, lo que captan las facturas de GesRuta y los partes de Access el mismo mes (el gasto de los partes es incompleto).',plRows,[{label:'Mes',key:'label'},moneyCol('Ingresos','income'),moneyCol('Gastos','expenses'),{...moneyCol('Resultado','result'),signed:true},percentCol('Margen','marginPct'),moneyCol('Facturas GesRuta','gesruta'),moneyCol('Coste en partes','parts')]);
  }else if(state.tab==='summary'){
    const months=M.group(selection,state,'month').groups.sort((a,b)=>a.key.localeCompare(b.key));
@@ -502,7 +651,7 @@ function renderContent(){
  else if(state.tab==='mapa')html=mapa();
  else if(state.tab==='clientedet')html=clienteDet();
  else html=method();
- $('content').innerHTML=html;drawTable();
+ $('content').innerHTML=html;drawTable();wireInfo();
  if(state.tab==='mapa')mapaRender();
  if(state.tab==='clientedet')clienteDetWire();
 }
@@ -534,7 +683,7 @@ async function unlockPersonal(){
   const data=JSON.parse(await criptoDescifrar(PERSONAL_BLOB,key)),months=[...new Set(data.people.flatMap(p=>p.rows.map(r=>r.period)))].sort();
   personal={...personalEmpty(),data,months,month:months[months.length-1]||''};
  }catch(e){personal={...personalEmpty(),error:e.message==='CLAVE_INCORRECTA'?'La clave no es correcta.':'No se ha podido descifrar: '+e.message};}
- tableState={page:0,query:'',sort:'',asc:false};renderContent();
+ tableState=freshTable();renderContent();
 }
 function personalRows(){
  const P=personal.data,out=[];
@@ -564,15 +713,23 @@ function renderSources(){
  const label={ok:'✓',parcial:'parcial',pendiente:'· pendiente',sin:'· sin datos'};
  $('sources').innerHTML=(D.metadata.sources||[]).map(s=>`<span class="src-pill ${s.state}" title="${esc(s.note+(s.to?' · hasta '+(String(s.to).length===7?monthName(s.to):date(s.to)):''))}">${esc(s.name)} ${label[s.state]||''}</span>`).join('');
 }
-function switchTab(tab){state.tab=tab;tableState={page:0,query:'',sort:'',asc:false};document.querySelectorAll('#tabs button').forEach(b=>{const on=b.dataset.tab===tab;b.classList.toggle('selected',on);if(on)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});renderContent();}
+function switchTab(tab){state.tab=tab;tableState=freshTable();document.querySelectorAll('#tabs button').forEach(b=>{const on=b.dataset.tab===tab;b.classList.toggle('selected',on);if(on)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});renderContent();}
 function bind(){
  document.addEventListener('click',e=>{
+  const tr=e.target.closest('tr.exp');
+  if(tr&&!e.target.closest('a,button,input,select,label')){const i=Number(tr.dataset.row);if(tableState.open.has(i))tableState.open.delete(i);else tableState.open.add(i);drawTable();return;}
   const b=e.target.closest('button');if(!b)return;
+  if(b.id==='tableFilters'){tableState.showFilters=!tableState.showFilters;const bar=$('tableFilterBar');if(bar)bar.hidden=!tableState.showFilters;b.setAttribute('aria-expanded',String(tableState.showFilters));b.classList.toggle('on',tableState.showFilters||activeFilterCount()>0);return;}
+  if(b.id==='tableClearFilters'){tableState.filters={};const bar=$('tableFilterBar');if(bar)bar.querySelectorAll('input,select').forEach(el=>{el.value='';});tableState.page=0;drawTable();return;}
+  if(b.dataset.tremove!==undefined){removeFilter(b.dataset.tremove,b.dataset.part);return;}
+  if(b.dataset.infoHide!==undefined){infoSet(b.dataset.infoHide,true);return;}
+  if(b.dataset.infoShow!==undefined){infoSet(b.dataset.infoShow,false);return;}
+  if(b.id==='infoToggle'){infoAll();return;}
   if(b.dataset.company!==undefined){state.companies=b.dataset.company?[b.dataset.company]:[];tableState.page=0;update();}
   if(b.dataset.tab)switchTab(b.dataset.tab);
   if(b.id==='personalGo')unlockPersonal();
-  if(b.id==='personalLock'){personal=personalEmpty();tableState={page:0,query:'',sort:'',asc:false};renderContent();}
-  if(b.dataset.ptype!==undefined){personal.type=b.dataset.ptype;tableState={page:0,query:'',sort:'',asc:false};renderContent();}
+  if(b.id==='personalLock'){personal=personalEmpty();tableState=freshTable();renderContent();}
+  if(b.dataset.ptype!==undefined){personal.type=b.dataset.ptype;tableState=freshTable();renderContent();}
   if(b.dataset.clear){state[b.dataset.clear]=[];tableState.page=0;update();}
   if(b.dataset.remove){state[b.dataset.remove]=state[b.dataset.remove].filter(v=>v!==b.dataset.value);tableState.page=0;update();}
   if(b.dataset.drill){state[b.dataset.drill]=[b.dataset.key==='Sin matrícula'?UNASSIGNED:b.dataset.key];update();}
@@ -584,15 +741,16 @@ function bind(){
  });
  document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='personalKey')unlockPersonal();});
  document.addEventListener('change',e=>{
-  const el=e.target;if(el.id==='personalMonth'){personal.month=el.value;tableState={page:0,query:'',sort:'',asc:false};renderContent();return;}
+  const el=e.target;if(el.id==='personalMonth'){personal.month=el.value;tableState=freshTable();renderContent();return;}
   if(el.dataset.slicer){const k=el.dataset.slicer;state[k]=el.checked?[...new Set([...state[k],el.value])]:state[k].filter(v=>v!==el.value);tableState.page=0;update();}
  });
  document.addEventListener('input',e=>{
   if(e.target.dataset.searchSlicer){const id=e.target.dataset.searchSlicer,q=e.target.value.toLocaleLowerCase('es');$('options-'+id).querySelectorAll('label').forEach(l=>l.hidden=!l.textContent.toLocaleLowerCase('es').includes(q));}
   if(e.target.id==='tableSearch'){tableState.query=e.target.value;tableState.page=0;drawTable();}
+  applyFilterControl(e.target);
  });
  for(const id of ['from','to','dateBasis','compare','compareFrom','compareTo','costMode','billing'])$(id).addEventListener('change',()=>{$('customCompare').hidden=$('compare').value!=='custom';tableState.page=0;update();});
- $('reset').onclick=()=>{state={...state,companies:[],plates:[],clients:[],categories:[],loads:[],concepts:[]};$('from').value=D.metadata.defaultFrom;$('to').value=D.metadata.defaultTo;$('dateBasis').value='invoice';$('costMode').value=D.payroll?'real':'stored';$('compare').value='none';$('customCompare').hidden=true;tableState={page:0,query:'',sort:'',asc:false};update();};
+ $('reset').onclick=()=>{state={...state,companies:[],plates:[],clients:[],categories:[],loads:[],concepts:[]};$('from').value=D.metadata.defaultFrom;$('to').value=D.metadata.defaultTo;$('dateBasis').value='invoice';$('costMode').value=D.payroll?'real':'stored';$('compare').value='none';$('customCompare').hidden=true;tableState=freshTable();update();};
  $('methodlink').onclick=e=>{e.preventDefault();switchTab('method');};
 }
 async function boot(){

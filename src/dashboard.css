@@ -226,3 +226,41 @@ span.ztog{cursor:default}
 .cli-optable th{background:#eef3fa;text-transform:uppercase;font-size:10px;color:#5b6b7f}
 .cli-optable td.num,.cli-optable th.num{text-align:right;font-variant-numeric:tabular-nums}
 @media print{.cli-grid{grid-template-columns:1fr!important}.cli-list,.cli-search,.cli-opshead select,.noprint{display:none!important}.cli-grpbody{display:block!important}}
+
+/* Filtros de tabla por columna, filas desplegables, límites de columna y recuadros explicativos ocultables */
+.tabletools-l{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#tableFilters.on{background:#e9f0fc;border-color:#c8d8f0;color:#254d84;font-weight:600}
+.filterbar{display:flex;flex-wrap:wrap;gap:10px 14px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#f8fafd;margin:-6px 0 12px;align-items:end}
+.fctl{display:grid;gap:4px;font-size:12px;color:var(--muted);flex:1 1 160px;max-width:260px;min-width:0}
+.fctl>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fctl input,.fctl select{border:1px solid #cbd6e4;border-radius:7px;padding:7px 9px;font-size:13px;background:#fff;color:var(--ink);width:100%;min-width:0}
+.fctl.fnum{flex-basis:340px;max-width:460px}
+.fnumrow{display:flex;gap:6px}
+.fnumrow select{flex:1}
+.fnumrow input{width:92px;flex:none}
+.fctl.fact{flex:0 0 auto;max-width:none}
+.tchips:empty{display:none}
+td.ctr,th.ctr{text-align:center}
+td:not(:last-child),th:not(:last-child){border-right:1px solid #e6ecf4}
+table.expandable tbody tr.exp{cursor:pointer}
+table.expandable tbody tr.exp.open td{background:#eaf1fd;border-bottom-color:#cfdcf0}
+.caret{display:inline-block;width:14px;color:var(--blue);font-size:11px;margin-right:2px}
+tr.detailrow td{background:#f7faff!important;padding:14px 20px 16px 34px;white-space:normal;border-bottom:2px solid #cbd8ea;font-weight:400;color:var(--ink);max-width:none}
+.tripdetail{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px 22px;font-size:13px;line-height:1.5}
+.tripdetail .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:block;margin-bottom:1px}
+.tripdetail .v{font-weight:600;color:var(--navy)}
+.tripdetail .v small{font-weight:400;color:var(--muted)}
+.tripdetail .grp{grid-column:1/-1;font-size:13px;color:var(--ink);border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+.tripdetail .grp:first-child{border-top:0;padding-top:0;margin-top:0;font-weight:700;color:var(--navy)}
+.info{position:relative;padding-right:84px}
+.info-x{position:absolute;top:8px;right:10px;font-size:11.5px;padding:3px 9px;border-radius:6px;background:#fff;border:1px solid #cedcf1;color:#2c4c75}
+.info-min{font-size:12px;color:var(--muted);margin:0 0 12px;display:flex;gap:6px;align-items:center}
+.info-min .textbtn{font-size:12px}
+@media print{.filterbar,.info-x,.info-min,.tchips{display:none}}
+/* De cada 100 € de gasto: barra apilada + tabla */
+.stackbar{display:flex;height:24px;border-radius:7px;overflow:hidden;margin:4px 0 14px;background:var(--soft)}
+.stackbar span{display:block;height:100%}
+.estr td:first-child{white-space:normal;font-weight:500}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:middle}
+.stop{display:inline-block;border-radius:6px;padding:2px 8px;margin:4px 6px 0 0;background:#eef2f7;font-size:12.5px;font-weight:500}
+.stop.carga{background:#e7f6ee}.stop.descarga{background:#e7f0ff}.stop.espera{background:#fdf3e7}.stop small{color:var(--muted);font-weight:400}

@@ -12,6 +12,7 @@
     {"id": "peajes", "label": "Peajes", "prefijos": ["6290000070"]},
     {"id": "amortizacion", "label": "Amortización de vehículos", "prefijos": ["681", "680", "682"]},
     {"id": "alquileres", "label": "Renting y arrendamientos", "prefijos": ["621"]},
+    {"id": "impuesto_sociedades", "label": "Impuesto de sociedades", "prefijos": ["630"]},
     {"id": "tributos", "label": "Impuestos y tasas", "prefijos": ["63"]},
     {"id": "financieros", "label": "Gastos financieros", "prefijos": ["66"]},
     {"id": "extraordinarios", "label": "Gastos extraordinarios y pérdidas", "prefijos": ["67"]},
@@ -38,7 +39,8 @@
     {"id": "generales", "label": "Gastos generales (renting, suministros, impuestos, financieros, otros)", "cats": ["alquileres", "suministros", "tributos", "financieros", "otros"], "partes": ["expensesCompany", "structure"], "nota": "El parte imputa la estructura con un porcentaje fijo; no es el gasto real."},
     {"id": "subcontratacion", "label": "Trabajos de otras empresas (subcontratación)", "cats": ["subcontratacion"], "partes": [], "nota": "No existe en los partes de Access."},
     {"id": "aridos", "label": "Compra de áridos y productos", "cats": ["aridos"], "partes": [], "nota": "No existe en los partes de Access."},
-    {"id": "extraordinarios", "label": "Gastos extraordinarios y pérdidas", "cats": ["extraordinarios"], "partes": [], "nota": "No existe en los partes de Access."}
+    {"id": "extraordinarios", "label": "Gastos extraordinarios y pérdidas", "cats": ["extraordinarios"], "partes": [], "nota": "No existe en los partes de Access."},
+    {"id": "impuesto_sociedades", "label": "Impuesto de sociedades", "cats": ["impuesto_sociedades"], "partes": [], "nota": "Sobre el resultado del ejercicio; no es coste de explotación ni existe en los partes de Access."}
   ],
   "sociedades": {"1": "Razo", "2": "Agetrans"},
   "titularASociedad": {"RAZO": "Razo", "AGETRANS": "Agetrans"}

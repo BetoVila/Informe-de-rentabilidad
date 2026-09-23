@@ -33,7 +33,8 @@ def flota_grupo(base):
     return grupo
 
 
-def leer_sociedad(base, empresa, desde, hasta, viajes, grupo=None):
+def leer_sociedad(base, empresa, desde, hasta, viajes, grupo=None, dueno=None):
+    dueno = dueno or {}
     vj = abrir(base, "viaje.dbf"); matr = {}
     for r in vj.registros():
         v = vj.get(r, "CODIGO")
@@ -70,7 +71,8 @@ def leer_sociedad(base, empresa, desde, hasta, viajes, grupo=None):
             t = seen[key] = {"c": empresa, "v": v, "cant": cant, "mat": mat, "dia": dia,
                              "o": (ln.get(r, "ORIGEN") or "").strip(), "d": (ln.get(r, "DESTINO") or "").strip(),
                              "m3": 0.0, "t": 0.0, "imp": 0.0, "horm": False,
-                             "propio": ((mat in grupo) if (grupo is not None and mat) else None)}
+                             "propio": ((mat in grupo) if (grupo is not None and mat) else None),
+                             "dueno": dueno.get(mat)}
         cr = ln.get(r, "CANTIDREAL") or ln.get(r, "CANTID") or 0
         if um == "M3":
             t["m3"] += cr; t["horm"] = True
@@ -99,11 +101,17 @@ def main():
         plates = {clean_plate(l) for l in open(a.plates, encoding="utf-8-sig") if clean_plate(l)}
     viajes = []
     casas = [(carpeta, empresa) for carpeta, empresa in (("EMPTR21", "Razo"), ("EMPAG21", "Agetrans")) if os.path.isdir(os.path.join(a.root, carpeta))]
-    grupo = set()
-    for carpeta, _ in casas:
-        grupo |= flota_grupo(os.path.join(a.root, carpeta))
+    # dueno del camion = la casa que lo tiene en su ficha SIN proveedor (si las dos, Razo, que es quien tiene la flota de
+    # tractoras y le hace los portes a Agetrans). Sirve para elegir que linea de un ESPEJO intercompania lleva la medida.
+    grupo, dueno = set(), {}
     for carpeta, empresa in casas:
-        leer_sociedad(os.path.join(a.root, carpeta), empresa, a.desde, a.hasta, viajes, grupo)
+        g = flota_grupo(os.path.join(a.root, carpeta))
+        grupo |= g
+        for m in g:
+            if m not in dueno or empresa == "Razo":
+                dueno[m] = empresa
+    for carpeta, empresa in casas:
+        leer_sociedad(os.path.join(a.root, carpeta), empresa, a.desde, a.hasta, viajes, grupo, dueno)
     if len(casas) < 2:
         print("Aviso: falta alguna casa en %s" % a.root, file=sys.stderr)
     json.dump({"desde": a.desde, "hasta": a.hasta, "viajes": viajes}, open(a.salida, "w", encoding="utf-8"), ensure_ascii=False)
