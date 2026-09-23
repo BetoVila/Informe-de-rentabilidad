@@ -7,8 +7,12 @@ Uso: un dia:   ver_dia_mapa.py --v2 triangulado_v2.json --diag diag.json --wialo
      todos:    ver_dia_mapa.py --v2 ... --wialon <dir> --todos --salida-dir <carpeta>   (un fichero dias/<MATRICULA>_<fecha>.html
                por cada dia con viajes medidos; compacto: 1 punto cada 2 min y sin repetir puntos parados)
 Nombres de lugar: maestro GLOBAL de GesRuta (puntos + puntcd, Razo y Agetrans) y, con --geocode, los nombres geocodificados.
-Las paradas se rotulan con el lugar conocido mas cercano (a menos de 700 m); si no hay, «lugar no conocido»."""
-import argparse, bisect, calendar, collections, json, os, sys, datetime as dt
+Las paradas se rotulan con el lugar conocido mas cercano (a menos de 700 m); si no hay, «lugar no conocido».
+Export de trazas (--export-trazas <fichero .jsonl.gz>, con --todos): una linea JSON por viaje MEDIDO con su clave
+(empresa, viaje, cantera), tiempos, posiciones de carga y descarga, km/litros/minutos y el recorrido real simplificado
+(«ciclo» entero y tramo «cargado» de la salida de carga a la llegada a descarga), para las apps que dibujan rutas (tarifas,
+ERP) sin tener que leer estos HTML. Sin --salida-dir solo escribe el export."""
+import argparse, bisect, calendar, collections, gzip, json, math, os, sys, datetime as dt
 D = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, D)
 import triangular_v2 as t2  # noqa: E402
@@ -240,6 +244,70 @@ def render_dia(mat, fecha, viajes, pts_mat, dg_dia, rest_s, paso_s, lug=None):
     return html, len(vmed)
 
 
+def simplificar(pts, tol_m=30.0):
+    """Douglas-Peucker sobre [[lat, lon], ...] en metros (proyeccion local): quita los puntos que se desvian menos de tol_m de
+    la recta entre sus vecinos conservados. Conserva los extremos. Una carretera sigue dibujada; los puntos redundantes, fuera."""
+    n = len(pts)
+    if n <= 2:
+        return pts
+    lat0 = math.radians(sum(p[0] for p in pts) / n)
+    kx, ky = 111320.0 * math.cos(lat0), 110540.0
+    xy = [(p[1] * kx, p[0] * ky) for p in pts]
+    keep = [False] * n; keep[0] = keep[-1] = True
+    pila = [(0, n - 1)]
+    while pila:
+        i, j = pila.pop()
+        if j <= i + 1:
+            continue
+        x1, y1 = xy[i]; x2, y2 = xy[j]; dx, dy = x2 - x1, y2 - y1; l2 = dx * dx + dy * dy
+        peor, k_ = -1.0, -1
+        for k in range(i + 1, j):
+            x0, y0 = xy[k]
+            if l2 == 0:
+                d = math.hypot(x0 - x1, y0 - y1)
+            else:
+                t = max(0.0, min(1.0, ((x0 - x1) * dx + (y0 - y1) * dy) / l2))
+                d = math.hypot(x0 - (x1 + t * dx), y0 - (y1 + t * dy))
+            if d > peor:
+                peor, k_ = d, k
+        if peor > tol_m:
+            keep[k_] = True; pila.append((i, k_)); pila.append((k_, j))
+    return [pts[k] for k in range(n) if keep[k]]
+
+
+def trazas_de_viajes(mat, viajes, pts_mat, ts, tol_m=30.0):
+    """Una fila por viaje MEDIDO (con hora de inicio y fin) del dia: clave, tiempos, posiciones de carga y descarga, medidas y
+    el recorrido real simplificado (ciclo entero y tramo cargado). pts_mat ordenado por t; ts = sus tiempos (para bisect)."""
+    out = []
+    for x in viajes:
+        if not (x.get("t_ini") and x.get("t_fin")):
+            continue
+        a_, b_ = ep(x["t_ini"]), ep(x["t_fin"])
+        ciclo = pts_mat[bisect.bisect_left(ts, a_):bisect.bisect_right(ts, b_)]
+        if len(ciclo) < 2:
+            continue
+
+        def pos(t):
+            if t is None:
+                return None
+            k = min(max(bisect.bisect_left(ts, t), 0), len(pts_mat) - 1)
+            return [round(pts_mat[k]["lat"], 5), round(pts_mat[k]["lon"], 5)]
+        tc, tcf, td = ep(x.get("t_carga")), ep(x.get("t_carga_fin")), ep(x.get("t_descarga"))
+        s0 = tcf or tc
+        car = [q for q in ciclo if s0 <= q["t"] <= td] if (s0 and td and td > s0) else []
+        lit = x.get("litros_calibrados") if x.get("litros_calibrados") is not None else x.get("litros")
+        out.append({"empresa": x.get("empresa"), "viaje": x.get("viaje"), "cantera": x.get("cantera"), "mat": mat, "fecha": x.get("fecha"),
+                    "orden_dia": x.get("orden_dia"), "tipo": x.get("tipo"), "espejo_de": x.get("espejo_de"), "origen": x.get("origen"), "destino": x.get("destino"),
+                    "t_ini": x.get("t_ini"), "t_fin": x.get("t_fin"), "t_carga": x.get("t_carga"), "t_carga_fin": x.get("t_carga_fin"),
+                    "t_descarga": x.get("t_descarga"), "t_descarga_fin": x.get("t_descarga_fin"), "posc": pos(tc), "posd": pos(td),
+                    "km": x.get("km"), "km_cargado": x.get("km_cargado"), "km_vacio": x.get("km_vacio"), "litros": lit,
+                    "min": x.get("duracion_min"), "min_conduccion": x.get("min_conduccion"), "min_espera": x.get("min_espera"),
+                    "metodo": x.get("metodo"), "confianza": x.get("confianza"),
+                    "cargado": simplificar([[round(q["lat"], 5), round(q["lon"], 5)] for q in car], tol_m) or None,
+                    "ciclo": simplificar([[round(q["lat"], 5), round(q["lon"], 5)] for q in ciclo], tol_m)})
+    return out
+
+
 def cargar_lugares(geocode):
     """Nombres (maestro GesRuta global + geocode) y coordenadas (GesRuta + geocode) para rotular; nunca escribe en el origen."""
     nombres = {}
@@ -274,6 +342,7 @@ def main():
     ap.add_argument("--todos", action="store_true"); ap.add_argument("--salida-dir", dest="salida_dir", default="")
     ap.add_argument("--rest-h", type=float, default=8.0); ap.add_argument("--dwell-min", type=float, default=3.0)
     ap.add_argument("--paso-s", type=int, default=120, dest="paso_s", help="segundos entre puntos dibujados (compacto)")
+    ap.add_argument("--export-trazas", dest="export_trazas", default="", help="con --todos: .jsonl.gz con el recorrido real de cada viaje medido")
     a = ap.parse_args()
     t2.DWELL_S = int(a.dwell_min * 60)
     rest_s = int(a.rest_h * 3600)
@@ -290,21 +359,39 @@ def main():
     dirs = [("locatel", d) for d in a.locatel] + [("wialon", d) for d in a.wialon]
     lug = cargar_lugares(a.geocode)
     if a.todos:
-        if not a.salida_dir:
-            print("--todos necesita --salida-dir"); sys.exit(2)
-        os.makedirs(a.salida_dir, exist_ok=True)
+        if not a.salida_dir and not a.export_trazas:
+            print("--todos necesita --salida-dir o --export-trazas"); sys.exit(2)
+        if a.salida_dir:
+            os.makedirs(a.salida_dir, exist_ok=True)
         trazas = t2.cargar_trazas(dirs)
         flujo, _, _ = t2.coser(trazas)
         n = 0; kb = 0
+        exp = [] if a.export_trazas else None
+        ts_mat, ts = None, None
         for (mat, fecha), viajes in sorted(por_dia.items()):
             if not any(x["t_ini"] for x in viajes) or mat not in flujo:
+                continue
+            if exp is not None:
+                if ts_mat != mat:
+                    ts_mat, ts = mat, [q["t"] for q in flujo[mat]]
+                exp.extend(trazas_de_viajes(mat, viajes, flujo[mat], ts))
+            if not a.salida_dir:
                 continue
             r = render_dia(mat, fecha, viajes, flujo[mat], dg.get((mat, fecha)), rest_s, a.paso_s, lug)
             if not r:
                 continue
             ruta = os.path.join(a.salida_dir, "%s_%s.html" % (mat, fecha))
             open(ruta, "w", encoding="utf-8").write(r[0]); n += 1; kb += os.path.getsize(ruta) / 1024.0
-        print(json.dumps({"dias": n, "MB": round(kb / 1024.0, 1), "carpeta": a.salida_dir}))
+        res = {"dias": n, "MB": round(kb / 1024.0, 1), "carpeta": a.salida_dir}
+        if exp is not None:
+            tmp = a.export_trazas + ".tmp"
+            with gzip.open(tmp, "wt", encoding="utf-8") as f:
+                for rec in exp:
+                    f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+            os.replace(tmp, a.export_trazas)
+            res.update({"trazas_viajes": len(exp), "trazas_MB": round(os.path.getsize(a.export_trazas) / 1048576.0, 1),
+                        "con_tramo_cargado": sum(1 for r_ in exp if r_["cargado"])})
+        print(json.dumps(res))
         return
     mat = t2.v1.clean(a.matricula)
     d0 = dt.date.fromisoformat(a.fecha)

@@ -86,8 +86,14 @@ try{
         Copy-Item -LiteralPath (Join-Path $run 'triangulado_v2.json') -Destination $tmp -Force
         if(Test-Path -LiteralPath $pub){[IO.File]::Replace($tmp,$pub,$pub+'.anterior')}else{[IO.File]::Move($tmp,$pub)}
         # El dia de cada camion en el mapa (compacto), junto al informe: dias\<MATRICULA>_<fecha>.html ("ver dia" en Por cliente).
-        & $py (Join-Path $root 'scripts\ver_dia_mapa.py') --v2 (Join-Path $run 'triangulado_v2.json') --diag (Join-Path $run 'triangulado_v2_diag.json') --wialon (Join-Path $hist 'wialon_hist') --locatel (Join-Path $hist 'locatel_hist') --geocode (Join-Path $hist 'coords_lugares_por_casa.json') --todos --salida-dir (Join-Path $config.publicPath 'dias')
+        & $py (Join-Path $root 'scripts\ver_dia_mapa.py') --v2 (Join-Path $run 'triangulado_v2.json') --diag (Join-Path $run 'triangulado_v2_diag.json') --wialon (Join-Path $hist 'wialon_hist') --locatel (Join-Path $hist 'locatel_hist') --geocode (Join-Path $hist 'coords_lugares_por_casa.json') --todos --salida-dir (Join-Path $config.publicPath 'dias') --export-trazas (Join-Path $run 'trazas_viajes.jsonl.gz')
         if($LASTEXITCODE -ne 0){throw 'mapas de dias'}
+        # Recorrido real de cada viaje medido (clave, tiempos, carga/descarga, km/litros/minutos y la traza simplificada) para
+        # tarifas y el ERP: export\trazas_viajes.jsonl.gz, sustitucion atomica como el resto de exports.
+        $expT=Join-Path $config.publicPath 'export';if(-not (Test-Path -LiteralPath $expT)){New-Item -ItemType Directory -Path $expT | Out-Null}
+        $pubT=Join-Path $expT 'trazas_viajes.jsonl.gz';$tmpT=Join-Path $expT ('trazas_viajes.'+[guid]::NewGuid().ToString('N')+'.tmp')
+        Copy-Item -LiteralPath (Join-Path $run 'trazas_viajes.jsonl.gz') -Destination $tmpT -Force
+        if(Test-Path -LiteralPath $pubT){[IO.File]::Replace($tmpT,$pubT,$pubT+'.anterior')}else{[IO.File]::Move($tmpT,$pubT)}
     }
     $triArg=if(Test-Path -LiteralPath $tri2){$tri2}else{Join-Path $root 'cache\triangulado_v1.json'}
     # Actividad operativa de GesRuta: viajes reales (albaran de cantera), km, m3/t por viaje. Opcional (si falla, sigue sin la pestana).
