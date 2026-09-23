@@ -264,3 +264,11 @@ tr.detailrow td{background:#f7faff!important;padding:14px 20px 16px 34px;white-s
 .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:middle}
 .stop{display:inline-block;border-radius:6px;padding:2px 8px;margin:4px 6px 0 0;background:#eef2f7;font-size:12.5px;font-weight:500}
 .stop.carga{background:#e7f6ee}.stop.descarga{background:#e7f0ff}.stop.espera{background:#fdf3e7}.stop small{color:var(--muted);font-weight:400}
+/* Hallazgos: bloques desplegables */
+details.hz{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 22px;margin-bottom:14px}
+details.hz summary{cursor:pointer;font-size:17px;font-weight:700;color:var(--navy);list-style:none;display:flex;align-items:center;gap:10px}
+details.hz summary::-webkit-details-marker{display:none}
+details.hz summary::before{content:'▸';color:var(--blue);font-size:14px}
+details.hz[open] summary::before{content:'▾'}
+details.hz summary .hzn{font-size:12.5px;font-weight:600;background:#e9f0fc;color:#254d84;border-radius:20px;padding:3px 10px}
+details.hz .sub{margin-top:10px}

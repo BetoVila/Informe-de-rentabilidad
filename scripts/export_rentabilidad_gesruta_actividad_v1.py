@@ -453,6 +453,18 @@ def main():
                     tri_resumen["hasta_traza"] = max((str(r.get("fecha") or "") for r in trows if r.get("medido")), default=None)
                 except (TypeError, ValueError):
                     pass
+                # HALLAZGOS del motor (listas para actuar): se pasan tal cual, con el NOMBRE de cada lugar del maestro global
+                hz = td.get("hallazgos")
+                if isinstance(hz, dict):
+                    def nom_(code):
+                        return (lugar.get(code, {}).get("nom", "") or code) if code else None
+                    for r_ in list(hz.get("cargas_sin_albaran") or []) + list(hz.get("albaranes_sin_ciclo") or []):
+                        r_["origen_nombre"] = nom_(r_.get("origen")); r_["destino_nombre"] = nom_(r_.get("destino"))
+                    for r_ in hz.get("canteras_repetidas") or []:
+                        r_["origen_nombre"] = nom_(r_.get("origen"))
+                    for r_ in hz.get("paradas_por_lugar") or []:
+                        r_["lugar_nombre"] = nom_(r_.get("lugar"))
+                    tri_resumen["hallazgos"] = hz
             kmt = litt = 0.0
             for r in trows:
                 tri[(r.get("empresa"), str(r.get("viaje")), str(r.get("cantera")))] = r
@@ -510,6 +522,13 @@ def main():
             # paradas y esperas del viaje (>= 5 min): hora, minutos, lugar (nombre del maestro) y que hacia (carga/descarga/espera)
             t["par"] = [[(p.get("t") or "")[11:16], p.get("min"), (lugar.get(p.get("lugar"), {}).get("nom", "") or p.get("lugar")) if p.get("lugar") else "", p.get("rol") or ""]
                         for p in (tr.get("paradas") or [])]
+            # TODO el detalle del viaje medido (Roberto: al pinchar un viaje se ve todo): hitos, minutos por actividad y su fuente,
+            # litros cargado/vacio y contador vs calibrado, fuente del km, distancia origen-destino, obra, jornada
+            t["tca"] = tr.get("t_carga"); t["tcf"] = tr.get("t_carga_fin"); t["tde"] = tr.get("t_descarga"); t["tdf"] = tr.get("t_descarga_fin")
+            t["mdis"] = tr.get("min_disponible"); t["mdes"] = tr.get("min_descanso"); t["msd"] = tr.get("min_sin_dato"); t["mcoh"] = tr.get("min_coherente")
+            t["mtr"] = tr.get("min_transcurridos"); t["litc"] = tr.get("litros_cargado"); t["litv"] = tr.get("litros_vacio")
+            t["litraw"] = tr.get("litros"); t["litcal"] = tr.get("litros_calibrados"); t["kmf"] = tr.get("km_fuente")
+            t["obm"] = (tr.get("obra") or {}).get("min"); t["jini"] = tr.get("jornada_ini"); t["jfin"] = tr.get("jornada_fin")
         elif tr:
             t["ord"] = tr.get("orden_dia"); t["met"] = tr.get("metodo"); t["conf"] = tr.get("confianza"); t["med"] = False
         else:
@@ -523,6 +542,10 @@ def main():
             else:
                 t["dur"] = round(40 + t["kmr"] / 22.0 * 60, 0) if t["kmr"] else None
                 t["trm"] = "hormigon" if t["horm"] else "sin"
+        if tr:   # comun a medidos y repartidos: identidad, tipo, fecha del albaran, chofer del albaran, motivo y marcas
+            t["dod"] = tr.get("dist_od_km"); t["vdia"] = tr.get("viajes_dia"); t["mot"] = tr.get("motivo"); t["fg"] = tr.get("fecha_gesruta")
+            t["chg"] = tr.get("chofer_gesruta"); t["chok"] = tr.get("chofer_coincide"); t["tipo"] = tr.get("tipo")
+            t["larga"] = bool(tr.get("larga_distancia")); t["esp"] = bool(tr.get("espejo_de"))
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
     # Coordenadas por NOMBRE de punto (planta/cantera/obra), para el MAPA: el informe agrega los viajes del periodo
     # elegido por su punto de origen/destino y une aqui la coordenada del localizador (paradas GPS de la flota).

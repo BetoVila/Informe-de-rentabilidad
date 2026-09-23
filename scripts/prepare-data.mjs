@@ -159,6 +159,8 @@ if(actividadSrc?.metadata?.disponible){
  const pt=['(sin punto)'],ptIx=new Map([['',0]]);
  const dia=[''],diaIx=new Map([['',0]]);   // fecha completa del viaje (día), para la tabla y el agrupamiento
  const met=[''],metIx=new Map([['',0]]),conf=[''],confIx=new Map([['',0]]),chot=[''],chotIx=new Map([['',0]]);   // triangulado v2
+ const mot=[''],motIx=new Map([['',0]]),tipo=[''],tipoIx=new Map([['',0]]),kmf=[''],kmfIx=new Map([['',0]]),mfu=[''],mfuIx=new Map([['',0]]);   // detalle completo
+ const hm=s=>s?String(s).slice(11,16):'',nn=v=>v==null?null:v;
  const intern=(arr,ix,val)=>{let i=ix.get(val);if(i===undefined){i=arr.length;arr.push(val);ix.set(val,i);}return i;};
  const TRM={medido:0,repartido:1,hormigon:2,sin:3};   // fiabilidad del km/coste del viaje (triangulado / estimado)
  const rows=actividadSrc.rows.map(r=>{
@@ -176,7 +178,14 @@ if(actividadSrc?.metadata?.disponible){
    intern(met,metIx,r.met||''),intern(conf,confIx,r.conf||''),intern(chot,chotIx,r.chot?String(r.chot):''),r.noct?1:0,r.med?1:0,
    r.kmc==null?null:r.kmc,r.kmv==null?null:r.kmv,
    // 34: paradas y esperas del viaje (>= 5 min): [hh:mm, minutos, lugar (interno en pt), que hacia (0 carga, 1 descarga, 2 espera, 3 fuera)]
-   (r.par||[]).map(p=>[p[0],p[1],intern(pt,ptIx,p[2]||''),({carga:0,descarga:1,espera:2,fuera:3})[p[3]]??3])];
+   (r.par||[]).map(p=>[p[0],p[1],intern(pt,ptIx,p[2]||''),({carga:0,descarga:1,espera:2,fuera:3})[p[3]]??3]),
+   // 35..63: TODO el detalle del viaje (al pinchar): hitos carga/descarga (hh:mm), min disponible/descanso/sin dato, fuente de los
+   // minutos, coherente, transcurridos, litros cargado/vacio, dist o-d, min en obra, viajes del dia, motivo, fecha del albaran,
+   // chofer del albaran, coincide, tipo, largo, espejo, jornada ini/fin, fuente del km, litros contador/calibrados, viaje, cantera
+   hm(r.tca),hm(r.tcf),hm(r.tde),hm(r.tdf),nn(r.mdis),nn(r.mdes),nn(r.msd),intern(mfu,mfuIx,r.mfu||''),r.mcoh==null?null:(r.mcoh?1:0),nn(r.mtr),
+   nn(r.litc),nn(r.litv),nn(r.dod),nn(r.obm),r.vdia||null,intern(mot,motIx,r.mot||''),intern(dia,diaIx,r.fg||''),intern(chot,chotIx,r.chg?String(r.chg):''),
+   r.chok==null?null:(r.chok?1:0),intern(tipo,tipoIx,r.tipo||''),r.larga?1:0,r.esp?1:0,hm(r.jini),hm(r.jfin),intern(kmf,kmfIx,r.kmf||''),nn(r.litraw),nn(r.litcal),
+   String(r.v||''),String(r.cant||'')];
   return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3,r.impro||0,dd].concat(v2);
  });
  // Margen operativo de GesRuta (inggas): P&L por mes×cliente. Antes del coste real de flota/personal/indirectos.
@@ -185,7 +194,7 @@ if(actividadSrc?.metadata?.disponible){
   margen={rows:actividadSrc.margen.map(a=>({c:a.c==='Agetrans'?1:0,m:a.m,cli:(a.cli&&String(a.cli).trim())||'(sin cliente)',
    i:a.ing||0,ma:a.materiales||0,s:a.subcontratacion||0,g:a.gasoil||0,p:a.peajes||0,ad:a.adblue||0}))};
  }
- actividad={meta:{fuente:actividadSrc.metadata.fuente,desde:actividadSrc.metadata.desde,hasta:actividadSrc.metadata.hasta,viajes:rows.length,leido:actividadSrc.metadata.leido},co,mo,cli,mat,prov,loc,pt,dia,met,conf,chot,tri:actividadSrc.metadata.triangulado||null,coords:actividadSrc.metadata.coords||{},rows,margen};
+ actividad={meta:{fuente:actividadSrc.metadata.fuente,desde:actividadSrc.metadata.desde,hasta:actividadSrc.metadata.hasta,viajes:rows.length,leido:actividadSrc.metadata.leido},co,mo,cli,mat,prov,loc,pt,dia,met,conf,chot,mot,tipo,kmf,mfu,tri:actividadSrc.metadata.triangulado||null,coords:actividadSrc.metadata.coords||{},rows,margen};
 }
 const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,solredResumen:[...coverageResumen],naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,locatel,actividad,definitions:[
  'Contabilidad: gastos (grupo 6) e ingresos (grupo 7) reales de CxConta por sociedad, mes y cuenta, sin asientos de cierre ni apertura. El resultado contable es la referencia de rentabilidad; el coste de los partes de Access solo recoge una parte del gasto real (ver el puente en Conciliación). Un mes se compara solo cuando está cerrado; el mes en curso queda fuera.',

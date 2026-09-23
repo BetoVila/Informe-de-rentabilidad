@@ -353,7 +353,10 @@ export function createModel(data) {
       if(r.length>=32){const ti=r[21]||null,tf=r[22]||null;x.tini=hhmm(ti);x.tfin=tf?hhmm(tf)+(ti&&tf.slice(0,10)!==ti.slice(0,10)?' +1':''):null;x.orden=r[23]||null;x.cond=r[24]==null?null:Math.round(r[24]);x.espera=r[25]==null?null:Math.round(r[25]);x.otros=r[26]==null?null:Math.round(r[26]);x.metodo=(A.met&&A.met[r[27]])||null;x.conf=(A.conf&&A.conf[r[28]])||null;x.chofer=(A.chot&&A.chot[r[29]])||null;x.nocturna=!!r[30];x.medido=!!r[31];x.mapaKey=(x.medido&&x.mat&&x.mat!=='—'&&x.dia)?x.mat+'_'+x.dia:null;
         if(r.length>=34){x.kmCarg=r[32]==null?null:Math.round(r[32]);x.kmVac=r[33]==null?null:Math.round(r[33]);}
         // 34: paradas y esperas del viaje [hh:mm, minutos, lugar, qué hacía]
-        if(r.length>=35&&Array.isArray(r[34]))x.paradas=r[34].map(p=>({t:p[0],min:p[1],lugar:A.pt[p[2]]||'',rol:['carga','descarga','espera','fuera'][p[3]]||''}));}
+        if(r.length>=35&&Array.isArray(r[34]))x.paradas=r[34].map(p=>({t:p[0],min:p[1],lugar:A.pt[p[2]]||'',rol:['carga','descarga','espera','fuera'][p[3]]||''}));
+        // 35..63: todo el detalle del viaje (hitos, minutos por actividad, litros, fuentes, jornada, identidad)
+        if(r.length>=64){x.tCarga=r[35]||null;x.tCargaFin=r[36]||null;x.tDesc=r[37]||null;x.tDescFin=r[38]||null;x.disp=r[39];x.desc=r[40];x.sinDato=r[41];x.minFuente=(A.mfu&&A.mfu[r[42]])||null;x.coherente=r[43]==null?null:!!r[43];x.transc=r[44];x.litC=r[45];x.litV=r[46];x.distOd=r[47];x.obraMin=r[48];x.viajesDia=r[49];x.motivo=(A.mot&&A.mot[r[50]])||null;x.fechaGes=(A.dia&&A.dia[r[51]])||null;x.choferGes=(A.chot&&A.chot[r[52]])||null;x.choferOk=r[53]==null?null:!!r[53];x.tipo=(A.tipo&&A.tipo[r[54]])||null;x.larga=!!r[55];x.espejo=!!r[56];x.jIni=r[57]||null;x.jFin=r[58]||null;x.kmFuente=(A.kmf&&A.kmf[r[59]])||null;x.litRaw=r[60];x.litCal=r[61];x.viaje=r[62]||null;x.cantera=r[63]||null;}
+        x.kmAlb=r[8]||0;}
       return x;});
   }
   // Puntos GEO del periodo elegido (para el MAPA): agrega los viajes filtrados por su punto de origen/destino y une la
