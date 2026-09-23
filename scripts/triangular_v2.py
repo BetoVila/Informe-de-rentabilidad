@@ -1554,6 +1554,7 @@ def main():
     ap.add_argument("--ancla", default="", help="viajes-ancla-razo.json(.gz) de tarifas")
     ap.add_argument("--conductores", default="", help="conductores_hash_codigo.json: hash de tarjeta -> codigo de chofer GesRuta")
     ap.add_argument("--bajas", default="", help="bajas_flota_erp.json del ERP (matricula, fecha_baja, motivo): albaran posterior a la baja = matricula mal grabada")
+    ap.add_argument("--flota", default="", help="flota_erp.json del ERP (matricula, clase, tacografo_tipo, circula): explica los camiones sin tacografo en la traza")
     ap.add_argument("--rest-h", type=float, default=8.0, dest="rest_h", help="descanso (h) que separa jornadas: > 8 h (Roberto)")
     ap.add_argument("--dwell-min", type=float, default=3.0, dest="dwell_min", help="minutos parado para contar como parada")
     ap.add_argument("--sin-aprender", action="store_true")
@@ -1586,6 +1587,14 @@ def main():
                     bajas[v1.clean(b_["matricula"])] = {"fecha_baja": str(b_["fecha_baja"])[:10], "motivo": b_.get("motivo") or ""}
         except (OSError, ValueError) as e:
             print("Aviso: bajas ilegibles (%s)" % e, file=sys.stderr)
+    flota = {}
+    if a.flota and os.path.isfile(a.flota):
+        try:
+            for f_ in json.load(open(a.flota, encoding="utf-8")).get("flota") or []:
+                if f_.get("matricula"):
+                    flota[v1.clean(f_["matricula"])] = {"clase": f_.get("clase") or "", "tacografo_tipo": f_.get("tacografo_tipo") or "", "circula": f_.get("circula") or ""}
+        except (OSError, ValueError) as e:
+            print("Aviso: flota ilegible (%s)" % e, file=sys.stderr)
 
     ges = v1.coords_gesruta()
     geo = {}
@@ -2117,7 +2126,8 @@ def main():
                 tac[x["matricula"]]["con_tacografo"] += 1
     hall["tacografo_por_camion"] = [{"matricula": m, "viajes_medidos": c_["viajes_medidos"], "con_tacografo": c_["con_tacografo"],
                                      "sin_tarjeta_en_ranura_1": c_["sin_tarjeta_en_ranura_1"], "tacografo_no_refleja_la_conduccion": c_["tacografo_no_refleja_la_conduccion"],
-                                     "pct_descartado": round(100.0 * (c_["sin_tarjeta_en_ranura_1"] + c_["tacografo_no_refleja_la_conduccion"]) / c_["viajes_medidos"], 1)}
+                                     "pct_descartado": round(100.0 * (c_["sin_tarjeta_en_ranura_1"] + c_["tacografo_no_refleja_la_conduccion"]) / c_["viajes_medidos"], 1),
+                                     "tacografo_tipo": (flota.get(m) or {}).get("tacografo_tipo") or "", "clase": (flota.get(m) or {}).get("clase") or ""}
                                     for m, c_ in sorted(tac.items(), key=lambda kv: -(kv[1]["sin_tarjeta_en_ranura_1"] + kv[1]["tacografo_no_refleja_la_conduccion"])) if c_["viajes_medidos"] >= 10]
     cho = collections.defaultdict(lambda: {"n": 0, "matriculas": set(), "desde": None, "hasta": None})
     for x in viajes_out:
@@ -2139,7 +2149,7 @@ def main():
                 c_["otra_planta"] += 1
     hall["coherencia_por_unidad"] = [{"matricula": m, "tipo": max((k_[5:] for k_ in c_ if k_.startswith("tipo_")), key=lambda k_: c_["tipo_" + k_]),
                                       "viajes_con_traza": c_["viajes"], "pct_geografia_albaran": round(100.0 * c_["ok"] / c_["viajes"], 1),
-                                      "sin_ciclo": c_["sin_ciclo"], "otra_planta": c_["otra_planta"]}
+                                      "sin_ciclo": c_["sin_ciclo"], "otra_planta": c_["otra_planta"], "clase": (flota.get(m) or {}).get("clase") or ""}
                                      for m, c_ in sorted(coh.items(), key=lambda kv: kv[1]["ok"] / kv[1]["viajes"]) if c_["viajes"] >= 30]
     par_l = collections.defaultdict(lambda: {"n": 0, "min": 0, "mats": set()})
     for x in viajes_out:
