@@ -301,7 +301,7 @@ function setTable(title,subtitle,rows,columns,drill=null,detail=null,stats=null)
  tableDefinition={title,subtitle,rows,columns,drill,detail,stats};
  const k=activeFilterCount(),open=tableState.showFilters||k>0;
  const st=stats?`<details id="tstats" class="tstats"${lsGet(STATS_KEY,false)?' open':''}><summary>Estadística de los <b id="tstatsN">${nf(rows.length)}</b> viajes que ves: media, mediana, dispersión y rectas para calcular <small>(sigue a la búsqueda y a los filtros)</small></summary><div id="tstatsBody" class="tripdetail"></div></details>`:'';
- return `<section class="panel"><h2>${title}</h2><p class="sub">${subtitle}</p><div class="tabletools"><div class="tabletools-l"><input id="tableSearch" type="search" placeholder="Buscar palabras (todas deben aparecer; da igual tildes o mayúsculas)…" aria-label="Buscar en tabla" value="${esc(tableState.query)}"><button id="tableFilters" type="button" class="${open?'on':''}" aria-expanded="${open}">Filtros${k?' · '+k:''}</button></div><span id="tableCount"></span></div><div id="tableFilterBar" class="filterbar" ${open?'':'hidden'}>${filterBarHtml(columns,rows)}</div><div id="tableChips" class="active-filters tchips"></div>${st}<div id="tableArea"></div></section>`;
+ return `<section class="panel"><h2>${title}</h2><p class="sub">${subtitle}</p><div class="tabletools"><div class="tabletools-l"><input id="tableSearch" type="search" placeholder="Buscar palabras (todas deben aparecer; da igual tildes o mayúsculas)…" aria-label="Buscar en tabla" value="${esc(tableState.query)}"><button id="tableFilters" type="button" class="${open?'on':''}" aria-expanded="${open}">Filtros${k?' · '+k:''}</button></div><span id="tableCount"></span></div><div id="tableFilterBar" class="filterbar" ${open?'':'hidden'}>${filterBarHtml(columns,rows,tableState.filters,'')}</div><div id="tableChips" class="active-filters tchips"></div>${st}<div id="tableArea"></div></section>`;
 }
 function drawStats(){
  const def=tableDefinition;if(!def||!def.stats)return;
@@ -320,27 +320,31 @@ function filterKind(c,rows){
  if(dateLike){c.dateLen=sample.length;return 'date';}
  return 'text';
 }
-function filterBarHtml(columns,rows){
- const f=tableState.filters,out=[];
+// ===== MÓDULO ÚNICO DE FILTROS (Roberto 23/09/2026: se define UNA sola vez cómo se filtra y CADA tabla lo usa según SUS
+// columnas; si cambio el filtro aquí, cambia en todas). Las funciones son puras sobre (columnas, filas, filtros, scope):
+// las usan tanto setTable (scope '', estado tableState) como crearFiltro (una instancia por tabla que no es setTable). =====
+const numSet=v=>v!==''&&v!=null&&!Number.isNaN(Number(v));
+function filterBarHtml(columns,rows,filters,scope){
+ const f=filters,out=[],sc=scope||'';
  for(const c of columns){
   if(!c.filter||c.filter==='number')continue;
   const v=f[c.key];
-  if(c.filter==='date'){const t=c.dateLen===7?'month':'date';out.push(`<label class="fctl"><span>${esc(c.label)} desde</span><input type="${t}" data-tfilter="${esc(c.key)}" data-part="from" value="${esc(v?.from||'')}"></label><label class="fctl"><span>${esc(c.label)} hasta</span><input type="${t}" data-tfilter="${esc(c.key)}" data-part="to" value="${esc(v?.to||'')}"></label>`);continue;}
+  if(c.filter==='date'){const t=c.dateLen===7?'month':'date';out.push(`<label class="fctl"><span>${esc(c.label)} desde</span><input type="${t}" data-fscope="${sc}" data-tfilter="${esc(c.key)}" data-part="from" value="${esc(v?.from||'')}"></label><label class="fctl"><span>${esc(c.label)} hasta</span><input type="${t}" data-fscope="${sc}" data-tfilter="${esc(c.key)}" data-part="to" value="${esc(v?.to||'')}"></label>`);continue;}
   const freq=new Map();for(const r of rows){const x=r[c.key];if(x==null||x==='')continue;const s=String(x);freq.set(s,(freq.get(s)||0)+1);}
-  if(c.filter==='select'){const opts=[...freq.keys()].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));out.push(`<label class="fctl"><span>${esc(c.label)}</span><select data-tfilter="${esc(c.key)}"><option value="">Todos</option>${opts.map(o=>`<option value="${esc(o)}"${v===o?' selected':''}>${esc(o)}</option>`).join('')}</select></label>`);}
-  else{const opts=[...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,300).map(e=>e[0]).sort((a,b)=>a.localeCompare(b,'es'));const lid='dl_'+String(c.key).replace(/\W/g,'_');out.push(`<label class="fctl"><span>${esc(c.label)}</span><input type="search" list="${lid}" data-tfilter="${esc(c.key)}" placeholder="escribe (varias palabras)…" autocomplete="off" value="${esc(v||'')}"><datalist id="${lid}">${opts.map(o=>`<option value="${esc(o)}">`).join('')}</datalist></label>`);}
+  if(c.filter==='select'){const opts=[...freq.keys()].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));out.push(`<label class="fctl"><span>${esc(c.label)}</span><select data-fscope="${sc}" data-tfilter="${esc(c.key)}"><option value="">Todos</option>${opts.map(o=>`<option value="${esc(o)}"${v===o?' selected':''}>${esc(o)}</option>`).join('')}</select></label>`);}
+  else{const opts=[...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,300).map(e=>e[0]).sort((a,b)=>a.localeCompare(b,'es'));const lid='dl_'+sc+'_'+String(c.key).replace(/\W/g,'_');out.push(`<label class="fctl"><span>${esc(c.label)}</span><input type="search" list="${lid}" data-fscope="${sc}" data-tfilter="${esc(c.key)}" placeholder="escribe (varias palabras)…" autocomplete="off" value="${esc(v||'')}"><datalist id="${lid}">${opts.map(o=>`<option value="${esc(o)}">`).join('')}</datalist></label>`);}
  }
  const nums=columns.filter(c=>c.filter==='number'),N=f.__num||{};
  if(nums.length){out.push(`<div class="fctl fnumhead"><span>Filtrar por cifra: mínimo y máximo de cada columna (se combinan)</span></div>`);
-  for(const c of nums){const r=N[c.key]||{};out.push(`<label class="fctl fnum"><span>${esc(c.label)}</span><span class="fnumrow"><input type="number" step="any" data-tnumk="${esc(c.key)}" data-part="min" placeholder="mín." aria-label="${esc(c.label)} mínimo" value="${esc(r.min??'')}"><input type="number" step="any" data-tnumk="${esc(c.key)}" data-part="max" placeholder="máx." aria-label="${esc(c.label)} máximo" value="${esc(r.max??'')}"></span></label>`);}}
- out.push(`<div class="fctl fact"><span>&nbsp;</span><button id="tableClearFilters" type="button">Quitar todos los filtros</button></div>`);
+  for(const c of nums){const r=N[c.key]||{};out.push(`<label class="fctl fnum"><span>${esc(c.label)}</span><span class="fnumrow"><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="min" placeholder="mín." aria-label="${esc(c.label)} mínimo" value="${esc(r.min??'')}"><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="max" placeholder="máx." aria-label="${esc(c.label)} máximo" value="${esc(r.max??'')}"></span></label>`);}}
+ out.push(`<div class="fctl fact"><span>&nbsp;</span><button type="button" ${sc?`data-fclear="${sc}"`:'id="tableClearFilters"'}>Quitar todos los filtros</button></div>`);
  return out.join('');
 }
-const numSet=v=>v!==''&&v!=null&&!Number.isNaN(Number(v));
-function activeFilterCount(){let k=0;for(const [key,v] of Object.entries(tableState.filters)){if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)))k++;}}else if(v&&typeof v==='object'){if(v.from)k++;if(v.to)k++;}else if(v!=null&&v!=='')k++;}return k;}
-function rowPasses(r,def){
- const f=tableState.filters;
- for(const c of def.columns){
+function filterCount(filters){let k=0;for(const [key,v] of Object.entries(filters)){if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)))k++;}}else if(v&&typeof v==='object'){if(v.from)k++;if(v.to)k++;}else if(v!=null&&v!=='')k++;}return k;}
+const activeFilterCount=()=>filterCount(tableState.filters);
+function rowPasses(r,columns,filters){
+ const f=filters;
+ for(const c of columns){
   const v=f[c.key];if(v==null||v===''||!c.filter||c.filter==='number')continue;
   const raw=r[c.key];
   if(c.filter==='select'){if(String(raw??'')!==v)return false;}
@@ -353,37 +357,67 @@ function rowPasses(r,def){
 }
 // Texto de la fila para la búsqueda por palabras (se calcula una vez por fila y tabla)
 const hayOf=(r,def)=>{if(r.__hayT!==def.title){r.__hay=def.columns.map(c=>c.html?'':norm(r[c.key])).join('\u0001');r.__hayT=def.title;}return r.__hay;};
-function chipsHtml(def){
- const f=tableState.filters,out=[],lab=k=>def.columns.find(c=>c.key===k)?.label||k;
+function chipsHtml(columns,filters,scope){
+ const f=filters,out=[],sc=scope||'',lab=k=>columns.find(c=>c.key===k)?.label||k;
  for(const [key,v] of Object.entries(f)){
-  if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)))out.push(`<button class="chip" data-tremove="__num" data-part="${esc(kk)}" title="Quitar filtro">${esc(lab(kk))}${numSet(r.min)?' ≥ '+esc(r.min):''}${numSet(r.max)?' ≤ '+esc(r.max):''} ×</button>`);}}
-  else if(v&&typeof v==='object'){if(v.from)out.push(`<button class="chip" data-tremove="${esc(key)}" data-part="from" title="Quitar filtro">${esc(lab(key))} desde ${esc(v.from)} ×</button>`);if(v.to)out.push(`<button class="chip" data-tremove="${esc(key)}" data-part="to" title="Quitar filtro">${esc(lab(key))} hasta ${esc(v.to)} ×</button>`);}
-  else if(v!=null&&v!=='')out.push(`<button class="chip" data-tremove="${esc(key)}" title="Quitar filtro">${esc(lab(key))}: ${esc(v)} ×</button>`);
+  if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)))out.push(`<button class="chip" data-fscope="${sc}" data-tremove="__num" data-part="${esc(kk)}" title="Quitar filtro">${esc(lab(kk))}${numSet(r.min)?' ≥ '+esc(r.min):''}${numSet(r.max)?' ≤ '+esc(r.max):''} ×</button>`);}}
+  else if(v&&typeof v==='object'){if(v.from)out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" data-part="from" title="Quitar filtro">${esc(lab(key))} desde ${esc(v.from)} ×</button>`);if(v.to)out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" data-part="to" title="Quitar filtro">${esc(lab(key))} hasta ${esc(v.to)} ×</button>`);}
+  else if(v!=null&&v!=='')out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" title="Quitar filtro">${esc(lab(key))}: ${esc(v)} ×</button>`);
  }
  return out.join('');
 }
-function removeFilter(key,part){
- const f=tableState.filters,bar=$('tableFilterBar'),q=s=>bar?bar.querySelector(s):null;
- if(key==='__num'){if(part){if(f.__num)delete f.__num[part];if(bar)bar.querySelectorAll(`[data-tnumk="${CSS.escape(part)}"]`).forEach(el=>{el.value='';});if(f.__num&&!Object.keys(f.__num).length)delete f.__num;}else{delete f.__num;if(bar)bar.querySelectorAll('[data-tnumk]').forEach(el=>{el.value='';});}}
- else if(part){if(f[key]&&typeof f[key]==='object'){delete f[key][part];if(!f[key].from&&!f[key].to)delete f[key];}const el=q(`[data-tfilter="${CSS.escape(key)}"][data-part="${part}"]`);if(el)el.value='';}
- else{delete f[key];const el=q(`[data-tfilter="${CSS.escape(key)}"]`);if(el)el.value='';}
- tableState.page=0;drawTable();
+function applyFilterTo(filters,el){   // aplica el cambio de UN control al objeto de filtros dado (no redibuja)
+ if(el.dataset.tfilter!==undefined){const k=el.dataset.tfilter,p=el.dataset.part;if(p){const cur=filters[k]&&typeof filters[k]==='object'?filters[k]:{};filters[k]={...cur,[p]:el.value};}else filters[k]=el.value;return true;}
+ if(el.dataset.tnumk!==undefined){const k=el.dataset.tnumk,box=el.closest('.filterbar')||document,g=p=>box.querySelector(`[data-tnumk="${CSS.escape(k)}"][data-part="${p}"]`)?.value??'';filters.__num={...(filters.__num||{}),[k]:{min:g('min'),max:g('max')}};return true;}
+ return false;
 }
+function removeFilterFrom(filters,key,part,bar){
+ const q=s=>bar?bar.querySelector(s):null;
+ if(key==='__num'){if(part){if(filters.__num)delete filters.__num[part];if(bar)bar.querySelectorAll(`[data-tnumk="${CSS.escape(part)}"]`).forEach(el=>{el.value='';});if(filters.__num&&!Object.keys(filters.__num).length)delete filters.__num;}else{delete filters.__num;if(bar)bar.querySelectorAll('[data-tnumk]').forEach(el=>{el.value='';});}}
+ else if(part){if(filters[key]&&typeof filters[key]==='object'){delete filters[key][part];if(!filters[key].from&&!filters[key].to)delete filters[key];}const el=q(`[data-tfilter="${CSS.escape(key)}"][data-part="${part}"]`);if(el)el.value='';}
+ else{delete filters[key];const el=q(`[data-tfilter="${CSS.escape(key)}"]`);if(el)el.value='';}
+}
+// setTable (scope '', estado global tableState): envoltorios sobre el módulo.
+function removeFilter(key,part){removeFilterFrom(tableState.filters,key,part,$('tableFilterBar'));tableState.page=0;drawTable();}
 function applyFilterControl(el){
- if(el.dataset.tfilter!==undefined){const k=el.dataset.tfilter,p=el.dataset.part;if(p){const cur=tableState.filters[k]&&typeof tableState.filters[k]==='object'?tableState.filters[k]:{};tableState.filters[k]={...cur,[p]:el.value};}else tableState.filters[k]=el.value;}
- else if(el.dataset.tnumk!==undefined){const k=el.dataset.tnumk,bar=$('tableFilterBar'),g=p=>bar?.querySelector(`[data-tnumk="${CSS.escape(k)}"][data-part="${p}"]`)?.value??'';tableState.filters.__num={...(tableState.filters.__num||{}),[k]:{min:g('min'),max:g('max')}};}
- else return;
- tableState.page=0;drawTable();
+ if(el.dataset.tfilter===undefined&&el.dataset.tnumk===undefined)return;
+ const sc=el.dataset.fscope||'';
+ if(sc){const F=_filtros.get(sc);if(F&&applyFilterTo(F.st.filters,el))F.redibujar();return;}
+ if(applyFilterTo(tableState.filters,el)){tableState.page=0;drawTable();}
+}
+// ===== crearFiltro: una instancia de filtro para CUALQUIER tabla que no sea setTable (Actividad, Por cliente, mini-tablas).
+// Guarda su estado, pinta su barra (búsqueda + filtros por columna + chips) y filtra su array. Misma lógica que setTable. =====
+const _filtros=new Map();let _filtroSeq=0;
+function crearFiltro(cols,rows,redibujar){
+ const id='f'+(++_filtroSeq);
+ for(const c of cols)if(c.filter===undefined)c.filter=filterKind(c,rows);
+ const F={id,cols,redibujar,st:{query:'',filters:{},showFilters:false}};
+ _filtros.set(id,F);
+ return F;
+}
+function filtroToolsHTML(F,rows){   // barra de herramientas + barra de filtros + chips para una instancia
+ const k=filterCount(F.st.filters),open=F.st.showFilters||k>0;
+ return `<div class="tabletools"><div class="tabletools-l"><input type="search" data-fsearch="${F.id}" placeholder="Buscar palabras (da igual tildes o mayúsculas)…" value="${esc(F.st.query)}"><button type="button" data-ftoggle="${F.id}" class="${open?'on':''}" aria-expanded="${open}">Filtros${k?' · '+k:''}</button></div><span data-fcount="${F.id}"></span></div><div class="filterbar" data-fbar="${F.id}" ${open?'':'hidden'}>${filterBarHtml(F.cols,rows,F.st.filters,F.id)}</div><div class="active-filters tchips" data-fchips="${F.id}">${chipsHtml(F.cols,F.st.filters,F.id)}</div>`;
+}
+function filtroAplica(F,rows){   // filas que pasan la búsqueda por palabras + los filtros por columna de esta instancia
+ const terms=norm(F.st.query).split(/\s+/).filter(Boolean);
+ return rows.filter(r=>rowPasses(r,F.cols,F.st.filters)&&(!terms.length||terms.every(t=>norm(F.cols.map(c=>c.html?'':r[c.key]).join('\u0001')).includes(t))));
+}
+function filtroRefresca(F,total){   // actualiza contador, chips y botón tras un cambio de filtro (sin re-pintar la barra)
+ const cnt=document.querySelector(`[data-fcount="${F.id}"]`),k=filterCount(F.st.filters);
+ if(cnt)cnt.textContent=`${nf(total)} filas${(F.st.query||k)?' encontradas':''}`;
+ const ch=document.querySelector(`[data-fchips="${F.id}"]`);if(ch)ch.innerHTML=chipsHtml(F.cols,F.st.filters,F.id);
+ const bt=document.querySelector(`[data-ftoggle="${F.id}"]`);if(bt){bt.textContent='Filtros'+(k?' · '+k:'');bt.classList.toggle('on',k>0||F.st.showFilters);}
 }
 function drawTable(){
  const def=tableDefinition;if(!def||!$('tableArea'))return;
  const terms=norm(tableState.query).split(/\s+/).filter(Boolean);
- let rows=def.rows.filter(r=>rowPasses(r,def)&&(!terms.length||(h=>terms.every(t=>h.includes(t)))(hayOf(r,def))));
+ let rows=def.rows.filter(r=>rowPasses(r,def.columns,tableState.filters)&&(!terms.length||(h=>terms.every(t=>h.includes(t)))(hayOf(r,def))));
  const count=rows.length,k=activeFilterCount();tableState.lastRows=rows;
  if(tableState.sort){const key=tableState.sort;rows=rows.slice().sort((a,b)=>{const aa=a[key],bb=b[key];const res=typeof aa==='number'&&typeof bb==='number'?aa-bb:String(aa??'').localeCompare(String(bb??''),'es',{numeric:true});return tableState.asc?res:-res;});}
  tableState.page=Math.min(tableState.page,Math.max(0,Math.ceil(rows.length/50)-1));
  const view=rows.slice(tableState.page*50,tableState.page*50+50);
- const chips=$('tableChips');if(chips)chips.innerHTML=chipsHtml(def);
+ const chips=$('tableChips');if(chips)chips.innerHTML=chipsHtml(def.columns,tableState.filters,'');
  const fb=$('tableFilters');if(fb){fb.textContent='Filtros'+(k?' · '+k:'');fb.classList.toggle('on',k>0||tableState.showFilters);}
  $('tableCount').textContent=`${nf(count)} filas${(terms.length||k)?' encontradas':''} · ${nf(def.rows.length)} en el ámbito. La búsqueda y los filtros de la tabla no modifican los indicadores.`;
  const ncol=def.columns.length,cls=c=>`${c.numeric?'num':''} ${c.center?'ctr':''}`;
@@ -687,19 +721,20 @@ function drawMapPoints(pts){
  if(bounds.length)_map.fitBounds(bounds,{padding:[30,30],maxZoom:11});
 }
 // ---- Informe por CLIENTE: lista gana/pierde + ficha (KPIs, comparación de periodos, operaciones agrupables) ----
-let _cliSel=null,_cliGroupBy='mes',_cliGroups=[],_cliOpsQ='',_cliOpsNum={};
-const cliTripHay=t=>norm([t.dia,t.mes,t.carga,t.descarga,t.ruta,t.mat,t.chofer,t.metodo,t.fiab].filter(Boolean).join(' '));
-function cliTripsFiltrados(trips){   // filtros de la ficha: palabras (matricula, lugar, mes, chofer) + min/max por cifra
- const ws=norm(_cliOpsQ).split(/\s+/).filter(Boolean),N=_cliOpsNum;
- return trips.filter(t=>{
-  if(ws.length){const h=cliTripHay(t);if(!ws.every(w=>h.includes(w)))return false;}
-  for(const k in N){const r=N[k];if(!r||!(numSet(r.min)||numSet(r.max)))continue;const x=t[k];if(typeof x!=='number')return false;if(numSet(r.min)&&x<+r.min)return false;if(numSet(r.max)&&x>+r.max)return false;}
-  return true;
- });
+let _cliSel=null,_cliGroupBy='mes',_cliGroups=[],_cliOpsFiltro=null;
+function cliOpsFiltro(){   // instancia del MÓDULO ÚNICO de filtros (crearFiltro) para las operaciones de la ficha
+ if(!_cliOpsFiltro){
+  const T=(label,key)=>({label,key,filter:'text'});
+  const cols=[{label:'Fecha',key:'dia',filter:'date',dateLen:10},T('Lugar de carga','carga'),T('Lugar de descarga','descarga'),T('Ruta','ruta'),T('Matrícula','mat'),T('Chófer','chofer'),T('Método','metodo'),numberCol('Km','km'),numberCol('Horas','horas',1),numberCol('Min. espera','espera'),numberCol('t','t',2),numberCol('m³','m3',1),moneyCol('Ingreso','ingreso'),moneyCol('Coste','coste'),moneyCol('Margen','margen')];
+  _cliOpsFiltro=crearFiltro(cols,[],cliOpsRedibuja);
+ }
+ return _cliOpsFiltro;
 }
-const CLI_OPS_NUM=[['km','km'],['horas','horas'],['espera','min espera'],['ingreso','ingreso €'],['coste','coste €'],['margen','margen €'],['t','t']];
-function cliOpsFilterBar(){
- return `<div class="cli-opsfilter noprint"><input id="cliOpsQ" type="search" placeholder="filtrar estos viajes por palabras (matrícula, lugar, mes, chófer…)" value="${esc(_cliOpsQ)}">${CLI_OPS_NUM.map(([k,lb])=>`<span class="cli-nf"><span>${lb}</span><input type="number" step="any" data-cliopsnum="${k}" data-part="min" placeholder="mín" value="${esc(_cliOpsNum[k]?.min??'')}"><input type="number" step="any" data-cliopsnum="${k}" data-part="max" placeholder="máx" value="${esc(_cliOpsNum[k]?.max??'')}"></span>`).join('')}<button id="cliOpsClear" type="button" class="textbtn">Quitar filtros</button></div>`;
+function cliOpsRedibuja(){
+ const F=cliOpsFiltro(),all=M.netaTrips(state).filter(t=>t.cliente===_cliSel),ft=filtroAplica(F,all);
+ const oh=$('cliOps');if(oh){oh.innerHTML=cliOpsHtml(ft);wireCliGroups();}
+ const cnt=$('cliOpsCount');if(cnt)cnt.textContent=nf(ft.length);
+ filtroRefresca(F,ft.length);
 }
 const pcm=x=>x==null?'—':(x>=0?'+':'')+nf(x*100,1)+' %';
 const CLI_THEAD='<thead><tr><th>Fecha</th><th class="num">Nº</th><th>Inicio</th><th>Fin</th><th>Lugar de carga</th><th>Lugar de descarga</th><th>Matrícula</th><th>Chofer</th><th class="num">m³</th><th class="num">t</th><th class="num">km</th><th class="num">Km carg.</th><th class="num">Km vacío</th><th class="num">Horas</th><th class="num">Min. cond.</th><th class="num">Min. espera</th><th class="num">Ingreso</th><th class="num">Coste</th><th class="num">Margen</th><th class="num">%</th><th>Fiab.</th><th>Método</th><th>Conf.</th><th class="noprint">Mapa</th></tr></thead>';
@@ -719,6 +754,7 @@ function clienteDet(){
  const c=list.find(x=>x.key===_cliSel)||list[0];if(!c)return panel('Informe por cliente','','<div class="info">No hay clientes en el periodo.</div>');
  const cr=comparisonRange(),nvB=cr&&cr.valid?M.netaView({...state,from:cr.from,to:cr.to}):null,cB=nvB&&nvB.byClient.find(x=>x.key===_cliSel);
  const trips=M.netaTrips(state).filter(t=>t.cliente===_cliSel),gana=c.margen>=0;
+ const opsF=cliOpsFiltro(),opsFt=filtroAplica(opsF,trips);   // módulo único de filtros aplicado a las operaciones
  const rvC=M.realView(state,'client'),cR=rvC&&rvC.groups.find(g=>g.key===_cliSel);   // mismo reparto, con material y desglose del coste
  const labC={combustible:'Combustible (por litros medidos)',personal:'Personal (por horas medidas)',flota:'Flota: reparaciones, seguros, amortización… (por km)',indirectos:'Gastos generales (por ingreso)',subcontrata:'Subcontratistas (factura real)',material:'Material: compra de áridos que se revende (compraventa: también está en el ingreso)'};
  const desgC=cR&&rvC.real?`<div class="tripdetail" style="margin:0 0 10px"><div class="grp">De qué se compone el coste real (${eur(cR.coste)})</div>${['combustible','personal','flota','indirectos','subcontrata','material'].filter(k=>Math.abs(cR[k])>=0.5).map(k=>detRow(labC[k],eur(cR[k]))).join('')}${detRow('= Coste de transporte (sin el material)','<b>'+eur(cR.costeTransporte)+'</b>')}</div>`:'';
@@ -731,19 +767,15 @@ function clienteDet(){
  ${desgC}
  <div class="tripdetail" style="margin:6px 0 10px">${estadViajes(trips,'Estadística de sus viajes: media, mediana y dispersión')}</div>
  <h3 class="cli-h3">Comparar entre fechas</h3>${cmpHtml}
- <div class="cli-opshead"><b>Operaciones (<span id="cliOpsCount">${nf(trips.length)}</span> de ${nf(trips.length)} viajes)</b> — agrupar por: <select id="cliGroup"><option value="mes"${_cliGroupBy==='mes'?' selected':''}>Mes</option><option value="carga"${_cliGroupBy==='carga'?' selected':''}>Lugar de carga</option><option value="descarga"${_cliGroupBy==='descarga'?' selected':''}>Lugar de descarga</option><option value="ruta"${_cliGroupBy==='ruta'?' selected':''}>Ruta</option><option value="mat"${_cliGroupBy==='mat'?' selected':''}>Matrícula</option><option value="none"${_cliGroupBy==='none'?' selected':''}>Sin agrupar</option></select> <span class="sub">pincha un grupo para desplegar sus viajes</span></div>
- ${cliOpsFilterBar()}
- <div id="cliOps">${cliOpsHtml(cliTripsFiltrados(trips))}</div></div></div>`;
+ <div class="cli-opshead"><b>Operaciones (<span id="cliOpsCount">${nf(opsFt.length)}</span> de ${nf(trips.length)} viajes)</b> — agrupar por: <select id="cliGroup"><option value="mes"${_cliGroupBy==='mes'?' selected':''}>Mes</option><option value="carga"${_cliGroupBy==='carga'?' selected':''}>Lugar de carga</option><option value="descarga"${_cliGroupBy==='descarga'?' selected':''}>Lugar de descarga</option><option value="ruta"${_cliGroupBy==='ruta'?' selected':''}>Ruta</option><option value="mat"${_cliGroupBy==='mat'?' selected':''}>Matrícula</option><option value="none"${_cliGroupBy==='none'?' selected':''}>Sin agrupar</option></select> <span class="sub">pincha un grupo para desplegar sus viajes</span></div>
+ ${filtroToolsHTML(opsF,trips)}
+ <div id="cliOps">${cliOpsHtml(opsFt)}</div></div></div>`;
 }
 function wireCliGroups(){document.querySelectorAll('#cliOps .cli-grphead').forEach(h=>h.onclick=()=>{const b=h.nextElementSibling,gi=+h.dataset.gi;if(b.hidden&&!b.dataset.filled){b.innerHTML=`<div class="cli-tablewrap"><table class="cli-optable">${CLI_THEAD}<tbody>${_cliGroups[gi].trips.map(cliTrow).join('')}</tbody></table></div>`;b.dataset.filled='1';}b.hidden=!b.hidden;h.classList.toggle('open',!b.hidden);});}
 function clienteDetWire(){
  const q=$('cliQ');if(q)q.oninput=()=>{const ws=norm(q.value).split(/\s+/).filter(Boolean);document.querySelectorAll('#cliList .cli-row').forEach(r=>{const h=norm(r.dataset.cli);r.hidden=!ws.every(w=>h.includes(w));});};
  document.querySelectorAll('#cliList .cli-row').forEach(r=>r.onclick=()=>{_cliSel=r.dataset.cli;renderContent();const el=$('content');if(el)el.scrollIntoView({block:'start'});});
- const reOps=()=>{const ft=cliTripsFiltrados(M.netaTrips(state).filter(t=>t.cliente===_cliSel));const oh=$('cliOps');if(oh){oh.innerHTML=cliOpsHtml(ft);wireCliGroups();}const cnt=$('cliOpsCount');if(cnt)cnt.textContent=nf(ft.length);};
- const g=$('cliGroup');if(g)g.onchange=()=>{_cliGroupBy=g.value;reOps();};
- const oq=$('cliOpsQ');if(oq)oq.oninput=()=>{_cliOpsQ=oq.value;reOps();};
- document.querySelectorAll('[data-cliopsnum]').forEach(inp=>inp.oninput=()=>{const k=inp.dataset.cliopsnum,p=inp.dataset.part;_cliOpsNum[k]={..._cliOpsNum[k],[p]:inp.value};reOps();});
- const oc=$('cliOpsClear');if(oc)oc.onclick=()=>{_cliOpsQ='';_cliOpsNum={};const oqi=$('cliOpsQ');if(oqi)oqi.value='';document.querySelectorAll('[data-cliopsnum]').forEach(x=>x.value='');reOps();};
+ const g=$('cliGroup');if(g)g.onchange=()=>{_cliGroupBy=g.value;cliOpsRedibuja();};   // el buscador/filtros los gestiona el módulo (manejadores globales data-f*)
  const pr=$('cliPrint');if(pr)pr.onclick=()=>window.print();
  wireCliGroups();
 }
@@ -1036,7 +1068,9 @@ function bind(){
   const b=e.target.closest('button');if(!b)return;
   if(b.id==='tableFilters'){tableState.showFilters=!tableState.showFilters;const bar=$('tableFilterBar');if(bar)bar.hidden=!tableState.showFilters;b.setAttribute('aria-expanded',String(tableState.showFilters));b.classList.toggle('on',tableState.showFilters||activeFilterCount()>0);return;}
   if(b.id==='tableClearFilters'){tableState.filters={};const bar=$('tableFilterBar');if(bar)bar.querySelectorAll('input,select').forEach(el=>{el.value='';});tableState.page=0;drawTable();return;}
-  if(b.dataset.tremove!==undefined){removeFilter(b.dataset.tremove,b.dataset.part);return;}
+  if(b.dataset.ftoggle!==undefined){const F=_filtros.get(b.dataset.ftoggle);if(F){F.st.showFilters=!F.st.showFilters;const bar=document.querySelector(`[data-fbar="${F.id}"]`);if(bar)bar.hidden=!F.st.showFilters;b.setAttribute('aria-expanded',String(F.st.showFilters));b.classList.toggle('on',F.st.showFilters||filterCount(F.st.filters)>0);}return;}
+  if(b.dataset.fclear!==undefined){const F=_filtros.get(b.dataset.fclear);if(F){F.st.filters={};const bar=document.querySelector(`[data-fbar="${F.id}"]`);if(bar)bar.querySelectorAll('input,select').forEach(el=>{el.value='';});F.redibujar();}return;}
+  if(b.dataset.tremove!==undefined){const sc=b.dataset.fscope||'';if(sc){const F=_filtros.get(sc);if(F){removeFilterFrom(F.st.filters,b.dataset.tremove,b.dataset.part,document.querySelector(`[data-fbar="${sc}"]`));F.redibujar();}}else removeFilter(b.dataset.tremove,b.dataset.part);return;}
   if(b.dataset.infoHide!==undefined){infoSet(b.dataset.infoHide,true);return;}
   if(b.dataset.infoShow!==undefined){infoSet(b.dataset.infoShow,false);return;}
   if(b.id==='infoToggle'){infoAll();return;}
@@ -1065,7 +1099,8 @@ function bind(){
  });
  document.addEventListener('input',e=>{
   if(e.target.dataset.searchSlicer){const id=e.target.dataset.searchSlicer,ws=norm(e.target.value).split(/\s+/).filter(Boolean);$('options-'+id).querySelectorAll('label').forEach(l=>{const h=norm(l.textContent);l.hidden=!ws.every(w=>h.includes(w));});}
-  if(e.target.id==='tableSearch'){tableState.query=e.target.value;tableState.page=0;drawTable();}
+  if(e.target.id==='tableSearch'){tableState.query=e.target.value;tableState.page=0;drawTable();return;}
+  if(e.target.dataset.fsearch!==undefined){const F=_filtros.get(e.target.dataset.fsearch);if(F){F.st.query=e.target.value;F.redibujar();}return;}
   applyFilterControl(e.target);
  });
  for(const id of ['from','to','dateBasis','compare','compareFrom','compareTo','costMode','billing'])$(id).addEventListener('change',()=>{$('customCompare').hidden=$('compare').value!=='custom';tableState.page=0;update();});
