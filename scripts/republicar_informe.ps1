@@ -1,4 +1,4 @@
-# Republica informe.html FUERA de la nocturna (p. ej. tras un cambio de presentacion) SIN perder la capa de nomina:
+﻿# Republica informe.html FUERA de la nocturna (p. ej. tras un cambio de presentacion) SIN perder la capa de nomina:
 # sobre el ultimo run con current.json.gz re-extrae nomina y personal (se borran al final de cada lectura por privacidad),
 # prepara, construye con la clave del personal (DPAPI, nunca se imprime) y publica atomico como Actualizar.ps1.
 # No toca Wialon ni Locatel ni re-triangula. Toma refresh.lock: si la nocturna esta corriendo, no hace nada.

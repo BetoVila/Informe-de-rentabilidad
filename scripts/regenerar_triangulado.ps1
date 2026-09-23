@@ -1,4 +1,4 @@
-# Regenera SOLO triangulado_v2.json (demanda + triangular, con los mismos argumentos que Actualizar.ps1) usando las trazas
+﻿# Regenera SOLO triangulado_v2.json (demanda + triangular, con los mismos argumentos que Actualizar.ps1) usando las trazas
 # ya guardadas en historicos\ (no se conecta a Wialon ni a Locatel), y lo publica atomico en _RENTABILIDAD.
 # No toca informe.html ni re-extrae nada mas. Toma refresh.lock: si la nocturna esta corriendo, no hace nada.
 # ANTES: instalar el codigo nuevo con deploy-dev.ps1 -SinLanzar (este script usa lo instalado, no el repo).
