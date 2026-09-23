@@ -244,7 +244,7 @@ def render_dia(mat, fecha, viajes, pts_mat, dg_dia, rest_s, paso_s, lug=None):
     return html, len(vmed)
 
 
-def simplificar(pts, tol_m=30.0):
+def simplificar(pts, tol_m=12.0):
     """Douglas-Peucker sobre [[lat, lon], ...] en metros (proyeccion local): quita los puntos que se desvian menos de tol_m de
     la recta entre sus vecinos conservados. Conserva los extremos. Una carretera sigue dibujada; los puntos redundantes, fuera."""
     n = len(pts)
@@ -275,7 +275,7 @@ def simplificar(pts, tol_m=30.0):
     return [pts[k] for k in range(n) if keep[k]]
 
 
-def trazas_de_viajes(mat, viajes, pts_mat, ts, tol_m=30.0):
+def trazas_de_viajes(mat, viajes, pts_mat, ts, tol_m=12.0):
     """Una fila por viaje MEDIDO (con hora de inicio y fin) del dia: clave, tiempos, posiciones de carga y descarga, medidas y
     el recorrido real simplificado (ciclo entero y tramo cargado). pts_mat ordenado por t; ts = sus tiempos (para bisect)."""
     out = []
@@ -295,6 +295,8 @@ def trazas_de_viajes(mat, viajes, pts_mat, ts, tol_m=30.0):
         tc, tcf, td = ep(x.get("t_carga")), ep(x.get("t_carga_fin")), ep(x.get("t_descarga"))
         s0 = tcf or tc
         car = [q for q in ciclo if s0 <= q["t"] <= td] if (s0 and td and td > s0) else []
+        tdf = ep(x.get("t_descarga_fin")) or td       # la VUELTA EN VACÍO: de salir de la descarga al fin del viaje
+        vac = [q for q in ciclo if q["t"] >= tdf] if tdf else []
         lit = x.get("litros_calibrados") if x.get("litros_calibrados") is not None else x.get("litros")
         out.append({"empresa": x.get("empresa"), "viaje": x.get("viaje"), "cantera": x.get("cantera"), "mat": mat, "fecha": x.get("fecha"),
                     "orden_dia": x.get("orden_dia"), "tipo": x.get("tipo"), "espejo_de": x.get("espejo_de"), "origen": x.get("origen"), "destino": x.get("destino"),
@@ -304,6 +306,7 @@ def trazas_de_viajes(mat, viajes, pts_mat, ts, tol_m=30.0):
                     "min": x.get("duracion_min"), "min_conduccion": x.get("min_conduccion"), "min_espera": x.get("min_espera"),
                     "metodo": x.get("metodo"), "confianza": x.get("confianza"),
                     "cargado": simplificar([[round(q["lat"], 5), round(q["lon"], 5)] for q in car], tol_m) or None,
+                    "vacio": simplificar([[round(q["lat"], 5), round(q["lon"], 5)] for q in vac], tol_m) or None,
                     "ciclo": simplificar([[round(q["lat"], 5), round(q["lon"], 5)] for q in ciclo], tol_m)})
     return out
 
