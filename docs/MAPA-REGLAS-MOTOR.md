@@ -203,9 +203,10 @@ El JSON lleva además `meta` (autodescripción de todas las reglas, líneas 2069
 
 ## 20. Cómo sincronizamos (ERP manda)
 
-1. El ERP se lleva estas reglas y parámetros al motor único. **`coste_cargas` y `tarifas_rutas` de tarifas pasan a ser salidas de COMPARACIÓN, no maestro.**
+1. El ERP se lleva estas reglas y parámetros al motor único. **Todas las salidas de coste, margen y conciliación pasan a ser de COMPARACIÓN, no maestro:** `coste_cargas` y `tarifas_rutas` de tarifas, y también mi conciliación mensual.
 2. Mi motor se queda y consume los **parámetros y resultados del ERP** (por XML-RPC solo lectura o por fichero; el ERP me pasa el esquema). Donde el ERP y yo discrepemos, **enseño la diferencia**; el ERP gana.
-3. **Mi conciliación mensual con la contabilidad sigue siendo mía** (es lo que cuadra con el libro): el ERP no la duplica, la consume.
-4. Cambios de esquema se avisan por SendMessage y en el canal del buzón. Nada de dos cifras distintas para el mismo porte.
+3. **La conciliación mensual con la contabilidad TAMBIÉN entra en el ERP** (corregido por la sesión del ERP el 23/09; el «análisis» que Roberto puso en el motor del ERP la incluye). El motor `razo.rentabilidad` del ERP (aprobado el 13/08) ya parte del libro y le llegan los gastos asentados con el dueño por matrícula; lo que le falta es justo mi `_reparto` (§16): el gasto de cada mes a los viajes de ese mes, medidos por base física y no medidos por ingreso, 607 subcontrata, 630 fuera, meses no cerrados con coeficiente estimado. Por eso `_reparto`, `ledgerView` y `bridge` son el mapa que porta el ERP. **La mía se queda sincronizada:** la sigo calculando, la comparo con la del ERP y enseño las diferencias; si discrepan, gana el ERP.
+4. `trazas_viajes.jsonl.gz` es el rastro del localizador como **línea principal** del mapa del viaje (especificación de Roberto), no un accesorio.
+5. Cambios de esquema se avisan por SendMessage y en el canal del buzón. Nada de dos cifras distintas para el mismo porte.
 
-_Última revisión: 2026-09-23. Números de línea sobre `triangular_v2.py`, `model.mjs`, `prepare-data.mjs` y `cuentas-contables.json` a esta fecha._
+_Última revisión: 2026-09-23 (tarde, con la corrección del §20 por la sesión del ERP). Números de línea sobre `triangular_v2.py`, `model.mjs`, `prepare-data.mjs` y `cuentas-contables.json` a esta fecha._
