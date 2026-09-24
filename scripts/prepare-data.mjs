@@ -282,6 +282,25 @@ if(nominaDetalle&&personal){
  }
  privateLayer={generatedAt:new Date().toISOString(),people:[...byPerson.values()],match:{casadas,total},sectionLabels:cfg.sections,typeLabels:cfg.typeLabels};
 }
+// Recorridos reales (GPS) de cada camión en sus últimos 30 días con traza, para el mapa de su ficha (Roberto 24/09: «no tienes
+// mapas»). Salen del trazas_viajes.jsonl.gz de esta lectura (ver_dia_mapa.py). Opcional: sin él, la ficha va sin mapa.
+// Cada recorrido: [fecha, nº del día, origen, destino, carga[lat,lon], descarga[lat,lon], cargado, vacío]; los caminos van
+// en enteros de 1e-4 grados (~11 m) y en diferencias (el primer punto entero; los demás, el salto desde el anterior).
+try{
+ const {createGunzip}=await import('node:zlib'),{createReadStream}=await import('node:fs'),readline=await import('node:readline');
+ const f=path.join(root,'trazas_viajes.jsonl.gz');await fs.access(f);
+ const pk=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,''),enc=ps=>{if(!Array.isArray(ps)||ps.length<2)return null;const o=[];let la=0,lo=0;for(const [a,b] of ps){const A=Math.round(a*1e4),B=Math.round(b*1e4);o.push(A-la,B-lo);la=A;lo=B;}return o;};
+ const q=p=>Array.isArray(p)?[Math.round(p[0]*1e4)/1e4,Math.round(p[1]*1e4)/1e4]:null;
+ let lug={};try{lug=JSON.parse(await fs.readFile(path.join(process.argv[3]||'','coords_lugares_por_casa.json'),'utf8'));}catch(e){}
+ const nom=(emp,cod)=>{const c=String(cod||'');const x=lug[String(emp||'').toLowerCase()+'|'+c];return (x&&x.nombre)||c;};
+ const todos=new Map(),ultimo=new Map();
+ const rl=readline.createInterface({input:createReadStream(f).pipe(createGunzip()),crlfDelay:Infinity});
+ for await(const line of rl){if(!line)continue;const x=JSON.parse(line);if(x.espejo_de||!x.mat||!x.fecha)continue;const k=pk(x.mat);if(!(x.cargado||x.vacio))continue;(todos.get(k)||todos.set(k,[]).get(k)).push(x);if(!ultimo.has(k)||x.fecha>ultimo.get(k))ultimo.set(k,x.fecha);}
+ const menos=(d,n)=>{const t=new Date(d+'T12:00:00Z');t.setUTCDate(t.getUTCDate()-n);return t.toISOString().slice(0,10);};
+ const rec={};let n=0;
+ for(const [k,xs] of todos){const desde=menos(ultimo.get(k),30);rec[k]=xs.filter(x=>x.fecha>=desde).sort((a,b)=>(a.fecha+String(a.orden_dia||0).padStart(3,'0')).localeCompare(b.fecha+String(b.orden_dia||0).padStart(3,'0'))).map(x=>[x.fecha,x.orden_dia||null,nom(x.empresa,x.origen),nom(x.empresa,x.destino),q(x.posc),q(x.posd),enc(x.cargado),enc(x.vacio)]);n+=rec[k].length;}
+ data.recorridos={dias:30,camiones:Object.keys(rec).length,viajes:n,porMatricula:rec};
+}catch(e){if(e.code!=='ENOENT')console.error('Aviso: recorridos no incluidos ('+e.message+')');}
 await fs.writeFile(path.join(root,'current.json.gz'),gzipSync(JSON.stringify(data),{level:9}));
 if(privateLayer)await fs.writeFile(path.join(root,'personal_private.json'),JSON.stringify(privateLayer));
 console.log(JSON.stringify({ledger:ledger?{rows:ledger.rows.length,lastClosed:ledger.meta.lastClosed}:null,quality:data.metadata.quality.partesKmImposible+' partes con km imposibles ('+data.metadata.quality.kmExcluidos+' km)',parts:parts.length,lines:lines.length,headers:g.headers.length,unmappedParts:parts.filter(p=>!p.plate).length,solred:!!fuel.solred,surtidor:!!fuel.surtidor,payrollRows:payroll?.rows.length||0,stations:usedStations.size,naveIds,coverage,private:privateLayer?{personas:privateLayer.people.length,casadas:privateLayer.match.casadas,total:privateLayer.match.total}:null}));
