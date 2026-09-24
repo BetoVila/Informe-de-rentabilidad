@@ -1,4 +1,4 @@
-# Instala en este PC el servidor http de las apps publicadas (informe de rentabilidad, tarifas, tacógrafo, carburantes),
+﻿# Instala en este PC el servidor http de las apps publicadas (informe de rentabilidad, tarifas, tacógrafo, carburantes),
 # para abrirlas en vivo con herramientas que no abren ficheros locales ni rutas de red (Codex). Solo lectura y solo este PC.
 # Copia servir_apps.py y su lanzador a C:\ProgramData\RazoApps, registra la tarea «Razo - Apps por http» (al iniciar sesión
 # y cada 5 minutos: si el servidor se cae, vuelve solo) y la arranca. No necesita permisos de administrador.
