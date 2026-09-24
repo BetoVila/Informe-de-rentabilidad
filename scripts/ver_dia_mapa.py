@@ -141,15 +141,23 @@ class Lugares:
         return self.nombre(mejor[1]) if mejor[0] <= RADIO_LUGAR_KM else "cerca de " + self.nombre(mejor[1])
 
 
-def render_dia(mat, fecha, viajes, pts_mat, dg_dia, rest_s, paso_s, lug=None):
+def preparar_flujo(pts_mat, rest_s):
+    """Indice, paradas y jornadas del camion; se reutilizan para todos sus dias."""
+    par = t2.paradas_flujo(pts_mat)
+    return {'ts': [q['t'] for q in pts_mat], 'paradas': par,
+            'jornadas': t2.jornadas_de(pts_mat, par, rest_s)}
+
+
+def render_dia(mat, fecha, viajes, pts_mat, dg_dia, rest_s, paso_s, lug=None, contexto=None):
     """HTML de un dia. pts_mat = flujo continuo del camion. Devuelve (html, n_medidos) o None si no hay traza."""
     lug = lug or Lugares({}, {})
     viajes = [x for x in viajes if not x.get("espejo_de")]           # el espejo intercompania no se repite
     viajes = sorted(viajes, key=lambda x: (x["t_ini"] or "z", x.get("orden_dia") or 0))
     if not pts_mat:
         return None
-    par = t2.paradas_flujo(pts_mat)
-    jor_all = t2.jornadas_de(pts_mat, par, rest_s)
+    contexto = contexto if contexto is not None else preparar_flujo(pts_mat, rest_s)
+    par = contexto['paradas']
+    jor_all = contexto['jornadas']
     jor = [j for j in jor_all if j["fecha"] == fecha or (j["nocturna"] and t2.fecha_de(j["fin"]) == fecha)]
     if jor:
         w0, w1 = min(j["c0"] for j in jor), max(j["c1"] for j in jor)
@@ -159,7 +167,7 @@ def render_dia(mat, fecha, viajes, pts_mat, dg_dia, rest_s, paso_s, lug=None):
     med = [x for x in viajes if x["t_ini"] and x["t_fin"]]
     for x in med:                                                    # los largos cruzan dias: la ventana los abarca enteros
         w0, w1 = min(w0, ep(x["t_ini"]) - 600), max(w1, ep(x["t_fin"]) + 600)
-    seg = [q for q in pts_mat if w0 <= q["t"] <= w1]
+    seg = pts_mat[bisect.bisect_left(contexto['ts'], w0):bisect.bisect_right(contexto['ts'], w1)]
     if not seg:
         return None
     ts = [q["t"] for q in seg]
@@ -370,21 +378,27 @@ def main():
         flujo, _, _ = t2.coser(trazas)
         n = 0; kb = 0
         exp = [] if a.export_trazas else None
-        ts_mat, ts = None, None
+        ts_mat, ts, contexto = None, None, None
         for (mat, fecha), viajes in sorted(por_dia.items()):
             if not any(x["t_ini"] for x in viajes) or mat not in flujo:
                 continue
+            if ts_mat != mat:
+                ts_mat = mat
+                contexto = preparar_flujo(flujo[mat], rest_s)
+                ts = contexto['ts']
             if exp is not None:
-                if ts_mat != mat:
-                    ts_mat, ts = mat, [q["t"] for q in flujo[mat]]
                 exp.extend(trazas_de_viajes(mat, viajes, flujo[mat], ts))
             if not a.salida_dir:
                 continue
-            r = render_dia(mat, fecha, viajes, flujo[mat], dg.get((mat, fecha)), rest_s, a.paso_s, lug)
+            r = render_dia(mat, fecha, viajes, flujo[mat], dg.get((mat, fecha)), rest_s, a.paso_s, lug, contexto)
             if not r:
                 continue
             ruta = os.path.join(a.salida_dir, "%s_%s.html" % (mat, fecha))
-            open(ruta, "w", encoding="utf-8").write(r[0]); n += 1; kb += os.path.getsize(ruta) / 1024.0
+            temporal = ruta + '.' + str(os.getpid()) + '.tmp'
+            with open(temporal, "w", encoding="utf-8") as salida:
+                salida.write(r[0])
+            os.replace(temporal, ruta)
+            n += 1; kb += os.path.getsize(ruta) / 1024.0
         res = {"dias": n, "MB": round(kb / 1024.0, 1), "carpeta": a.salida_dir}
         if exp is not None:
             tmp = a.export_trazas + ".tmp"
