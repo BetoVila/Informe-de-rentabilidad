@@ -1,4 +1,4 @@
-﻿param([string]$ConfigPath=(Join-Path $PSScriptRoot 'config.json'),[switch]$SimulateFailure)
+﻿param([string]$ConfigPath=(Join-Path $PSScriptRoot 'config.json'),[switch]$SimulateFailure,[switch]$WaitForLock)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'scripts\status.ps1')
 $config=Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -7,7 +7,12 @@ $workRoot=Join-Path $root 'work'
 $logRoot=Join-Path $root 'logs'
 New-Item -ItemType Directory -Path $workRoot,$logRoot -Force | Out-Null
 # Dos ejecuciones a la vez podian publicar cortes cruzados. La exclusión cubre extracción, controles y sustitución.
-try{$lock=[IO.File]::Open((Join-Path $root 'refresh.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}catch{Write-Output 'Ya hay una actualizacion en curso.';exit 0}
+$lock=$null
+$limit=(Get-Date).AddMinutes(30)
+while(-not $lock){
+    try{$lock=[IO.File]::Open((Join-Path $root 'refresh.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}
+    catch{if(-not $WaitForLock){Write-Output 'Ya hay una actualizacion en curso.';exit 0};if((Get-Date) -ge $limit){Write-Output 'No se pudo actualizar tras Tarifas: bloqueo durante 30 minutos.';exit 2};Start-Sleep -Seconds 10}
+}
 $run=Join-Path $workRoot ((Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $run | Out-Null
 $last='';$dataTo=''
@@ -102,6 +107,16 @@ try{
         $pa=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'scripts\export_rentabilidad_personal_v1.ps1'),'-Desde',$config.from,'-Hasta',$hasta,'-SourcePath',(Join-Path $config.sourceRoot 'PartesTrabajo\Partes 7.0.accdb'),'-OutputPath',(Join-Path $run 'personal_v1.json'))
         & $ps64 @pa
         if($LASTEXITCODE -ne 0){& $ps32 @pa}}}
+    foreach($fuenteGasto in @('seguros','softic','gesruta')){
+        $nombreGasto=if($fuenteGasto -eq 'seguros'){'seguros_v1.json'}else{$fuenteGasto+'_gastos_v1.json'}
+        Invoke-Opcional ('Gastos documentados '+$fuenteGasto) {& $py (Join-Path $root 'scripts\export_gastos_documentados.py') --fuente $fuenteGasto --desde $config.from --hasta $hasta --output (Join-Path $run $nombreGasto)}
+    }
+    # Una sola valoracion por carga: la salida versionada de Tarifas. Si falta, se muestra coste pendiente.
+    $cargasFuente=Join-Path $config.sourceRoot '_TARIFAS\export\coste_cargas.jsonl.gz'
+    Invoke-Opcional 'Costes de Tarifas' {
+        Copy-Item -LiteralPath $cargasFuente -Destination (Join-Path $run 'coste_cargas.jsonl.gz')
+        & $node (Join-Path $root 'scripts\validar-costes.mjs') (Join-Path $run 'coste_cargas.jsonl.gz') (Get-Date -Format s)
+    }
     & $node (Join-Path $root 'scripts\prepare-data.mjs') $run $hist
     if($LASTEXITCODE -ne 0){throw 'Fallo al conciliar las extracciones.'}
     $mode=if($config.scheduled){'scheduled'}else{'pending'}
@@ -126,12 +141,24 @@ try{
         Copy-Item -LiteralPath (Join-Path $run 'costes.json') -Destination $tmpc -Force
         if(Test-Path -LiteralPath $pubc){[IO.File]::Replace($tmpc,$pubc,$pubc+'.anterior')}else{[IO.File]::Move($tmpc,$pubc)}
     }
+    Invoke-Opcional 'Documentos de gastos para el ERP' {
+        $detalle=Join-Path $run 'gastos_documentados_v1.json'
+        $corte=Get-Content -LiteralPath $detalle -Raw -Encoding UTF8 | ConvertFrom-Json
+        if(-not $corte.snapshotComplete){throw 'Faltan fuentes del corte documental; no se sustituye el ultimo corte del ERP.'}
+        $exp=Join-Path $config.publicPath 'export'
+        if(-not (Test-Path -LiteralPath $exp)){New-Item -ItemType Directory -Path $exp | Out-Null}
+        $destino=Join-Path $exp 'gastos_documentados_v1.json'
+        $temporal=Join-Path $exp ('gastos_documentados.'+[guid]::NewGuid().ToString('N')+'.tmp')
+        Copy-Item -LiteralPath $detalle -Destination $temporal
+        if(Test-Path -LiteralPath $destino){[IO.File]::Replace($temporal,$destino,$destino+'.anterior')}else{[IO.File]::Move($temporal,$destino)}
+    }
     $last=(Get-Date).ToString('o');$dataTo=$hasta
-    $state=if($config.scheduled){'ok'}else{'pending'}
+    $state=if($script:avisos.Count){'partial'}elseif($config.scheduled){'ok'}else{'pending'}
+    if($script:avisos.Count){$code=2}
     $faltan=if($script:avisos.Count){' Sin datos en esta lectura: '+($script:avisos -join ', ')+' (se indica arriba en el informe).'}else{''}
     $message=if($config.scheduled){'Lectura completada en '+$env:COMPUTERNAME+'. Controles correctos.'+$faltan+' Las discrepancias entre fuentes siguen señaladas en Conciliación.'}else{'Lectura manual comprobada. La tarea nocturna todavia NO esta activada.'+$faltan}
     Write-RentabilidadStatus -PublicPath $config.publicPath -State $state -Message $message -LastSuccess $last -DataTo $dataTo -At $config.at -RunHost $env:COMPUTERNAME -Sources $(if($receipt.sourcesText){$receipt.sourcesText}else{'GesRuta + Access'})
-    Write-Output 'Publicacion correcta. Los sistemas de origen no se han modificado.'
+    if($code -eq 2){Write-Output 'Publicacion parcial: hay fuentes pendientes; revise Estado de actualizacion.'}else{Write-Output 'Publicacion correcta. Los sistemas de origen no se han modificado.'}
 }catch{
     $code=1
     Write-Output ('ERROR: '+$_.Exception.Message)

@@ -5,6 +5,7 @@ $release=Join-Path $root $ReleaseName
 New-Item -ItemType Directory -Path $release -Force | Out-Null
 if((Get-Item -LiteralPath (Join-Path $root 'runtime\node\LICENSE.txt')).Length -lt 1000){throw 'Falta la licencia original de Node.js para esta version.'}
 if(-not(Test-Path -LiteralPath (Join-Path $root 'vendor\LICENSES'))){throw 'Faltan las licencias de las librerias de vendor.'}
+if(-not(Test-Path -LiteralPath (Join-Path $root 'vendor\python312\pyodbc.cp312-win_amd64.pyd'))){throw 'Falta pyodbc 5.3.0 para el Python 3.12 empaquetado (lector de seguros).'}
 $archive=Join-Path $release 'programa.zip'
 if(Test-Path -LiteralPath $archive){throw 'El paquete ya existe. Cree una release nueva; no se pisa.'}
 # Los .ps1 van con BOM: Windows PowerShell 5 lee sin BOM como ANSI y estropea las tildes.

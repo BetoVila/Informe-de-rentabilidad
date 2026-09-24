@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import {createHash} from 'node:crypto';
-import {gzipSync} from 'node:zlib';
+import {gzipSync,gunzipSync} from 'node:zlib';
 import path from 'node:path';
+import {reconcileActivity,costSnapshot} from './economic-activity.mjs';
+import {expenseDetails,expenseSnapshot} from './expense-details.mjs';
 // Une las fuentes en un solo conjunto de datos. Access + GesRuta mandan (si fallan, no hay informe); las demas
 // (Solred, surtidor, nomina) son OPCIONALES: si faltan, el informe lo dice y sigue con lo que hay.
 const root=process.argv[2];
@@ -12,6 +14,7 @@ const aText=await readText('rentabilidad_access_v3.json'),gText=await readText('
 const a=JSON.parse(aText),g=JSON.parse(gText);
 const solred=await optional('solred_v2.json'),gespro=await optional('gespro_v1.json'),nomina=await optional('nomina_v1.json');
 const nominaDetalle=await optional('nomina_detalle.json'),personal=await optional('personal_v1.json'),contab=await optional('contabilidad_v1.json'),movertis=await optional('movertis_v1.json'),locatelSrc=await optional('locatel_v1.json'),actividadSrc=await optional('actividad_v1.json'),solredVeh=await optional('solred_vehiculos_v1.json');
+const expenses=expenseDetails({contab,softic:await optional('softic_gastos_v1.json'),seguros:await optional('seguros_v1.json'),gesruta:await optional('gesruta_gastos_v1.json')});
 const cuentasCfg=JSON.parse(await fs.readFile(new URL('../config/cuentas-contables.json',import.meta.url),'utf8'));
 const cfg=JSON.parse(await fs.readFile(new URL('../config/secciones-nomina.json',import.meta.url),'utf8'));
 const index=(rows)=>new Map(rows.map(r=>[String(r.id),r]));
@@ -193,6 +196,11 @@ const sources=[
 //        puntoOrigen, puntoDestino]   (localidad = pueblo; punto = planta/cantera/obra concreta)
 let actividad=null;
 if(actividadSrc?.metadata?.disponible){
+ let costesCargas=[];
+ try{costesCargas=gunzipSync(await fs.readFile(path.join(root,'coste_cargas.jsonl.gz'))).toString('utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s));}
+ catch(e){if(e.code!=='ENOENT')throw e;}
+ const costesLeidos=costSnapshot(costesCargas,g.metadata.read_at);
+ const economics=reconcileActivity(actividadSrc,lines,costesLeidos.rows);
  const co=['Razo','Agetrans'];
  const mo=[],moIx=new Map();
  const cli=['(sin asignar)'],cliIx=new Map([['(sin asignar)',0]]);
@@ -206,7 +214,7 @@ if(actividadSrc?.metadata?.disponible){
  const hm=s=>s?String(s).slice(11,16):'',nn=v=>v==null?null:v;
  const intern=(arr,ix,val)=>{let i=ix.get(val);if(i===undefined){i=arr.length;arr.push(val);ix.set(val,i);}return i;};
  const TRM={medido:0,repartido:1,hormigon:2,sin:3};   // fiabilidad del km/coste del viaje (triangulado / estimado)
- const rows=actividadSrc.rows.map(r=>{
+ const rows=economics.rows.map(r=>{
   const c=r.c==='Agetrans'?1:0;
   let mi=moIx.get(r.mes);if(mi===undefined){mi=mo.length;mo.push(r.mes);moIx.set(r.mes,mi);}
   const ci=intern(cli,cliIx,(r.cli&&String(r.cli).trim())||'(sin asignar)');
@@ -229,7 +237,7 @@ if(actividadSrc?.metadata?.disponible){
    nn(r.litc),nn(r.litv),nn(r.dod),nn(r.obm),r.vdia||null,intern(mot,motIx,r.mot||''),intern(dia,diaIx,r.fg||''),intern(chot,chotIx,r.chg?String(r.chg):''),
    r.chok==null?null:(r.chok?1:0),intern(tipo,tipoIx,r.tipo||''),r.larga?1:0,r.esp?1:0,hm(r.jini),hm(r.jfin),intern(kmf,kmfIx,r.kmf||''),nn(r.litraw),nn(r.litcal),
    String(r.v||''),String(r.cant||'')];
-  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3,r.impro||0,dd].concat(v2);
+  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3,r.impro||0,dd].concat(v2,[r.economia,r.costeCanonico,!!r.soloFactura]);
  });
  // Margen operativo de GesRuta (inggas): P&L por mes×cliente. Antes del coste real de flota/personal/indirectos.
  let margen=null;
@@ -237,7 +245,7 @@ if(actividadSrc?.metadata?.disponible){
   margen={rows:actividadSrc.margen.map(a=>({c:a.c==='Agetrans'?1:0,m:a.m,cli:(a.cli&&String(a.cli).trim())||'(sin cliente)',
    i:a.ing||0,ma:a.materiales||0,s:a.subcontratacion||0,g:a.gasoil||0,p:a.peajes||0,ad:a.adblue||0}))};
  }
- actividad={meta:{fuente:actividadSrc.metadata.fuente,desde:actividadSrc.metadata.desde,hasta:actividadSrc.metadata.hasta,viajes:rows.length,leido:actividadSrc.metadata.leido},co,mo,cli,mat,prov,loc,pt,dia,met,conf,chot,mot,tipo,kmf,mfu,tri:actividadSrc.metadata.triangulado||null,coords:actividadSrc.metadata.coords||{},rows,margen};
+ actividad={meta:{fuente:actividadSrc.metadata.fuente,desde:actividadSrc.metadata.desde,hasta:actividadSrc.metadata.hasta,viajes:rows.length,leido:actividadSrc.metadata.leido,costeVersion:2,costeFuente:{state:costesLeidos.state,generated:costesLeidos.generated,note:costesLeidos.note},conciliacion:economics.control},co,mo,cli,mat,prov,loc,pt,dia,met,conf,chot,mot,tipo,kmf,mfu,tri:actividadSrc.metadata.triangulado||null,coords:actividadSrc.metadata.coords||{},rows,margen};
 }
 const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadAt:a.metadata.read_at,gesrutaReadAt:g.metadata.read_at,from:g.metadata.desde,to:g.metadata.hasta,defaultFrom:g.metadata.hasta.slice(0,4)+'-01-01',defaultTo:g.metadata.hasta,snapshot:true,accessModified:a.metadata.modified,queries:[a.metadata.query],sourceHashes:{access:createHash('sha256').update(aText).digest('hex'),gesruta:createHash('sha256').update(gText).digest('hex')},sources,fuelIva:cfg.ivaCombustible,solredCoverage:coverage,solredResumen:[...coverageResumen],naveStations:naveIds,quality:{kmMaxParte:KM_MAX_PARTE,partesKmImposible:parts.filter(p=>p.kmExcluded>0).length,kmExcluidos:round(parts.reduce((s,p)=>s+p.kmExcluded,0),0),peorParte:parts.filter(p=>p.kmExcluded>0).sort((x,y)=>y.kmExcluded-x.kmExcluded).slice(0,5).map(p=>({id:p.id,date:p.date,plate:p.plateLabel,km:p.kmExcluded}))}},costFields:[...costFields.map(([k,label])=>[k,label]),['structure','Estructura'],['residual','Diferencia guardado / desglose']],parts,lines,headers:g.headers,sourceControls:{access:a.controls[0],gesruta:g.checks},sourceFiles:g.files,stations,fuel,payroll,ledger,telemetry,locatel,actividad,definitions:[
  'Contabilidad: gastos (grupo 6) e ingresos (grupo 7) reales de CxConta por sociedad, mes y cuenta, sin asientos de cierre ni apertura. El resultado contable es la referencia de rentabilidad; el coste de los partes de Access solo recoge una parte del gasto real (ver el puente en Conciliación). Un mes se compara solo cuando está cerrado; el mes en curso queda fuera.',
@@ -258,6 +266,15 @@ const data={version:4,metadata:{generatedAt:new Date().toISOString(),accessReadA
 ]};
 
 // ---- capa PRIVADA de personal (con nombres): solo se escribe en la carpeta de trabajo; build.mjs la cifra
+data.expenses=expenses;
+if(actividad?.meta.costeFuente)data.metadata.sources.push({id:'coste_cargas',name:'Costes de Tarifas',...actividad.meta.costeFuente});
+for(const name of ['Softic','Seguros','GesRuta']){
+ const source=expenses.sources.find(s=>s.id===name),rows=expenses.rows.filter(r=>r.source===name);
+ data.metadata.sources.push({id:'gastos_'+name,name:'Gastos '+name,state:source?'ok':'sin',
+   to:rows.reduce((d,r)=>r.date>d?r.date:d,'')||null,note:source?rows.length+' apuntes/recibos. Lectura '+source.generated+'. Consulta separada; no se suman copias entre fuentes.':'Fuente documental no recogida en esta lectura.'});
+}
+data.definitions=data.definitions.filter(x=>!x.startsWith('Vehículos y Clientes:'));
+data.definitions.push('Vehículos, clientes y viajes: ingresos enlazados con las líneas de factura por sociedad, viaje y albarán. Costes imputados del mismo motor que Tarifas; el material se identifica en la compra del albarán. No son el gasto contable completo. Si falta el coste, el margen queda pendiente. Los gastos documentados de CxConta, Softic, GesRuta y Seguros se consultan por fuente sin sumarlos entre sí.');
 const norm=(s)=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase();
 const tok=(s)=>new Set(norm(s).replace(/[^A-Z ]/g,' ').split(/\s+/).filter(t=>t.length>1&&!['DE','DEL','LA','LAS','LOS','Y'].includes(t)));
 const overlap=(x,y)=>{let n=0;for(const t of x)if(y.has(t))n++;return n;};
@@ -302,5 +319,6 @@ try{
  data.recorridos={dias:30,camiones:Object.keys(rec).length,viajes:n,porMatricula:rec};
 }catch(e){if(e.code!=='ENOENT')console.error('Aviso: recorridos no incluidos ('+e.message+')');}
 await fs.writeFile(path.join(root,'current.json.gz'),gzipSync(JSON.stringify(data),{level:9}));
+await fs.writeFile(path.join(root,'gastos_documentados_v1.json'),JSON.stringify(expenseSnapshot(expenses)));
 if(privateLayer)await fs.writeFile(path.join(root,'personal_private.json'),JSON.stringify(privateLayer));
 console.log(JSON.stringify({ledger:ledger?{rows:ledger.rows.length,lastClosed:ledger.meta.lastClosed}:null,quality:data.metadata.quality.partesKmImposible+' partes con km imposibles ('+data.metadata.quality.kmExcluidos+' km)',parts:parts.length,lines:lines.length,headers:g.headers.length,unmappedParts:parts.filter(p=>!p.plate).length,solred:!!fuel.solred,surtidor:!!fuel.surtidor,payrollRows:payroll?.rows.length||0,stations:usedStations.size,naveIds,coverage,private:privateLayer?{personas:privateLayer.people.length,casadas:privateLayer.match.casadas,total:privateLayer.match.total}:null}));

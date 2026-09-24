@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {classifyExpense,expenseDetails,expenseSnapshot} from './expense-details.mjs';
+assert.equal(classifyExpense('Compra generica','6020000000').family,'Otros aprovisionamientos');
+assert.equal(classifyExpense('AD-BLUE garrafa','6020000000').family,'AdBlue');
+assert.equal(classifyExpense('INFLADO NEUMATICOS','6020000000').family,'Neumaticos');
+assert.ok(classifyExpense('MANTENIMIENTO 1234BCD','6250000000').warning);
+const seguros={generado:'2026-09-24',rows:[{id:'S1',empresa:'Razo',fecha:'2026-07-01',importe:50,devuelto:true,poliza:'P1',documento:'R1'},{id:'S2',empresa:'Agetrans',fecha:'2026-07-01',importe:50,poliza:'P1',documento:'R1'}]};
+const softic={generado:'2026-09-24',fuente:'https://example.invalid',empresas:[{id:1,vat:'B15226095'}],cuentas:[{id:9,code:'6250000000',name:'Primas de seguros'}],documentos:[{id:20,ref:'R1',name:'F1'}],vehiculos:[],rows:[{id:3,company_id:[1,'Razo'],account_id:[9,'Seguros'],move_id:[20,'F1'],date:'2026-07-01',balance:50,name:'MANTENIMIENTO',partner_id:false}]};
+const result=expenseDetails({seguros,softic});
+assert.equal(result.sources.length,2);assert.equal(result.rows.length,3);
+assert.ok(result.rows.find(r=>r.id==='S1').returned);
+assert.equal(result.rows.filter(r=>r.possibleDuplicate).length,0,'Fuentes y sociedades distintas no son duplicados demostrados');
+assert.equal(result.rows.find(r=>r.source==='Softic').amount,50);
+assert.equal(expenseSnapshot(result).snapshotComplete,false,'Dos fuentes no son un corte completo para ERP');
+const wages={...softic,cuentas:[{id:9,code:'6400000000',name:'Salarios'}],rows:[{...softic.rows[0],id:1,name:'Persona A'},{...softic.rows[0],id:2,name:'Persona B'}]};
+assert.equal(expenseDetails({softic:wages}).rows.filter(r=>r.possibleDuplicate).length,0,'La anonimización no convierte nóminas distintas en duplicados');
+assert.throws(()=>expenseDetails({seguros:{...seguros,rows:[{...seguros.rows[0],importe:null}]}}),/importe numerico/);
+console.log('OK: gastos por documento, clasificacion, retornos, sociedades, importes y no sumar copias.');

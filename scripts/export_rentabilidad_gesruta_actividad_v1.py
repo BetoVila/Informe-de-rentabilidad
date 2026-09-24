@@ -382,7 +382,11 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
                               "cli": c["cliente"] if c else "", "o": o, "d": dest,
                               "op": rprov(o), "ol": rloc(o), "on": rnom(o),
                               "dp": rprov(dest), "dl": rloc(dest), "dn": rnom(dest),
-                              "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "impro": 0.0, "horm": False, "nac": not tiene_cantera}
+                              "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "impro": 0.0, "horm": False, "nac": not tiene_cantera,
+                              "albaranes": [], "conceptos": []}
+        if a not in t["albaranes"]: t["albaranes"].append(a)
+        concepto = str(ln.get(r, "CODCON") or "").strip()
+        if concepto not in t["conceptos"]: t["conceptos"].append(concepto)
         imp_val = ln.get(r, "IMPORT") or 0
         impro_val = ln.get(r, "IMPPRO") or 0     # coste REAL del subcontratista por linea (cuadra con la cuenta 607); viaje con impro>0 = subcontratado
         if impro_val > 15000 and impro_val > imp_val * 8:   # coste de subcontrata IMPOSIBLE en una linea (error de tecleo en GesRuta, p. ej. 170.108 en un porte de 430): no sumar, anotar
@@ -397,9 +401,9 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
         elif unidad == "t":
             t["t"] += cr
     ln.cerrar()
-    # Nacionales sin cantera: solo se quedan los SUBCONTRATADOS (impro>0), que traen su coste real. Los de coste propio
-    # sin cantera (no triangulan, sin km/horas fiables) se dejan fuera por ahora, para no inventarles un coste.
-    return [t for t in trips.values() if t.get("cant") or t.get("impro", 0) > 0]
+    # No se descarta facturacion por carecer de cantera o de medicion. Su coste puede quedar pendiente,
+    # pero sus ingresos (minimos, esperas, desplazamientos y portes propios) siguen existiendo.
+    return list(trips.values())
 
 
 def main():

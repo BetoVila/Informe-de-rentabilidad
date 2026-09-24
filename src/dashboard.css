@@ -2,6 +2,7 @@
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;font-family:'Segoe UI',Arial,sans-serif;color:var(--ink);background:var(--bg)}
+@media(max-width:600px){header.topbar{position:static}.panel select{min-height:36px}.tablewrap{overscroll-behavior-x:contain}}
 button,input,select{font:inherit}
 button{cursor:pointer;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);padding:7px 12px}
 button:hover{border-color:#a9bcd6;background:#f4f8ff}

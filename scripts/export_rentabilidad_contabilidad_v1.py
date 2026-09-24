@@ -42,6 +42,15 @@ def main():
         % (a.from_date, hasta))
     nombres = consulta(docker, a.contenedor, a.base, a.usuario,
         "SELECT DISTINCT ON (code) code, name FROM account_account WHERE code LIKE '6%' OR code LIKE '7%' ORDER BY code, company_id")
+    # El detalle conserva la identidad de cada apunte. Sirve para cotejar documentos de otras apps,
+    # nunca para volver a sumarlos sobre los totales anteriores.
+    detalle = consulta(docker, a.contenedor, a.base, a.usuario,
+        "SELECT a.cxconta_key AS id,a.company_id,a.fecha,a.ejercicio,a.libro,a.asiento,a.linea,"
+        "a.cuenta_codigo AS cuenta,coalesce(c.name,'') AS cuenta_nombre,a.documento,a.concepto,"
+        "a.debe,a.haber,(a.debe-a.haber) AS importe FROM razo_cxconta_apunte a "
+        "LEFT JOIN razo_cxconta_cuenta c ON c.id=a.cuenta_id WHERE a.clase='ordinario' "
+        "AND a.fecha>='%s' AND a.fecha<='%s' AND a.cuenta_codigo LIKE '6%%' ORDER BY a.company_id,a.fecha,a.asiento,a.linea"
+        % (a.from_date,hasta))
     meta = consulta(docker, a.contenedor, a.base, a.usuario,
         "SELECT company_id, max(fecha) AS max_fecha, count(*) AS n FROM razo_cxconta_apunte WHERE clase='ordinario' "
         "AND fecha <= '%s' GROUP BY 1 ORDER BY 1" % hasta)
@@ -77,6 +86,8 @@ def main():
                         'maxFechaPorSociedad': {m['company_id']: m['max_fecha'] for m in meta},
                         'leido': datetime.datetime.now().isoformat(timespec='seconds')},
            'accounts': {r['code']: r['name'] for r in nombres}, 'rows': rows,
+           'detalleGastos': [{**r,'company_id':int(r['company_id']), 'importe':float(r['importe']),
+                              'debe':float(r['debe']), 'haber':float(r['haber'])} for r in detalle],
            'intragrupo': {'metodo': 'Asientos que tocan cuentas de empresas del grupo (clientes 433-436 -> ingreso 7xx; proveedores 403-406 -> gasto 6xx)',
                           'rows': intragrupo_rows}}
     with open(a.output, 'w', encoding='utf-8') as f:

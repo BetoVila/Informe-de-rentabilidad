@@ -2,7 +2,7 @@
     param([string]$PublicPath,[string]$State,[string]$Message,[string]$LastSuccess,[string]$DataTo,[string]$At='03:00',[string]$RunHost=$env:COMPUTERNAME,[string]$Sources='GesRuta + Access')
     $stamp=(Get-Date).ToString('o')
     $esc={param($s) [System.Net.WebUtility]::HtmlEncode([string]$s)}
-    $title=switch($State){'ok'{'Lectura completada'} 'error'{'Lectura fallida: se conserva el informe anterior'} 'running'{'Actualizando datos'} default{'Actualizacion nocturna pendiente de activar'}}
+    $title=switch($State){'ok'{'Lectura completada'} 'partial'{'Lectura parcial: fuentes pendientes'} 'error'{'Lectura fallida: se conserva el informe anterior'} 'running'{'Actualizando datos'} default{'Actualizacion nocturna pendiente de activar'}}
     $payload=@{state=$State;message=$Message;checkedAt=$stamp;lastSuccess=$LastSuccess;dataTo=$DataTo;scheduledAt=$At;host=$RunHost;sources=$Sources}
     $html=@"
 <!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rentabilidad | Estado de la actualizacion</title>

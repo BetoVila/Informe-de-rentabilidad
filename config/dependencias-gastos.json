@@ -1,0 +1,9 @@
+{
+  "python": "3.12 win_amd64",
+  "pyodbc": "5.3.0",
+  "wheel": "pyodbc-5.3.0-cp312-cp312-win_amd64.whl",
+  "sha256": "fe77eb9dcca5fc1300c9121f81040cc9011d28cff383e2c35416e9ec06d4bc95",
+  "origen": "PyPI / pyodbc",
+  "destino": "vendor/python312",
+  "preparacion": "python -m pip download pyodbc==5.3.0 --only-binary=:all: --platform win_amd64 --python-version 312 --implementation cp --abi cp312 --no-deps; verificar SHA256 y extraer el wheel en destino, incluidas las licencias."
+}
