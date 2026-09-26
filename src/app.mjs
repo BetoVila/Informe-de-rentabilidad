@@ -1312,6 +1312,14 @@ function renderSources(){
  const S=D.metadata.sources||[],ok=S.filter(x=>x.state==='ok').length,sm=$('srcSummary');if(sm)sm.textContent='Fuentes '+ok+' de '+S.length+' · datos hasta '+String(D.metadata.to||'').slice(8,10)+'/'+String(D.metadata.to||'').slice(5,7);
 }
 function switchTab(tab){if(tab==='clientedet'){tab='client';_vistaReal.client='lista';}state.tab=tab;tableState=freshTable();renderContent();}
+// DENTRO DE «RENTABILIDAD Y TARIFAS» (Roberto 26/09/2026: una sola app, sin duplicados). informe.html?embebido=1 oculta la marca y la
+// pestaña «Viajes» (esta en Tarifas: «Viajes por vehiculo y dia», medida por la tractora) y manda alli los enlaces a viajes;
+// informe.html#tab=plate (o client, summary, audit, mapa, hallazgos, personal, method, actividad...) abre esa pestaña.
+const EMBEBIDO=new URLSearchParams(location.search).get('embebido')==='1'&&window.parent!==window;
+const TABS_OK=new Set(['summary','plate','client','invoices','parts','audit','expenses','personal','actividad','viajes','mapa','hallazgos','method']);
+function aTarifasViajes(q){try{window.parent.postMessage({razo:'verviajes',q:String(q||'')},'*');}catch(e){}}
+function tabDeLaDireccion(){const m=/(?:^#|&)tab=([a-z]+)/.exec(location.hash||'');const t=m&&m[1];
+ if(!t||!TABS_OK.has(t)||t===state.tab)return;if(EMBEBIDO&&t==='viajes'){aTarifasViajes('');return;}switchTab(t);}
 function bind(){
  document.addEventListener('click',e=>{
   if(!e.target.closest('.slicer'))document.querySelectorAll('.slicers .slicer[open]').forEach(d=>{d.open=false;});
@@ -1337,6 +1345,7 @@ function bind(){
   if(b.dataset.infoShow!==undefined){infoSet(b.dataset.infoShow,false);return;}
   if(b.id==='infoToggle'){infoAll();return;}
   if(b.dataset.company!==undefined){state.companies=b.dataset.company?[b.dataset.company]:[];tableState.page=0;update();}
+  if(EMBEBIDO&&(b.dataset.tab==='viajes'||b.dataset.verviajes!==undefined)){aTarifasViajes(b.dataset.verviajes||'');return;}   // dentro de «Rentabilidad y tarifas»: los viajes estan en su pestaña
   if(b.dataset.tab)switchTab(b.dataset.tab);
   if(b.id==='personalGo')unlockPersonal();
   if(b.id==='personalLock'){personal=personalEmpty();tableState=freshTable();renderContent();}
@@ -1386,5 +1395,8 @@ async function boot(){
  $('reloadReport').onclick=()=>location.reload();
  $('quick').innerHTML='<option value="">elige…</option>'+quickPeriods(D.metadata.from,D.metadata.to).map(r=>`<option value="${r.from}|${r.to}">${esc(r.label)}</option>`).join('');
  makeSlicers();bind();temaBoton();update();alturaCabecera();addEventListener('resize',alturaCabecera);
+ if(EMBEBIDO){document.body.classList.add('embebido');$('viajesTab').hidden=true;
+  document.head.insertAdjacentHTML('beforeend','<style>body.embebido .topbar .brand{display:none}</style>');alturaCabecera();}
+ tabDeLaDireccion();addEventListener('hashchange',tabDeLaDireccion);
 }
 boot().catch(error=>{$('message').innerHTML='<div class="alert error">No se pudo abrir el informe. Utilice una versión actual de Chrome, Edge o Firefox y vuelva a cargar. Los datos no se han modificado.</div>';$('fresh').textContent='No se ha podido cargar';console.error(error);});
