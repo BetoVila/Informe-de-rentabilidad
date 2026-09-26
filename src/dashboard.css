@@ -572,3 +572,7 @@ details.hz table td.num,details.hz table th{white-space:nowrap}
 :root[data-theme="dark"] .topbar .brand strong{color:var(--ink)}
 :root[data-theme="dark"] .card-click:hover{box-shadow:0 3px 12px rgba(0,0,0,.4);border-color:var(--acc)}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
+/* El adaptador RAZO-UI pone .topbar en relative y, al bajar, la lista de Vehiculos/Clientes (sticky bajo la cabecera) dejaba un hueco en blanco: la cabecera vuelve a quedarse fija (mayor especificidad que su regla). En movil e impresion sigue en flujo. */
+body.rz-ui[data-rz-app=rentabilidad] .topbar{position:sticky;top:env(safe-area-inset-top,0px)}
+@media(max-width:600px){body.rz-ui[data-rz-app=rentabilidad] .topbar{position:static}}
+@media print{body.rz-ui[data-rz-app=rentabilidad] .topbar{position:static}}
