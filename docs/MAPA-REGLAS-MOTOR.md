@@ -53,16 +53,18 @@ Parámetros por argumento (main, línea 1545): `--rest-h` (descanso que corta jo
 
 ## 4. Jornadas
 
-- **`jornadas_de(pts, paradas, rest_s)` (línea 145).** Flujo continuo por camión. Corta la jornada por **descanso > `rest_h`** (8 h por defecto) **o por hueco de datos**, **NUNCA por medianoche**. Cada jornada se fecha por su **primer movimiento**.
+- **`jornadas_de(pts, paradas, rest_s, reposos)` (línea 153).** Flujo continuo por camión. Corta la jornada por **descanso > `rest_h`** (8 h por defecto) **o por hueco de datos**, **NUNCA por medianoche**. Cada jornada se fecha por su **primer movimiento**.
+  - Descanso = parada larga **aunque tenga huecos sin señal dentro** (`reposos = paradas_flujo(pts, None)`). Un día sin datos con el camión en la nave sigue siendo el mismo descanso.
+  - Si dos descansos se solapan (una parada de días con un hueco sin señal dentro), la jornada siguiente arranca en el **fin más tardío** (`c0 = max`). Antes arrancaba al acabar el hueco: 0063NBM, jornada del 25/08/2025 desde el 24 a las 00:04, 37 h de «espera» en el viaje (26/09/2026).
 - Marca `nocturna` y el `modo` de la jornada.
 - Jornadas > `MAX_JORNADA_H` (24 h) se cuentan aparte (`jornadas_largas`): no son de áridos.
 
 ## 5. Paradas
 
-- **`paradas_flujo(pts)` (línea 122).** Paradas ≥ `DWELL_S` (3 min) sobre el flujo. Cada parada: `t_in, t_out, lat, lon`.
+- **`paradas_flujo(pts, hueco_s=HUECO_S)` (línea 123).** Paradas ≥ `DWELL_S` (3 min) sobre el flujo. Cada parada: `t_in, t_out, lat, lon`. Una parada **se corta** con **30 min o más sin posición** (`HUECO_S`, igual que el mapa del día: sin señal no se sabe qué hizo el camión). Antes 1895CNR salía «parado 9.565 min» en un sitio medio entre Sabón y Bertoa por un hueco de 6,2 días (26/09/2026). **No** se corta por un salto de sitio sin hueco: medido en 4,07 M pares de puntos parados seguidos, solo 1.084 saltan más de 350 m y son ruido del GPS (5003MBV oscila 0,4-5 km parado; 5158LHG tiene puntos sueltos a más de 5 km que vuelven); cortar ahí deshacía paradas y descansos reales (un viaje largo de 5003MBV sumaba la noche).
 - En el output, cada viaje lleva `paradas = [{t, min, lugar, rol}]` (líneas 1964-1977): paradas ≥ 5 min **dentro de [t_ini, t_fin]**. `rol`:
-  - `carga` si solapa con los hitos `t_carga..t_carga_fin`; `lugar` = origen del viaje.
-  - `descarga` si solapa con `t_descarga` (+60 s); `lugar` = destino.
+  - `carga` si solapa con los hitos `t_carga..t_carga_fin`; `lugar` = origen del viaje **solo si la parada cae en su radio** (`rotulo_en_lugar`, con `cerca_cod`); si no, el lugar conocido a < 700 m o null.
+  - `descarga` si solapa con `t_descarga` (+60 s); `lugar` = destino **con la misma regla**. En hormigón el albarán repite la planta como destino y la obra está a km: antes la descarga salía «SABO» con el GPS a 14 km (26/09/2026).
   - `espera` en cualquier otro sitio; `lugar` = código de lugar conocido a < 700 m, o null.
 - **`espera_por_cliente`** (hallazgo, línea 2186): minutos parado por viaje medido, con media, **mediana, p90 y desviación** (`_est`, línea 2157). ≥ 10 viajes.
 - **`paradas_por_lugar`** (línea 2175): por rol y lugar, ≥ 5 paradas, con media/mediana/p90/desv.

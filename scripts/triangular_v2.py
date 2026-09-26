@@ -36,6 +36,7 @@ V_PARADO, V_MOVIL = v1.V_PARADO, v1.V_MOVIL
 DWELL_S = 180                              # parada = >= 3 min (las descargas de aridos duran 5-10 min; alguna menos de 5)
 KM_MIN_CICLO, MIN_MIN_CICLO = 1.0, 8.0     # ciclo valido (hub): >= 1 km y >= 8 min; si no, se funde con el anterior
 HUB_EPS_KM = 0.35                          # paradas a < 350 m son el mismo sitio
+HUECO_S = 1800                             # 30 min o mas sin posicion = sin señal, no parada (igual que el mapa del dia)
 LARGA_KM = 200.0                           # origen-destino a >= 200 km = larga distancia (pasada de nacional)
 MAX_JORNADA_H = 24.0                       # jornada mas larga: no es de aridos, sus viajes van a la pasada de nacional
 GAP, MATCH, MISMATCH = -0.6, 1.0, -1.5     # alineamiento: saltar; geografia que confirma; que contradice
@@ -119,7 +120,13 @@ def es_mov(q):
     return (q["s"] or 0) > V_MOVIL
 
 
-def paradas_flujo(pts):
+def paradas_flujo(pts, hueco_s=HUECO_S):
+    """Paradas de la traza continua de un camion. Con hueco_s se cortan donde pasan hueco_s o mas sin posicion: sin señal no
+    se sabe que hizo el camion (1895CNR 09/01/2026 salia «parado 9.565 min» en un sitio medio entre Sabon y Bertoa por un
+    hueco de 6,2 dias). hueco_s=None es para los DESCANSOS que cortan jornadas: un hueco no rompe el descanso (dia sin datos
+    con el camion en la nave). No se corta por un salto de sitio SIN hueco: medido el 26/09 en 4,07 M pares de puntos
+    parados seguidos, solo 1.084 saltan mas de 350 m y son ruido del GPS (5003MBV oscila 0,4-5 km parado; 5158LHG tiene
+    puntos sueltos a mas de 5 km que vuelven al sitio); cortar ahi deshacia paradas y descansos reales."""
     out, i, n = [], 0, len(pts)
     while i < n:
         q = pts[i]
@@ -130,7 +137,8 @@ def paradas_flujo(pts):
             continue
         if (q["s"] or 0) <= V_PARADO:
             j = i
-            while j + 1 < n and pts[j + 1]["f"] != "locatel" and (pts[j + 1]["s"] or 0) <= V_PARADO:
+            while (j + 1 < n and pts[j + 1]["f"] != "locatel" and (pts[j + 1]["s"] or 0) <= V_PARADO
+                   and not (hueco_s and pts[j + 1]["t"] - pts[j]["t"] >= hueco_s)):
                 j += 1
             if pts[j]["t"] - pts[i]["t"] >= DWELL_S:
                 seg = pts[i:j + 1]
@@ -142,8 +150,12 @@ def paradas_flujo(pts):
     return out
 
 
-def jornadas_de(pts, paradas, rest_s):
-    cortes = [(p["t_in"], p["t_out"]) for p in paradas if p["t_out"] - p["t_in"] >= rest_s]
+def jornadas_de(pts, paradas, rest_s, reposos=None):
+    """Jornadas = tramos entre descansos de rest_s o mas. Descanso = parada larga aunque tenga huecos sin señal dentro
+    (reposos: paradas_flujo(pts, None)) o hueco sin posicion de rest_s o mas. j["paradas"] = las paradas cortas."""
+    if reposos is None:
+        reposos = paradas_flujo(pts, None)
+    cortes = [(p["t_in"], p["t_out"]) for p in reposos if p["t_out"] - p["t_in"] >= rest_s]
     for a, b in zip(pts, pts[1:]):
         if b["t"] - a["t"] >= rest_s:
             cortes.append((a["t"], b["t"]))
@@ -158,7 +170,9 @@ def jornadas_de(pts, paradas, rest_s):
             if ini is not None and cortes[ci][0] > ini:
                 jor.append({"ini": ini, "fin": ult, "c0": c0, "c1": cortes[ci][0]})
                 ini = None
-            c0 = cortes[ci][1]
+            # descansos SOLAPADOS (una parada de dias con un hueco sin señal dentro) van por su inicio: el fin del ultimo no
+            # es el mayor. Sin max, la jornada arrancaba al acabar el hueco (0063NBM: 24/08/2025 00:04, carga el 25 a las 12:00)
+            c0 = max(c0, cortes[ci][1])
             ci += 1
         if ini is None:
             ini = t
@@ -276,6 +290,13 @@ def cerca_cod(stop, cod, coords, casa):
     if not c or v1.RADIO_MATCH.get(c["fuente"], 1) is None:
         return 0.0
     return MATCH if v1.cerca(stop, c, c["fuente"], c.get("radio_m")) else MISMATCH
+
+
+def rotulo_en_lugar(stop, cod, coords, casa, cercano):
+    """Rotulo de una parada de carga o descarga: el lugar del albaran SOLO si la parada cae en su radio; si no, el lugar
+    conocido mas cercano (cercano(lat, lon), a < 700 m) o None. En hormigon el albaran repite la planta como destino y la
+    obra esta a km: la descarga salia «SABO» con el GPS a 14 km."""
+    return cod if cerca_cod(stop, cod, coords, casa) == MATCH else cercano(stop["lat"], stop["lon"])
 
 
 KM_MISMA_CARGA = 3.0    # dos paradas en el mismo origen con menos de 3 km recorridos entre ellas = la misma carga (espera en cantera)
@@ -1240,7 +1261,7 @@ def triangular_larga(m, idxs, dem, pts, jornadas, coords, fuente, tablas, acts, 
     # paradas >= 20 min en LUGARES CONOCIDOS del camion (origenes/destinos de sus albaranes): marcan donde acaba un viaje
     paradas_conocidas = []
     if zonas_conocidas:
-        for s in paradas_flujo(pts):
+        for s in paradas_flujo(pts, None):           # fin de viaje: el camion se queda en el sitio aunque apague (hueco)
             if s["t_out"] - s["t_in"] < 1200:
                 continue
             for (la, lo, r) in zonas_conocidas:
@@ -1637,7 +1658,7 @@ def main():
         fuente_mat.setdefault(mat, collections.Counter())[v["fuente"]] += 1
     par_mat = {mat: paradas_flujo(pts) for mat, pts in flujo.items()}          # paradas de cada camion (tambien para las esperas por viaje)
     par_t = {mat: [p["t_in"] for p in pl] for mat, pl in par_mat.items()}
-    jornadas_mat = {mat: jornadas_de(pts, par_mat[mat], rest_s) for mat, pts in flujo.items()}
+    jornadas_mat = {mat: jornadas_de(pts, par_mat[mat], rest_s, paradas_flujo(pts, None)) for mat, pts in flujo.items()}
     por_fecha = collections.defaultdict(list)
     for mat, js in jornadas_mat.items():
         for j in js:
@@ -1969,9 +1990,9 @@ def main():
                 if b_ - a_ < 300:
                     continue
                 if tc_ is not None and p_["t_in"] <= (tco_ or tc_) and p_["t_out"] >= tc_:
-                    rol_, lug_ = "carga", t["o"]
+                    rol_, lug_ = "carga", rotulo_en_lugar(p_, t["o"], coords, t["c"], lugar_cerca)
                 elif td_ is not None and p_["t_in"] <= (tdo_ or td_) + 60 and p_["t_out"] >= td_:
-                    rol_, lug_ = "descarga", t["d"]
+                    rol_, lug_ = "descarga", rotulo_en_lugar(p_, t["d"], coords, t["c"], lugar_cerca)
                 else:
                     rol_, lug_ = "espera", lugar_cerca(p_["lat"], p_["lon"])
                 par_v.append({"t": iso_min(a_), "min": int((b_ - a_) // 60), "lugar": lug_, "rol": rol_})
@@ -2081,7 +2102,7 @@ def main():
             "linea": "linea = NUMERO de lineas.dbf del sistema anterior como entero en texto; (empresa, linea) es unico",
             "hitos": "t_carga = llegada a cargar, t_carga_fin = salida cargado, t_descarga = llegada a descargar, t_descarga_fin = salida de la descarga (hora de Madrid; null si no se ve la visita); minutos de carga/descarga = diferencias. En largo recorrido son las estancias en las zonas de origen y destino",
             "chofer": "chofer_coincide = el codigo de chofer del albaran (GesRuta) es uno de los enlazados a la tarjeta de la ranura 1 (una tarjeta puede tener varios codigos: dos fichas de la misma persona o un codigo por casa); chofer_tacografo = el codigo enlazado que coincide o, si no, el primero de su casa",
-            "paradas": "paradas = [{t (hora de Madrid), min, lugar, rol}]: paradas >= 5 min del camion dentro de [t_ini, t_fin]; rol = carga | descarga (por los hitos t_carga/t_descarga; lugar = origen/destino del viaje) | espera (tiempo parado fuera de la carga y la descarga; lugar = codigo del lugar conocido a < 700 m o null)",
+            "paradas": "paradas = [{t (hora de Madrid), min, lugar, rol}]: paradas >= 5 min del camion dentro de [t_ini, t_fin] (una parada se corta con 30 min sin posicion o un salto de mas de 350 m); rol = carga | descarga (por los hitos t_carga/t_descarga; lugar = origen/destino del viaje SOLO si la parada cae en su radio, si no el lugar conocido a < 700 m o null) | espera (tiempo parado fuera de la carga y la descarga; lugar = codigo del lugar conocido a < 700 m o null)",
             "hormigon": "tipo hormigonera: ciclos por PLANTAS APRENDIDAS de la traza (grupo de paradas mas visitado en los dias de un solo origen; el maestro/geocode no valen), de la llegada a la planta a la llegada a la siguiente; obra = parada mas larga fuera de plantas (campo obra {lat, lon, min}); asignacion por planta en orden de GesRuta (cronologico dentro de cada planta), hora_carga impresa como ancla dura si viene en la carga; ciclos sin albaran = cargas que GesRuta no tiene (resumen.hormigon.ciclos_sin_albaran); km_vacio = ida a cargar + vuelta de la obra",
             "litros": "crudo = reduccion monotona del contador; calibrados = tabla del sensor (ERP) + reduccion monotona"}
     # ---- HALLAZGOS: lo que el cruce descubre y sirve para ACTUAR (pestaña Hallazgos del informe). Todo medido, nada estimado.
