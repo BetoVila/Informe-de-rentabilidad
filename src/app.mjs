@@ -622,9 +622,13 @@ function tripDetail(t){
  const tCar=dur(t.tCarga,t.tCargaFin),tDes=dur(t.tDesc,t.tDescFin);
  const fuenteMin=t.minFuente==='tacografo'?'tacógrafo':(t.minFuente==='traza'?(t.coherente===false?'movimiento de la traza (el tacógrafo del localizador no vale)':'movimiento de la traza'):null);
  const tipo=({banera:'áridos (bañera)',hormigonera:'hormigón (hormigonera)',nacional:'nacional'})[t.tipo]||t.tipo||(t.horm?'hormigón':null);
+ // El albarán que repite el lugar de carga como destino (hormigón: la obra no tiene código) no dice dónde se descarga: ni
+ // «Sabón → Sabón» como si lo fuera ni «0,0 km en línea recta» (Roberto 26/09). El sitio que ve el GPS está en el mapa del día.
+ const mismoLugar=!!t.carga&&t.carga!=='—'&&norm(t.carga)===norm(t.descarga);
+ const sinClas=t.km&&t.kmCarg!=null&&t.kmVac!=null?Math.round((t.km-t.kmCarg-t.kmVac)*10)/10:null;
  return `<div class="tripdetail">
   ${grp(`${esc(t.emp||'')}${t.viaje?' · viaje GesRuta '+esc(t.viaje):''}${t.cantera?' · albarán de cantera '+esc(t.cantera):''} · ${esc(t.cliente||'')}${tipo?' · '+esc(tipo):''}${t.larga?' · largo recorrido':''}${t.sub?' · subcontratado':''}${t.espejo?' · espejo intercompañía (medido en la otra casa)':''}`)}
-  ${row('Lugar de carga',lugar(t.carga,t.locO))}${row('Lugar de descarga',lugar(t.descarga,t.locD))}
+  ${row('Carga, según el albarán',lugar(t.carga,t.locO))}${row('Descarga, según el albarán',mismoLugar?'<small>el albarán repite el lugar de carga: no dice dónde se descargó'+(t.mapaKey?' (el sitio que ve el GPS está en el mapa del día)':'')+'</small>':lugar(t.descarga,t.locD))}
   ${row('Fecha',esc(t.dia||'')+(t.fechaGes&&t.fechaGes!==t.dia?' <small>(en el albarán: '+esc(t.fechaGes)+')</small>':''))}
   ${row('Matrícula',esc(t.mat))}
   ${row('Chofer',(t.chofer?'tacógrafo '+esc(t.chofer):'')+(t.choferGes?(t.chofer?' · ':'')+'albarán '+esc(t.choferGes):'')+(t.choferOk===false?' <small>(no coinciden)</small>':''))}
@@ -636,8 +640,8 @@ function tripDetail(t){
   ${row('Duración',t.horas!=null?nf(t.horas,1)+' h de trabajo'+(t.transc!=null&&Math.abs(t.transc-t.horas*60)>5?' · '+nf(t.transc)+' min transcurridos (con descansos)':''):null)}
   ${row('Conductor',t.cond!=null?nf(t.cond)+' min conduciendo · '+nf(t.espera)+' min parado o esperando'+(t.otros!=null?' · otros trabajos '+nf(t.otros):'')+(t.disp!=null?' · disponible '+nf(t.disp):'')+(t.desc!=null?' · descanso '+nf(t.desc):'')+(t.sinDato?' · sin dato '+nf(t.sinDato):'')+(fuenteMin?' <small>(fuente: '+fuenteMin+')</small>':''):null)}
   ${grp('Kilómetros y combustible')}
-  ${row('Km del localizador',t.km?nf(t.km)+' km'+(t.kmCarg!=null?' · cargado '+nf(t.kmCarg)+' · en vacío '+nf(t.kmVac):'')+(t.kmFuente?' <small>('+esc(t.kmFuente==='can_mileage'?'contador CAN del camión':t.kmFuente)+')</small>':''):null)}
-  ${row('Km del albarán',t.kmAlb?nf(t.kmAlb)+' km':null)}${row('Distancia origen–destino',t.distOd!=null?nf(t.distOd,1)+' km en línea recta':null)}
+  ${row('Km recorridos (localizador)',t.km?nf(t.km,1)+' km'+(t.kmCarg!=null?' · cargado '+nf(t.kmCarg,1)+' · en vacío '+nf(t.kmVac,1)+(sinClas>=0.1?' · sin clasificar '+nf(sinClas,1):sinClas<=-0.1?' · <small>cargado + vacío superan el total en '+nf(-sinClas,1)+'</small>':''):'')+(t.kmFuente?' <small>('+esc(t.kmFuente==='can_mileage'?'contador CAN del camión':t.kmFuente)+')</small>':''):null)}
+  ${row('Km del albarán',t.kmAlb?nf(t.kmAlb)+' km':null)}${row('Entre los lugares del albarán',!mismoLugar&&t.distOd>=0.05?nf(t.distOd,1)+' km en línea recta <small>(no es lo recorrido)</small>':null)}
   ${row('Combustible',t.lit?nf(t.lit,1)+' L'+(l100?' · '+l100:'')+(t.litC!=null?' · cargado '+nf(t.litC,1)+' L · en vacío '+nf(t.litV||0,1)+' L':'')+(t.litRaw!=null&&t.litCal!=null&&Math.abs(t.litRaw-t.litCal)>0.5?' <small>(contador '+nf(t.litRaw,1)+' L · calibrado '+nf(t.litCal,1)+' L)</small>':''):null)}
   ${grp('Carga y dinero')}
   ${row('Carga transportada',carga)}
@@ -645,7 +649,7 @@ function tripDetail(t){
   ${costes}
   ${grp('Fiabilidad de la medida')}
   ${row('Medida',esc(t.fiab)+(t.metodo?' · método '+esc(t.metodo)+(t.conf?' · confianza '+esc(t.conf):''):'')+(t.motivo?' · '+esc(t.motivo):'')+(t.costeEstimado?' · <small>coste estimado: se usan parámetros de referencia; consulte sus fuentes</small>':''))}
-  ${t.paradas&&t.paradas.length?`<div class="grp">Paradas y esperas del viaje (≥ 5 min): ${t.paradas.map(p=>`<span class="stop ${esc(p.rol)}">${esc(p.t)} · ${nf(p.min)} min · ${esc(p.lugar||'lugar no conocido')} <small>${({carga:'cargando',descarga:'descargando',espera:'espera',fuera:'fuera de viaje'})[p.rol]||''}</small></span>`).join('')}</div>`:''}
+  ${t.paradas&&t.paradas.length?`<div class="grp">Paradas y esperas del viaje (≥ 5 min): ${t.paradas.map(p=>`<span class="stop ${esc(p.rol)}">${esc(p.t)} · ${nf(p.min)} min · ${esc(p.rol==='descarga'&&mismoLugar?'sitio en el mapa del día (el albarán no lo dice)':(p.lugar||'lugar no conocido'))} <small>${({carga:'cargando',descarga:'descargando',espera:'espera',fuera:'fuera de viaje'})[p.rol]||''}</small></span>`).join('')}</div>`:''}
   ${t.mapaKey?`<div><span class="k">Mapa del día</span><a class="v noprint" href="dias/${encodeURIComponent(t.mapaKey)}.html${t.orden?'#v='+t.orden:''}" target="_blank" rel="noopener">ver la traza, las paradas y las esperas ↗</a></div>`:''}
  </div>`;
 }
