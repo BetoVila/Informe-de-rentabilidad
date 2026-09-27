@@ -243,14 +243,16 @@ def clasificar_unidad(um, cod, con):
     return ""  # PORTES NACIONALES (P), OBRA UTE ARZUA, incrementos... unidad sin verificar: no se suma
 
 
-# COMPLEMENTO = linea que se cobra sin carga fisica propia: su coste ya va en las cargas del viaje. Lista de Tarifas
-# (extraer_muestra_tarifas.COMPLEMENTO_KW: minimos, horas extra, dietas, esperas, festivos, facturacion minima...) mas lo que
-# aparece en 2026 en lineas sin unidad que Tarifas no lee (27/09: «COMPLEMENTOS», «CLAUSULA COMBUSTIBLE», «DESCARGA
-# ADICIONAL», «REGULARIZACION», «EXTRAS»...). La misma lista va en scripts/economic-activity.mjs (lineas de factura).
+# COMPLEMENTO = linea que se cobra sin carga fisica propia: su coste ya va en las cargas del viaje. Lista unificada con
+# Tarifas el 27/09/2026 (extraer_muestra_tarifas.COMPLEMENTO_KW, commit d8e1a70) mas lo que aparece en 2026 en lineas sin
+# unidad que Tarifas no lee («COMPLEMENTOS», «CLAUSULA COMBUSTIBLE», «DESCARGA ADICIONAL», «REGULARIZACION», «EXTRAS»...).
+# «ABONO» a secas atrapaba «TRANSPORTE DE ABONO ORGANICO» (abono = fertilizante, una carga real): las dos frases de abajo
+# son las que usa y prueba Tarifas (test_datos_reales). «AUTOPISTA» a secas incluye «GASTOS AUTOPISTA» y el error de
+# tecleo «GSATOS AUTOPISTAS». La misma lista va en scripts/economic-activity.mjs (lineas de factura).
 COMPLEMENTO_KW = ("MINIMO", "HORA EXTRA", "HORAS EXTRA", "H. EXTRA", "H EXTRA", "INCREMENTO", "COMIDA", "DIETA", "DESPLAZAM",
-                  "ESPERA", "DEMORA", "PARALIZAC", "SUPLEM", "FESTIVO", "FACTURACION MINIMA", "ABONO",
+                  "ESPERA", "DEMORA", "PARALIZAC", "SUPLEM", "FESTIVO", "FACTURACION MINIMA", "ABONO POR ERROR", "ABONO GASOIL",
                   "COMPLEMENT", "COMPLEMETO", "CLAUSULA", "REVISION CLAUSULA", "REVISON", "REGULARIZACION", "DESCARGA ADICIONAL",
-                  "EXTRAS", "GASTOS AUTOPISTA", "DIFERENCIA")
+                  "EXTRAS", "AUTOPISTA", "DIFERENCIA", "COMBUSTIBLE", "PEAJE", "COMISION")
 
 
 def es_complemento(con):

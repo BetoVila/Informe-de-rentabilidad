@@ -74,9 +74,13 @@ export function reconcileActivity(activity, invoices, costs){
 }
 // COMPLEMENTO / AJUSTE = se cobra sin carga fisica propia. Misma lista que export_rentabilidad_gesruta_actividad_v1.py (lineas de
 // albaran) y que extraer_muestra_tarifas.COMPLEMENTO_KW (Tarifas), mas lo visto en 2026 en lineas sin unidad.
+// Lista unificada con Tarifas el 27/09/2026 (extraer_muestra_tarifas.COMPLEMENTO_KW, commit d8e1a70): «ABONO» a secas
+// atrapaba «TRANSPORTE DE ABONO ORGANICO» (abono = fertilizante, una carga real, no un abono/devolucion); Tarifas ya
+// lo protege con test_datos_reales usando las dos frases especificas de abajo. «AUTOPISTA» a secas (antes «GASTOS
+// AUTOPISTA») incluye tambien «GSATOS AUTOPISTAS» (error de tecleo) y «AUTOPISTA» sola.
 const COMPLEMENTO_KW=['MINIMO','HORA EXTRA','HORAS EXTRA','H. EXTRA','H EXTRA','INCREMENTO','COMIDA','DIETA','DESPLAZAM','ESPERA','DEMORA',
-  'PARALIZAC','SUPLEM','FESTIVO','FACTURACION MINIMA','ABONO','COMPLEMENT','COMPLEMETO','CLAUSULA','REVISION CLAUSULA','REVISON',
-  'REGULARIZACION','DESCARGA ADICIONAL','EXTRAS','GASTOS AUTOPISTA','DIFERENCIA'];
+  'PARALIZAC','SUPLEM','FESTIVO','FACTURACION MINIMA','ABONO POR ERROR','ABONO GASOIL','COMPLEMENT','COMPLEMETO','CLAUSULA','REVISION CLAUSULA','REVISON',
+  'REGULARIZACION','DESCARGA ADICIONAL','EXTRAS','AUTOPISTA','DIFERENCIA','COMBUSTIBLE','PEAJE','COMISION'];
 const sinTildes=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ');
 export const esComplemento=texto=>{const c=sinTildes(texto);return COMPLEMENTO_KW.some(k=>c.includes(k));};
 const COMPONENTES=['gasoil','conductor','material','subcontrata','peajes','vertedero','otros_albaran','otros_vehiculo','estructura'];
