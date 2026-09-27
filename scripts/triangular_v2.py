@@ -1562,6 +1562,30 @@ def cargar_ancla(ruta):
     return out
 
 
+def clasificar_motor_por_dia(dem):
+    """Que motor le toca a cada carga: por el DIA del camion (Roberto 28/09/2026: «tienes que diferenciar por la carga, lo
+    que es arido y lo que es hormigon»), no por el camion entero. Cada linea de dem ya trae su propio "horm" (UNIMED=='M3'
+    o CODCON empieza por 'K', demanda_triangular_v2.py); se agrupa por (matricula, dia) porque los dos motores (hormigon y
+    aridos) cortan ciclos sobre la MISMA traza GPS de ese dia y no se puede partir una jornada entre los dos: la MAYORIA de
+    las cargas de ESE DIA de ESE camion decide el motor del dia entero (no el historico completo del camion). Devuelve
+    (dia_hormigon, es_hormigonera): dia_hormigon = claves (matricula, dia) que van por el motor de hormigon; es_hormigonera
+    = matriculas cuya mayoria HISTORICA es hormigon, solo para el hallazgo informativo "tipo de vehiculo" — no decide el
+    motor de ninguna carga."""
+    n_h, n_t = collections.Counter(), collections.Counter()
+    for t in dem:
+        n_t[(t["mat"], t["dia"])] += 1
+        if t.get("horm"):
+            n_h[(t["mat"], t["dia"])] += 1
+    dia_hormigon = {k for k in n_t if k[0] and n_h[k] / n_t[k] >= 0.5}
+    n_h_mat, n_t_mat = collections.Counter(), collections.Counter()
+    for t in dem:
+        n_t_mat[t["mat"]] += 1
+        if t.get("horm"):
+            n_h_mat[t["mat"]] += 1
+    es_hormigonera = {m for m in n_t_mat if m and n_h_mat[m] / n_t_mat[m] >= 0.5}
+    return dia_hormigon, es_hormigonera
+
+
 # ---------------------------------------------------------------- principal
 def main():
     global DWELL_S
@@ -1667,14 +1691,7 @@ def main():
     def dist_od(t):
         co, cd = coords.get((t["c"], t["o"])), coords.get((t["c"], t["d"]))
         return v1.hav((co["lat"], co["lon"]), (cd["lat"], cd["lon"])) if co and cd else None
-    # camion cuya MAYORIA de cargas es hormigon = hormigonera: TODOS sus dias van por la pasada de hormigon (si no, una linea de
-    # porte o de mortero del mismo dia iria por la maquina de aridos y cortaria ciclos sobre la misma jornada: doble conteo)
-    n_h, n_t = collections.Counter(), collections.Counter()
-    for t in dem:
-        n_t[t["mat"]] += 1
-        if t.get("horm"):
-            n_h[t["mat"]] += 1
-    es_hormigonera = {m for m in n_t if m and n_h[m] / n_t[m] >= 0.5}
+    dia_hormigon, es_hormigonera = clasificar_motor_por_dia(dem)
     por_dia = collections.defaultdict(list)
     horm_dia = collections.defaultdict(list)          # hormigon: su propia pasada (plantas aprendidas), no la maquina de aridos
     for idx, t in enumerate(dem):
@@ -1685,7 +1702,7 @@ def main():
         t["dist_od"] = round(d, 1) if d is not None else None
         # LARGO = por DISTANCIA. «nacional» en GesRuta es el tipo de servicio (portes), no la distancia: hay portes de 30 km
         # que caben en una jornada y van por la maquina de ciclos como los aridos.
-        es_h = bool(t.get("horm")) or t["mat"] in es_hormigonera
+        es_h = (t["mat"], t["dia"]) in dia_hormigon
         t["larga"] = (not es_h) and d is not None and d >= LARGA_KM
         (horm_dia if es_h else por_dia)[(t["mat"], t["dia"])].append(idx)
     # ESPEJOS intercompania: el mismo porte fisico sale en Razo y en Agetrans (Agetrans lo vende y se lo subcontrata a Razo):

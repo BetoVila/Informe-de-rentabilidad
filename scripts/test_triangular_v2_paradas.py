@@ -58,6 +58,37 @@ class TestJornadaNoArrancaEnElHueco(unittest.TestCase):
         self.assertTrue(all(p['t_out'] - p['t_in'] < 8 * 3600 for j in jor for p in j['paradas']))
 
 
+class TestMotorPorCargaNoPorCamion(unittest.TestCase):
+    # Roberto 28/09/2026: «tienes que diferenciar por la carga, lo que es arido y lo que es hormigon», no por el camion
+    # entero. Caso real que motivo el cambio: 6081FHD es hormigonera (73% de sus cargas historicas), pero una carga suelta
+    # de aridos a otra planta (viaje 00024326, cantera 5063) le salia con el "obra" del motor de hormigon fabricado.
+    def ticket(self, mat, dia, horm):
+        return {"mat": mat, "dia": dia, "horm": horm}
+
+    def test_dia_de_aridos_de_un_camion_mayoritariamente_hormigonera_va_por_aridos(self):
+        dem = ([self.ticket("6081FHD", "2026-01-05", True)] * 9 + [self.ticket("6081FHD", "2026-01-05", False)] * 3
+               + [self.ticket("6081FHD", "2026-06-10", False)])
+        dia_hormigon, es_hormigonera = t2.clasificar_motor_por_dia(dem)
+        self.assertIn("6081FHD", es_hormigonera, "el camion sigue siendo hormigonera en su historico (9 de 13, 69%)")
+        self.assertIn(("6081FHD", "2026-01-05"), dia_hormigon, "ese dia concreto tambien es mayoria hormigon (9 de 12)")
+        self.assertNotIn(("6081FHD", "2026-06-10"), dia_hormigon,
+                          "el dia suelto de aridos (100% arido ese dia) ya NO va por el motor de hormigon")
+
+    def test_dia_mayoria_aridos_de_camion_hormigonera_va_por_aridos_aunque_el_historico_sea_hormigon(self):
+        dem = [self.ticket("6081FHD", "2026-02-02", True)] * 8 + [self.ticket("6081FHD", "2026-02-02", False)] * 2
+        dia_hormigon, es_hormigonera = t2.clasificar_motor_por_dia(dem)
+        self.assertIn("6081FHD", es_hormigonera)
+        self.assertIn(("6081FHD", "2026-02-02"), dia_hormigon, "ese dia es 80% hormigon: sigue yendo por hormigon")
+
+    def test_camion_mayoria_aridos_con_un_dia_de_hormigon_va_ese_dia_por_hormigon(self):
+        dem = ([self.ticket("2839FKP", "2026-03-01", False)] * 20
+               + [self.ticket("2839FKP", "2026-03-15", True)] * 2)
+        dia_hormigon, es_hormigonera = t2.clasificar_motor_por_dia(dem)
+        self.assertNotIn("2839FKP", es_hormigonera, "camion basicamente de aridos (20 de 22, 91%)")
+        self.assertNotIn(("2839FKP", "2026-03-01"), dia_hormigon)
+        self.assertIn(("2839FKP", "2026-03-15"), dia_hormigon, "el dia suelto de hormigon va por su motor aunque el camion no sea hormigonera")
+
+
 class TestRotuloCargaDescarga(unittest.TestCase):
     coords = {('Razo', 'SABO'): {'lat': 43.0, 'lon': -8.0, 'fuente': 'gesruta'}}
 
