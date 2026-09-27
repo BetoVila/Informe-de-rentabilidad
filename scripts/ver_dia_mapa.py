@@ -12,7 +12,8 @@ La carga y la descarga se rotulan por lo que VE EL GPS: el lugar del albaran sol
 el lugar conocido mas cercano y a cuantos km queda lo que dice el albaran. Si el albaran repite el lugar de carga como
 destino (hormigon: la obra no tiene codigo) no se compara con el destino: se da el sitio del GPS y su distancia a la carga.
 Sin señal: 30 min o mas sin posicion (parado, Wialon da una cada 1-5 min y Locatel cada 5-16) no es una parada; las
-paradas de triangular_v2 que lo cruzan se parten y el hueco sale aparte. Las paradas que siguen tras el dia se recortan.
+paradas que lo cruzan se parten y el hueco sale aparte (un salto de sitio sin hueco no parte: es ruido del GPS). Las
+paradas que siguen tras el dia se recortan.
 Export de trazas (--export-trazas <fichero .jsonl.gz>, con --todos): una linea JSON por viaje MEDIDO con su clave
 (empresa, viaje, cantera), tiempos, posiciones de carga y descarga, km/litros/minutos y el recorrido real simplificado
 («ciclo» entero y tramo «cargado» de la salida de carga a la llegada a descarga), para las apps que dibujan rutas (tarifas,
@@ -33,7 +34,7 @@ RADIO_LUGAR_KM = 0.7
 # 30 min sin posicion = SIN SEÑAL, no parada: un camion parado da posicion cada 1-5 min en Wialon (p99 5,6 min, enero 2026)
 # y cada 5-16 min en Locatel (contando la parada que trae en un punto); huecos de 30 min o mas: 0,15 % y 0,01 %.
 HUECO_S = 1800
-SALTO_KM = t2.HUB_EPS_KM                    # dos puntos parados a mas de 350 m no son la misma parada
+SALTO_KM = t2.HUB_EPS_KM                    # tras un hueco sin señal, reaparecer a mas de 350 m = se movio sin señal
 # «Como se lee esta pagina» (plegable). Cargado/vacio/resto segun triangular_v2.medir_ciclo (+ la vuelta de la obra en hormigon).
 AYUDA = [
     "Carga y descarga: la hora y el sitio son los que ve el GPS. Se pone el nombre del albarán solo si la parada cae en su sitio; si no, el lugar conocido más cercano y a cuántos km queda lo que dice el albarán.",
@@ -196,18 +197,20 @@ class Lugares:
 
 
 def partir_parada(p, pts, ts):
-    """Una parada de triangular_v2 partida por los huecos SIN SEÑAL (>= HUECO_S sin posicion) y por los saltos de sitio
-    (> SALTO_KM) que haya dentro: triangular_v2 junta puntos parados aunque entre ellos pasen dias sin señal (1895CNR el
-    09/01/2026: «17:22 -> 16/01 08:47, 9.565 min» y situada en Bertoa, cuando el ultimo punto del 9 esta en Sabon a las
-    19:39 y el siguiente aparece el 16 a 17,5 km). Devuelve [(t_in, t_out, lat, lon)]: la parada tal cual si no hay cortes;
-    si los hay, los trozos de DWELL_S o mas con la mediana de sus puntos. Las paradas de Locatel (un punto) van tal cual."""
+    """Una parada partida por los huecos SIN SEÑAL (>= HUECO_S sin posicion) que haya dentro: triangular_v2 juntaba puntos
+    parados aunque entre ellos pasaran dias sin señal (1895CNR el 09/01/2026: «17:22 -> 16/01 08:47, 9.565 min» y situada en
+    Bertoa, cuando el ultimo punto del 9 esta en Sabon a las 19:49 y el siguiente aparece el 16 a 17,5 km). Desde 7f4addb
+    ya las corta el; aqui se repite para los triangulados anteriores. NO se corta por un salto de sitio sin hueco: casi
+    siempre es ruido del GPS (5003MBV oscila entre 0,4 y 5 km parado) y troceaba paradas reales en trozos de 1 min.
+    Devuelve [(t_in, t_out, lat, lon)]: la parada tal cual si no hay cortes; si los hay, los trozos de DWELL_S o mas con la
+    mediana de sus puntos. Las paradas de Locatel (un punto) van tal cual."""
     i0, i1 = bisect.bisect_left(ts, p["t_in"]), bisect.bisect_right(ts, p["t_out"])
     grupo = [q for q in pts[i0:i1] if q.get("f") != "locatel"]
     if len(grupo) < 2:
         return [(p["t_in"], p["t_out"], p["lat"], p["lon"])]
     trozos, cur = [], [grupo[0]]
     for a_, b_ in zip(grupo, grupo[1:]):
-        if b_["t"] - a_["t"] >= HUECO_S or t2.v1.hav((a_["lat"], a_["lon"]), (b_["lat"], b_["lon"])) > SALTO_KM:
+        if b_["t"] - a_["t"] >= HUECO_S:
             trozos.append(cur)
             cur = [b_]
         else:
