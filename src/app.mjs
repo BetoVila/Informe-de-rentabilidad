@@ -1243,7 +1243,7 @@ function transporteResumen(){
  return calidad+`<div class="fgrid2" style="margin-bottom:12px"><section class="fcard"><h3>El transporte mes a mes <small>ingreso de facturas y coste calculado (sin material); margen solo con coste completo</small></h3>${mesesSVG(rvM.groups)}</section><section class="fcard"><h3>Por tipo de servicio <small>margen calculado y % sobre ingreso; «—» = coste incompleto</small></h3>${tiposHtml}</section></div>`;
 }
 // ---------- pestañas con subapartados (las 13 de antes caben en una línea) ----------
-const TAB_GROUPS={summary:['summary','actividad'],audit:['audit','expenses','invoices','parts']},SUB_LABEL={summary:'Resultado',actividad:'Actividad',audit:'Conciliación',expenses:'Gastos documentados',invoices:'Facturas',parts:'Partes y costes'};
+const TAB_GROUPS={summary:['summary','actividad'],audit:['audit','expenses','invoices','parts'],tarifas:['tarifas','tarifasp']},SUB_LABEL={summary:'Resultado',actividad:'Actividad',audit:'Conciliación',expenses:'Gastos documentados',invoices:'Facturas',parts:'Partes y costes',tarifas:'De clientes',tarifasp:'De proveedores'};
 const tabGroupOf=t=>Object.keys(TAB_GROUPS).find(g=>TAB_GROUPS[g].includes(t))||t;
 function renderTabsUI(){
  const g=tabGroupOf(state.tab);
@@ -1256,7 +1256,7 @@ function temaBoton(){const t=$('themeToggle');if(t)t.textContent=temaOscuro()?'T
 function alturaCabecera(){const t=document.querySelector('.topbar');if(t)document.documentElement.style.setProperty('--topbar-h',t.offsetHeight+'px');}
 
 function renderContent(){
- tableDefinition=null;_fichaPost=null;renderTabsUI();$('cards').hidden=state.tab==='expenses';let html='';
+ tableDefinition=null;_fichaPost=null;renderTabsUI();$('cards').hidden=state.tab==='expenses'||state.tab==='tarifas'||state.tab==='tarifasp';let html='';
  if(state.tab==='summary'&&ledgerCtx.ledgerOn){
    const {lv,br,lvBase}=ledgerCtx,op=new Map(M.group(selection,state,'month').groups.map(m=>[m.key,m]));
    const plRows=lv.byMonth.map(m=>({key:m.key,label:monthName(m.key),income:m.income,expenses:m.expenses,result:m.result,marginPct:m.marginPct,marginState:'R',gesruta:op.get(m.key)?.revenue??0,parts:op.get(m.key)?.[state.costMode==='stored'?'rawCost':state.costMode==='recalculated'?'calcCost':'realCost']??0}));
@@ -1284,6 +1284,7 @@ function renderContent(){
  else if(state.tab==='viajes')html=viajesTab();
  else if(state.tab==='mapa')html=mapa();
  else if(state.tab==='hallazgos')html=hallazgosTab();
+ else if(state.tab==='tarifas'||state.tab==='tarifasp')html='<div class="card" id="tarifasRaiz"></div>';
  else html=method();
  $('content').innerHTML=html;drawTable();wireInfo();postFicha();
  if(state.tab==='expenses'){
@@ -1291,6 +1292,7 @@ function renderContent(){
    $('expenseFamily')?.addEventListener('change',e=>{expenseFamily=e.target.value;tableState=freshTable();renderContent();});
  }
  if(state.tab==='mapa')mapaRender();
+ if(state.tab==='tarifas'||state.tab==='tarifasp')tarifasMontar();
  if(state.tab==='client'&&_vistaReal.client==='lista')clienteDetWire();
 }
 let expenseSource='CxConta',expenseFamily='';
@@ -1371,12 +1373,25 @@ function renderSources(){
  $('sources').innerHTML=(D.metadata.sources||[]).map(s=>`<span class="src-pill ${s.state}" title="${esc(s.note+(s.to?' · hasta '+(String(s.to).length===7?monthName(s.to):date(s.to)):''))}">${esc(s.name)} ${label[s.state]||''}</span>`).join('');
  const S=D.metadata.sources||[],ok=S.filter(x=>x.state==='ok').length,sm=$('srcSummary');if(sm)sm.textContent='Fuentes '+ok+' de '+S.length+' · datos hasta '+String(D.metadata.to||'').slice(8,10)+'/'+String(D.metadata.to||'').slice(5,7);
 }
+// ---------- TARIFAS (Roberto 27/09/2026: «las tarifas tienen que ir en la app de rentabilidades») ----------
+// Tarifa de cada cliente y de cada proveedor con 3 años de histórico. La vista y sus datos los publica Tarifas cada noche en su
+// carpeta (P:\_TARIFAS\tarifas: vista.js, indice.js, c/ y p/), la misma que usa «Rentabilidad y tarifas»; aquí solo se monta.
+const TARIFAS_BASE=()=>location.protocol==='file:'?'../_TARIFAS/tarifas/':'../tarifas/tarifas/';
+let _tarifasVista=null;
+function tarifasMontar(){
+ const el=$('tarifasRaiz');if(!el)return;
+ const opc={modo:state.tab==='tarifasp'?'p':'c',base:TARIFAS_BASE(),empresa:state.companies.length===1?state.companies[0]:'Grupo'};
+ if(window.RazoTarifas){window.RazoTarifas.montar(el,opc);return;}
+ el.innerHTML='<p class="sub">Cargando las tarifas…</p>';
+ _tarifasVista=_tarifasVista||new Promise((ok,ko)=>{const sc=document.createElement('script');sc.src=TARIFAS_BASE()+'vista.js?v='+new Date().toISOString().slice(0,10);sc.onload=ok;sc.onerror=()=>{_tarifasVista=null;sc.remove();ko();};document.head.appendChild(sc);});
+ _tarifasVista.then(()=>{if($('tarifasRaiz')===el)window.RazoTarifas.montar(el,opc);}).catch(()=>{if($('tarifasRaiz')===el)el.innerHTML='<div class="alert">No se ven las tarifas. Se publican cada noche en \\\\SERVIDOR\\Programas\\_TARIFAS\\tarifas: compruebe que esa carpeta se abre desde este equipo y vuelva a cargar.</div>';});
+}
 function switchTab(tab){if(tab==='clientedet'){tab='client';_vistaReal.client='lista';}state.tab=tab;tableState=freshTable();renderContent();}
 // DENTRO DE «RENTABILIDAD Y TARIFAS» (Roberto 26/09/2026: una sola app, sin duplicados). informe.html?embebido=1 oculta la marca y la
 // pestaña «Viajes» (esta en Tarifas: «Viajes por vehiculo y dia», medida por la tractora) y manda alli los enlaces a viajes;
 // informe.html#tab=plate (o client, summary, audit, mapa, hallazgos, personal, method, actividad...) abre esa pestaña.
 const EMBEBIDO=new URLSearchParams(location.search).get('embebido')==='1'&&window.parent!==window;
-const TABS_OK=new Set(['summary','plate','client','invoices','parts','audit','expenses','personal','actividad','viajes','mapa','hallazgos','method']);
+const TABS_OK=new Set(['summary','plate','client','invoices','parts','audit','expenses','personal','actividad','viajes','mapa','hallazgos','method','tarifas','tarifasp']);
 function aTarifasViajes(q){try{window.parent.postMessage({razo:'verviajes',q:String(q||'')},'*');}catch(e){}}
 function tabDeLaDireccion(){const m=/(?:^#|&)tab=([a-z]+)/.exec(location.hash||'');const t=m&&m[1];
  if(!t||!TABS_OK.has(t)||t===state.tab)return;if(EMBEBIDO&&t==='viajes'){aTarifasViajes('');return;}switchTab(t);}
@@ -1456,7 +1471,8 @@ async function boot(){
  $('reloadReport').onclick=()=>location.reload();
  $('quick').innerHTML='<option value="">elige…</option>'+quickPeriods(D.metadata.from,D.metadata.to).map(r=>`<option value="${r.from}|${r.to}">${esc(r.label)}</option>`).join('');
  makeSlicers();bind();temaBoton();update();alturaCabecera();addEventListener('resize',alturaCabecera);
- if(EMBEBIDO){document.body.classList.add('embebido');$('viajesTab').hidden=true;
+ if(EMBEBIDO){document.body.classList.add('embebido');$('viajesTab').hidden=true;$('tarifasTab').hidden=true;   // dentro de «Rentabilidad y tarifas» las tarifas tienen sus pestañas
+ 
   document.head.insertAdjacentHTML('beforeend','<style>body.embebido .topbar .brand{display:none}</style>');alturaCabecera();}
  tabDeLaDireccion();addEventListener('hashchange',tabDeLaDireccion);
 }
