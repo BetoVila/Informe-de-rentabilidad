@@ -609,6 +609,16 @@ function hallazgosTab(){
  'dias'),numberCol('Visitas','visitas')],Object.entries(H.plantas_aprendidas||{}).map(([k,v])=>({cod:k,...v})));
  return html;
 }
+// La factura que cobró la carga (enlazada por la cabecera de su albarán) y si cuadra con las ventas de todas sus cargas.
+function facturaTxt(t){
+ const F=(D.actividad&&D.actividad.facturas)||{},num=f=>esc(String(f).split('|').pop()),dia=s=>s?' del '+esc(s.split('-').reverse().join('/')):'';
+ if(t.enlaceIngreso==='ajuste_factura')return (t.facturas||[]).map(({f,fecha})=>{const x=F[f];return 'diferencia de la factura '+num(f)+dia(fecha)+' con las ventas de sus cargas'+(x?' <small>(factura '+eur(x[2])+' · '+nf(x[0])+' cargas '+eur(x[1])+')</small>':'')+': no se atribuye a ninguna carga';}).join('<br>')||null;
+ if(t.enlaceIngreso==='factura_sin_cargas')return (t.facturas||[]).map(({f,fecha})=>'línea de la factura '+num(f)+dia(fecha)+' sin carga en los albaranes').join('<br>')||null;
+ if(t.enlaceIngreso==='sin_factura_leida')return '<small>su factura queda fuera del periodo leído: la venta no se cuenta como ingreso</small>';
+ return (t.facturas||[]).map(({f,fecha})=>{const x=F[f];if(!x)return num(f)+dia(fecha);
+  const cuadra=Math.abs(x[2]-x[1])<.005;
+  return num(f)+dia(fecha)+(cuadra?' <small>· cuadra con las ventas de sus '+nf(x[0])+' cargas ('+eur(x[2])+')</small>':' <small>· la factura suma '+eur(x[2])+' y sus '+nf(x[0])+' cargas '+eur(x[1])+': la diferencia ('+eur(x[2]-x[1])+') va aparte, sin repartir</small>');}).join('<br>')||null;
+}
 // Detalle de un viaje (fila desplegada de «Margen por registro»): lo que sabemos de ese viaje concreto, sin inventar nada.
 function tripDetail(t){
  const row=(k,v)=>v==null||v===''||v==='—'?'':`<div><span class="k">${k}</span><span class="v">${v}</span></div>`;
@@ -645,7 +655,9 @@ function tripDetail(t){
   ${row('Combustible',t.lit?nf(t.lit,1)+' L'+(l100?' · '+l100:'')+(t.litC!=null?' · cargado '+nf(t.litC,1)+' L · en vacío '+nf(t.litV||0,1)+' L':'')+(t.litRaw!=null&&t.litCal!=null&&Math.abs(t.litRaw-t.litCal)>0.5?' <small>(contador '+nf(t.litRaw,1)+' L · calibrado '+nf(t.litCal,1)+' L)</small>':''):null)}
   ${grp('Carga y dinero')}
   ${row('Carga transportada',carga)}
-  ${row('Resultado','ingreso '+eur(t.ingreso)+' − coste real '+eur(t.coste)+' = <b class="'+(t.margen>=0?'pos':'neg')+'">'+eur(t.margen)+'</b> ('+pcm(t.margenPct)+')')}
+  ${row('Venta del albarán',t.ventaAlbaran!=null&&!t.soloFactura?eur(t.ventaAlbaran)+' <small>(sus líneas de albarán)</small>':null)}
+  ${row('Factura',facturaTxt(t))}
+  ${row('Resultado','ingreso '+eur(t.ingreso)+' − coste imputado '+eur(t.coste)+' = <b class="'+(t.margen>=0?'pos':'neg')+'">'+eur(t.margen)+'</b> ('+pcm(t.margenPct)+')')}
   ${costes}
   ${grp('Fiabilidad de la medida')}
   ${row('Medida',esc(t.fiab)+(t.metodo?' · método '+esc(t.metodo)+(t.conf?' · confianza '+esc(t.conf):''):'')+(t.motivo?' · '+esc(t.motivo):'')+(t.costeEstimado?' · <small>coste estimado: se usan parámetros de referencia; consulte sus fuentes</small>':''))}

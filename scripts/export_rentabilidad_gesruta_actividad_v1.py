@@ -311,6 +311,9 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
     # fecha de servicio + cliente + FACTURADO (el albaran lleva su nº de factura, serie y fecha) por (viaje, albaran).
     # El INGRESO se ancla a lo FACTURADO (albaran con NUMFAC): cuadra con la facturacion de GesRuta y la contabilidad.
     # Un albaran sin NUMFAC es trabajo ENTREGADO PENDIENTE DE FACTURAR (del año en curso): no se cuenta todavia.
+    # La FACTURA que lo cobro (SERIE + NUMFAC, la misma clave «empresa|serie-numero» que export_rentabilidad_gesruta_v3)
+    # enlaza cada carga con su factura sin adivinar: la factura agrupa las cargas del mes por tarifa y su «albaran» de
+    # linea no identifica la carga (26/09/2026: 26-24 = 136 cargas de 53 viajes en 5 lineas).
     alb = abrir(base, "albara.dbf")
     cab = {}
     for r in alb.registros():
@@ -318,9 +321,15 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
         if v is None or n is None:
             continue
         cod = (alb.get(r, "CLIENT") or "").strip()
+        numfac = alb.get(r, "NUMFAC")
+        try:
+            numfac = int(float(numfac)) if str(numfac or "").strip() else 0
+        except ValueError:
+            numfac = 0
         cab[(str(v), str(n))] = {"fecha": alb.get(r, "DESDEF") or alb.get(r, "FECHA"),
                                  "cliente": clientes.get(cod, cod),
                                  "facturado": bool(str(alb.get(r, "NUMFAC") or "").strip()),
+                                 "factura": (empresa + "|" + str(alb.get(r, "SERIE") or "").strip() + "-" + str(numfac)) if numfac else "",
                                  "delega": str(alb.get(r, "DELEGACLIE") or "").strip()}
     alb.cerrar()
     # matricula por viaje
@@ -383,7 +392,7 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
                               "op": rprov(o), "ol": rloc(o), "on": rnom(o),
                               "dp": rprov(dest), "dl": rloc(dest), "dn": rnom(dest),
                               "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "impro": 0.0, "horm": False, "nac": not tiene_cantera,
-                              "albaranes": [], "conceptos": []}
+                              "albaranes": [], "conceptos": [], "facturas": {}}
         if a not in t["albaranes"]: t["albaranes"].append(a)
         concepto = str(ln.get(r, "CODCON") or "").strip()
         if concepto not in t["conceptos"]: t["conceptos"].append(concepto)
@@ -393,6 +402,8 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
             impro_excl.append({"empresa": empresa, "viaje": v, "albaran": a, "impro": round(impro_val), "importe": round(imp_val), "cliente": (c["cliente"] if c else "")})
             impro_val = 0
         t["imp"] += imp_val
+        f_ = c.get("factura") or ""                # venta de la carga en CADA factura (una carga casi siempre va en una)
+        t["facturas"][f_] = t["facturas"].get(f_, 0.0) + imp_val
         t["impro"] += impro_val
         cr = ln.get(r, "CANTIDREAL") or ln.get(r, "CANTID") or 0
         if unidad == "m3":
@@ -551,6 +562,7 @@ def main():
             t["chg"] = tr.get("chofer_gesruta"); t["chok"] = tr.get("chofer_coincide"); t["tipo"] = tr.get("tipo")
             t["larga"] = bool(tr.get("larga_distancia")); t["esp"] = bool(tr.get("espejo_de"))
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
+        t["facturas"] = [[f_, round(v_, 2)] for f_, v_ in t["facturas"].items()]   # [[«empresa|serie-numero», venta]]
     # Coordenadas por NOMBRE de punto (planta/cantera/obra), para el MAPA: el informe agrega los viajes del periodo
     # elegido por su punto de origen/destino y une aqui la coordenada del localizador (paradas GPS de la flota).
     coords = {}

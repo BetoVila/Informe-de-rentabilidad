@@ -458,6 +458,10 @@ export function createModel(data) {
         // 35..63: todo el detalle del viaje (hitos, minutos por actividad, litros, fuentes, jornada, identidad)
         if(r.length>=64){x.tCarga=r[35]||null;x.tCargaFin=r[36]||null;x.tDesc=r[37]||null;x.tDescFin=r[38]||null;x.disp=r[39];x.desc=r[40];x.sinDato=r[41];x.minFuente=(A.mfu&&A.mfu[r[42]])||null;x.coherente=r[43]==null?null:!!r[43];x.transc=r[44];x.litC=r[45];x.litV=r[46];x.distOd=r[47];x.obraMin=r[48];x.viajesDia=r[49];x.motivo=(A.mot&&A.mot[r[50]])||null;x.fechaGes=(A.dia&&A.dia[r[51]])||null;x.choferGes=(A.chot&&A.chot[r[52]])||null;x.choferOk=r[53]==null?null:!!r[53];x.tipo=r.economicType||(A.tipo&&A.tipo[r[54]])||null;x.larga=!!r[55];x.espejo=!!r[56];x.jIni=r[57]||null;x.jFin=r[58]||null;x.kmFuente=(A.kmf&&A.kmf[r[59]])||null;x.litRaw=r[60];x.litCal=r[61];x.viaje=r[62]||null;x.cantera=r[63]||null;}
         x.kmAlb=r[8]||0;}
+      // 67..68: VENTA del albaran de la carga (sus lineas de albaran; la parte de este grupo si la factura mezcla servicios) y
+      // como se enlazo con la factura que la cobro (por la cabecera del albaran). Sus facturas, de sus lineas de ingreso.
+      x.ventaAlbaran=r[67]==null?null:Math.round(r[67]*(r.costShare??1)*100)/100;x.enlaceIngreso=r[68]||null;x.soloFactura=!!r[66];
+      {const fs=new Map();for(const l of r[64]||[])if(l.invoice&&!fs.has(l.invoice))fs.set(l.invoice,l.invoiceDate||null);x.facturas=[...fs].map(([f,fecha])=>({f,fecha}));}
       x.cicloId=r.cicloId;x.fisica=r.fisica;
       return x;});
   }
