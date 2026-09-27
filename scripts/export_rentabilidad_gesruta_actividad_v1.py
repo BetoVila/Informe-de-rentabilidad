@@ -243,6 +243,23 @@ def clasificar_unidad(um, cod, con):
     return ""  # PORTES NACIONALES (P), OBRA UTE ARZUA, incrementos... unidad sin verificar: no se suma
 
 
+# COMPLEMENTO = linea que se cobra sin carga fisica propia: su coste ya va en las cargas del viaje. Lista de Tarifas
+# (extraer_muestra_tarifas.COMPLEMENTO_KW: minimos, horas extra, dietas, esperas, festivos, facturacion minima...) mas lo que
+# aparece en 2026 en lineas sin unidad que Tarifas no lee (27/09: «COMPLEMENTOS», «CLAUSULA COMBUSTIBLE», «DESCARGA
+# ADICIONAL», «REGULARIZACION», «EXTRAS»...). La misma lista va en scripts/economic-activity.mjs (lineas de factura).
+COMPLEMENTO_KW = ("MINIMO", "HORA EXTRA", "HORAS EXTRA", "H. EXTRA", "H EXTRA", "INCREMENTO", "COMIDA", "DIETA", "DESPLAZAM",
+                  "ESPERA", "DEMORA", "PARALIZAC", "SUPLEM", "FESTIVO", "FACTURACION MINIMA", "ABONO",
+                  "COMPLEMENT", "COMPLEMETO", "CLAUSULA", "REVISION CLAUSULA", "REVISON", "REGULARIZACION", "DESCARGA ADICIONAL",
+                  "EXTRAS", "GASTOS AUTOPISTA", "DIFERENCIA")
+
+
+def es_complemento(con):
+    import unicodedata
+    c = "".join(ch for ch in unicodedata.normalize("NFD", (con or "").upper()) if unicodedata.category(ch) != "Mn")
+    c = " ".join(c.split())
+    return any(k in c for k in COMPLEMENTO_KW)
+
+
 def cat_gasto(con):
     # Categoria de un gasto de inggas por su CONCEPTO (unica senal fiable; CODCUENTA/PROTRAN van vacios).
     c = (con or "").strip().upper()
@@ -392,10 +409,12 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
                               "op": rprov(o), "ol": rloc(o), "on": rnom(o),
                               "dp": rprov(dest), "dl": rloc(dest), "dn": rnom(dest),
                               "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "impro": 0.0, "horm": False, "nac": not tiene_cantera,
-                              "albaranes": [], "conceptos": [], "facturas": {}}
+                              "albaranes": [], "conceptos": [], "facturas": {}, "n_lineas": 0, "n_compl": 0}
         if a not in t["albaranes"]: t["albaranes"].append(a)
         concepto = str(ln.get(r, "CODCON") or "").strip()
         if concepto not in t["conceptos"]: t["conceptos"].append(concepto)
+        t["n_lineas"] += 1
+        if es_complemento(ln.get(r, "CONCEP")): t["n_compl"] += 1
         imp_val = ln.get(r, "IMPORT") or 0
         impro_val = ln.get(r, "IMPPRO") or 0     # coste REAL del subcontratista por linea (cuadra con la cuenta 607); viaje con impro>0 = subcontratado
         if impro_val > 15000 and impro_val > imp_val * 8:   # coste de subcontrata IMPOSIBLE en una linea (error de tecleo en GesRuta, p. ej. 170.108 en un porte de 430): no sumar, anotar
@@ -563,6 +582,9 @@ def main():
             t["larga"] = bool(tr.get("larga_distancia")); t["esp"] = bool(tr.get("espejo_de"))
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
         t["facturas"] = [[f_, round(v_, 2)] for f_, v_ in t["facturas"].items()]   # [[«empresa|serie-numero», venta]]
+        # todas sus lineas son complementos (sin carga fisica propia: su coste va en las cargas del viaje)
+        t["complemento"] = t["n_lineas"] > 0 and t["n_compl"] == t["n_lineas"]
+        del t["n_lineas"], t["n_compl"]
     # Coordenadas por NOMBRE de punto (planta/cantera/obra), para el MAPA: el informe agrega los viajes del periodo
     # elegido por su punto de origen/destino y une aqui la coordenada del localizador (paradas GPS de la flota).
     coords = {}

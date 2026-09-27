@@ -9,12 +9,22 @@ const activity={rows:[{c:'Razo',v:'0001',cant:'7',albaranes:['01'],imp:100,cli:'
 const invoice=(company,revenue,trip='1')=>({id:company+revenue,company,trip,delivery:'1',client:'Cliente',clientId:company+'|1',
  invoiceDate:'2026-02-01',lineDate:'2026-01-15',revenue,account:'7050031001'});
 const cost=(empresa,material)=>({version_coste:2,empresa,viaje:'1',cantera:'7',albaran:'1',coste:{gasoil:10,conductor:20,material},coste_completo:true,faltantes:[]});
+const conEvidencia=c=>({...c,evidencia_real:{granularidad:'viaje',conciliada:true,lineas:Object.entries(c.coste).filter(([,importe])=>Math.abs(importe)>=0.005).map(([componente,importe],i)=>({componente,importe,fuente:'factura Solred',documento_sha256:'a'.repeat(64),linea:'L'+i}))}});
 const r=reconcileActivity(activity,[invoice('Razo',120),invoice('Agetrans',20),invoice('Razo',50,'')],[cost('Razo',0),cost('Agetrans',100)]);
 assert.equal(r.control.facturado,190);assert.equal(r.control.sinViaje,50);
 assert.equal(r.rows[0].costeCanonico.componentes.material,0);
 assert.equal(r.rows[1].costeCanonico.componentes.material,100);
 assert.equal(r.rows[2].costeCanonico,null);assert.equal(r.rows[2].imp,50);
 assert.equal(r.rows[0].economia[0].invoiceDate,'2026-02-01');
+const real=reconcileActivity(activity,[invoice('Razo',120)],[conEvidencia(cost('Razo',0))]);
+assert.equal(real.rows[0].costeCanonico.realConfirmado,true,'R solo con evidencia conciliada directamente al viaje');
+assert.equal(real.rows[0].costeCanonico.componentes.gasoil,10);
+const withoutEvidence=reconcileActivity(activity,[invoice('Razo',120)],[cost('Razo',0)]);
+assert.equal(withoutEvidence.rows[0].costeCanonico.realConfirmado,false,'desglose completo sin factura directa sigue siendo E');
+const badEvidence=conEvidencia(cost('Razo',0));badEvidence.evidencia_real.lineas[0].importe=9;
+assert.equal(reconcileActivity(activity,[invoice('Razo',120)],[badEvidence]).rows[0].costeCanonico.realConfirmado,false,'importe que no concilia sigue siendo E');
+const badHash=conEvidencia(cost('Razo',0));badHash.evidencia_real.lineas[0].documento_sha256='sin-huella';
+assert.equal(reconcileActivity(activity,[invoice('Razo',120)],[badHash]).rows[0].costeCanonico.realConfirmado,false,'evidencia sin huella de documento sigue siendo E');
 const old=reconcileActivity(activity,[invoice('Razo',120)],[{...cost('Razo',0),version_coste:1}]);
 assert.equal(old.rows[0].costeCanonico,null);
 const abono=reconcileActivity(activity,[invoice('Razo',-20)],[cost('Razo',0)]);
@@ -25,6 +35,8 @@ const split=reconcileActivity(shared,[invoice('Razo',120)],[cost('Razo',10)]);
 assert.equal(split.rows.reduce((s,r)=>s+r.costeCanonico.componentes.material,0),10);
 assert.equal(split.rows.reduce((s,r)=>s+r.costeCanonico.componentes.gasoil,0),10);
 assert.equal(split.rows.reduce((s,r)=>s+r.imp,0),120);
+const splitReal=reconcileActivity(shared,[invoice('Razo',120)],[conEvidencia(cost('Razo',10))]);
+assert.ok(splitReal.rows.every(r=>r.costeCanonico.realConfirmado===false),'reparto entre dos filas no se marca R');
 const partly=reconcileActivity({rows:[{...activity.rows[0],cant:'',albaranes:['1','2']}]},[invoice('Razo',120)],[{...cost('Razo',10),cantera:'A1'}]);
 assert.equal(partly.rows[0].costeCanonico.completo,false);
 assert.equal(partly.rows[0].costeCanonico.componentes.material,10);
@@ -74,4 +86,4 @@ assert.deepEqual(dos.rows.map(x=>x.imp),[50,70]);
 // El coste por carga sigue repartiendose por la venta del albaran (no por el ingreso enlazado).
 const cc=reconcileActivity({rows:[carga('Razo','1','7','2026-01-15',[['Razo|26-1',75]]),carga('Razo','1','7','2026-01-15',[['Razo|26-1',25]])]},[linea('Razo','26-1',100,'7050031001')],[cost('Razo',10)]);
 assert.deepEqual(cc.rows.map(x=>x.costeCanonico.componentes.gasoil),[7.5,2.5]);
-console.log('OK conciliacion: sociedades aisladas, facturas sin viaje, fechas, abonos, rechazo del coste antiguo y enlace exacto carga -> factura (26-1, 26-24, minimos aparte, rectificativas, fuera de periodo, dos facturas).');
+console.log('OK conciliacion: sociedades aisladas, facturas sin viaje, fechas, abonos, rechazo del coste antiguo, R solo con evidencia por viaje y enlace exacto carga -> factura (26-1, 26-24, minimos aparte, rectificativas, fuera de periodo, dos facturas).');

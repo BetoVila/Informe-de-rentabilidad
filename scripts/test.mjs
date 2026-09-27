@@ -45,14 +45,23 @@ if(dataPath){
   for(const c of lv.expenseCategories)near(lv.accounts.filter(a=>a.kind==='g'&&a.cat===c.id).reduce((s,a)=>s+a.amount,0),c.amount,'cuentas de '+c.id);
   for(const c of lv.incomeCategories)near(lv.accounts.filter(a=>a.kind==='i'&&a.cat===c.id).reduce((s,a)=>s+a.amount,0),c.amount,'cuentas de '+c.id);
  }
- // Vista real por vehículo / cliente / mes: cada dimensión suma lo mismo, el coste es la suma de sus partes y cuadra con «Margen por viaje».
+ // Vista económica por vehículo / cliente / mes: cada dimensión suma lo mismo y separa estrictamente coste R de coste E.
  if(data.actividad&&data.ledger){
   const g={from:f.from,to:f.to,companies:[]},nv=m.netaView(g);
   const tol=(a,b,label)=>assert.ok(Math.abs(a-b)<1,label+' '+a+' / '+b);
   for(const dim of ['plate','client','month','tipo','ruta']){
    const rv=m.realView(g,dim);assert.ok(rv&&rv.groups.length,'realView '+dim);
    for(const k of ['viajes','ingreso','material','coste','km','horas','litros'])tol(sum(rv.groups,k),rv.tot[k],dim+' '+k);
-   for(const x of rv.groups.concat([rv.tot]))tol(x.combustible+x.personal+x.flota+x.indirectos+x.subcontrata+x.material,x.coste,dim+' desglose '+x.key);
+   for(const x of rv.groups.concat([rv.tot])){
+    tol(x.combustible+x.personal+x.flota+x.indirectos+x.subcontrata+x.material,x.coste,dim+' desglose '+x.key);
+    tol(x.costeReal+x.costeEstimadoImporte,x.coste,dim+' coste R+E '+x.key);
+    for(const c of ['combustible','personal','flota','indirectos','aridos','subcontrata'])tol(x[c+'Real']+x[c+'Estimado'],x[c],dim+' '+c+' R+E '+x.key);
+    if(x.margen!=null)tol(x.ingreso-x.coste,x.margen,dim+' margen '+x.key);
+    if(x.costesEstimados>0){assert.equal(x.costeTotalEstado,'E',dim+' total con estimación '+x.key);if(x.margen!=null)assert.equal(x.margenEstado,'E',dim+' margen con estimación '+x.key);}
+    else if(x.costesReales>0&&x.margen!=null)assert.equal(x.margenEstado,'R',dim+' margen solo con evidencia '+x.key);
+    if(x.costeTransporte!=null)tol(x.costeTransporteReal+x.costeTransporteEstimado,x.costeTransporte,dim+' coste transporte R+E '+x.key);
+   }
+   tol(sum(rv.groups,'costeReal'),rv.tot.costeReal,dim+' suma coste R');tol(sum(rv.groups,'costeEstimadoImporte'),rv.tot.costeEstimadoImporte,dim+' suma coste E');
    if(nv){tol(rv.tot.ingreso,nv.tot.ingreso,dim+' ingreso = margen por viaje');assert.ok(Math.abs(rv.tot.coste-nv.tot.coste)<rv.groups.length+2,dim+' coste = margen por viaje');}
    const d=rv.detail(rv.groups[0].key);tol(sum(d.byMonth,'ingreso'),rv.groups[0].ingreso,dim+' detalle por mes');tol(sum(d.byRuta,'coste'),rv.groups[0].coste,dim+' detalle por ruta');
   }
@@ -70,5 +79,6 @@ if(htmlPath){
  const html=await fs.readFile(htmlPath,'utf8');
  new vm.Script(html.match(/<script type="module">([\s\S]*?)<\/script>/)[1]);
  assert.ok(html.includes('href="estado.html"'));assert.ok(!html.includes('__PACKED_DATA__'));
+ assert.ok(html.includes('Día de servicio'));assert.ok(html.includes('fecha de factura'));assert.ok(html.includes('no se eliminan'));
 }
 console.log('OK: calendario'+(dataPath?', modelo en los tres modos de coste, filtros, nómina real, contabilidad y puente':'')+(htmlPath?' y sintaxis del informe.':'.'));
