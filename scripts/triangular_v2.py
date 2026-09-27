@@ -1562,28 +1562,74 @@ def cargar_ancla(ruta):
     return out
 
 
-def clasificar_motor_por_dia(dem):
-    """Que motor le toca a cada carga: por el DIA del camion (Roberto 28/09/2026: «tienes que diferenciar por la carga, lo
-    que es arido y lo que es hormigon»), no por el camion entero. Cada linea de dem ya trae su propio "horm" (UNIMED=='M3'
-    o CODCON empieza por 'K', demanda_triangular_v2.py); se agrupa por (matricula, dia) porque los dos motores (hormigon y
-    aridos) cortan ciclos sobre la MISMA traza GPS de ese dia y no se puede partir una jornada entre los dos: la MAYORIA de
-    las cargas de ESE DIA de ESE camion decide el motor del dia entero (no el historico completo del camion). Devuelve
-    (dia_hormigon, es_hormigonera): dia_hormigon = claves (matricula, dia) que van por el motor de hormigon; es_hormigonera
-    = matriculas cuya mayoria HISTORICA es hormigon, solo para el hallazgo informativo "tipo de vehiculo" — no decide el
-    motor de ninguna carga."""
-    n_h, n_t = collections.Counter(), collections.Counter()
-    for t in dem:
-        n_t[(t["mat"], t["dia"])] += 1
-        if t.get("horm"):
-            n_h[(t["mat"], t["dia"])] += 1
-    dia_hormigon = {k for k in n_t if k[0] and n_h[k] / n_t[k] >= 0.5}
+def clasificar_vehiculo(dem):
+    """Solo para el hallazgo informativo "tipo de vehiculo" (que matriculas son mayoritariamente hormigonera en su
+    historico) — YA NO decide el motor de ninguna carga (Roberto 28/09/2026, segunda vuelta: «los viajes se identifican
+    por camion pero el material es por el albaran de carga»; cada carga corre por SU motor segun su propio dato UNIMED/
+    CODCON, ver ventanas_de_zona/jornada_enmascarada mas abajo, nunca por una mayoria de dia ni de camion)."""
     n_h_mat, n_t_mat = collections.Counter(), collections.Counter()
     for t in dem:
         n_t_mat[t["mat"]] += 1
         if t.get("horm"):
             n_h_mat[t["mat"]] += 1
-    es_hormigonera = {m for m in n_t_mat if m and n_h_mat[m] / n_t_mat[m] >= 0.5}
-    return dia_hormigon, es_hormigonera
+    return {m for m in n_t_mat if m and n_h_mat[m] / n_t_mat[m] >= 0.5}
+
+
+def ventanas_de_zona(pts, codigos, coords, casa):
+    """Ventanas de tiempo (t_in, t_out) en que la traza esta DENTRO de alguno de estos codigos de lugar conocidos (mismo
+    criterio de deteccion por geocerca que usa ciclos_geo para sus zonas, y el mismo filtro de "parada real, no paso
+    suelto": n>=2 puntos o frenada <=10 km/h). Sirve para enmascarar del motor CONTRARIO (aridos <-> hormigon) el tramo que
+    ya pertenece a estos codigos, en un dia con carga de las dos clases (Roberto 28/09/2026)."""
+    zonas = [(cod, c) for cod in codigos for c in [coords.get((casa, cod))] if c and v1.RADIO_MATCH.get(c["fuente"], 1) is not None]
+    if not zonas:
+        return []
+    out, cur = [], None
+    for q in pts:
+        dentro = [(v1.hav((q["lat"], q["lon"]), (c["lat"], c["lon"])), cod) for cod, c in zonas if v1.cerca(q, c, c["fuente"], c.get("radio_m"))]
+        cod = min(dentro)[1] if dentro else None
+        if cur and cod == cur["cod"]:
+            cur["t_out"], cur["n"], cur["vmin"] = q["t"], cur["n"] + 1, min(cur["vmin"], q["s"] or 0)
+            continue
+        if cur:
+            out.append(cur); cur = None
+        if cod:
+            cur = {"cod": cod, "t_in": q["t"], "t_out": q["t"], "n": 1, "vmin": q["s"] or 0}
+    if cur:
+        out.append(cur)
+    return [(v["t_in"], v["t_out"]) for v in out if v["n"] >= 2 or v["vmin"] <= 10]
+
+
+def enmascarar_pts(pts, ventanas):
+    """Puntos de la traza sin los que caen dentro de estas ventanas: para quien los recibe es como si hubiera un hueco de
+    señal ahi (los algoritmos de parada/ciclo ya toleran huecos, §5 del mapa de reglas). Asi el motor CONTRARIO no ve ni
+    puede confundir un tramo que ya es del otro tipo de carga."""
+    if not ventanas:
+        return pts
+    return [q for q in pts if not any(a <= q["t"] <= b for (a, b) in ventanas)]
+
+
+def jornada_enmascarada(j, ventanas):
+    """Copia superficial de una jornada con su traza y sus paradas SIN las ventanas dadas (ver enmascarar_pts). Los demas
+    campos (ini/fin/c0/c1/horas/fecha/nocturna/arranque) describen los limites de TODA la jornada y no cambian: enmascarar
+    solo quita, del interior, el tramo que ya pertenece al otro motor. SIEMPRE copia (aunque `ventanas` este vacia) para que
+    cada motor escriba ciclos/sobrantes/asignados/modo en SU propia copia, nunca en la jornada real ni en la del otro motor;
+    fusionar_jornada junta despues los dos resultados."""
+    j2 = dict(j)
+    if ventanas:
+        j2["pts"] = enmascarar_pts(j["pts"], ventanas)
+        j2["paradas"] = [p for p in j["paradas"] if not any(a <= p["t_in"] and p["t_out"] <= b for (a, b) in ventanas)]
+    return j2
+
+
+def fusionar_jornada(j, jm):
+    """Vuelca en la jornada REAL (j) lo que un motor escribio en su copia enmascarada (jm, de jornada_enmascarada): ciclos,
+    sobrantes, asignados y modo, sumando con lo que ya hubiera puesto el OTRO motor del mismo dia (un dia con las dos clases
+    de carga llama a esto dos veces, una por motor)."""
+    j["ciclos"] = sorted((j["ciclos"] or []) + (jm.get("ciclos") or []), key=lambda c: c["t0"])
+    j["sobrantes"] = (j["sobrantes"] or []) + (jm.get("sobrantes") or [])
+    j["asignados"] = (j["asignados"] or 0) + (jm.get("asignados") or 0)
+    j["min_sobrantes"] = (j.get("min_sobrantes") or 0) + (jm.get("min_sobrantes") or 0)
+    j["modo"] = "+".join(sorted({x for x in [j.get("modo"), jm.get("modo")] if x})) or j.get("modo")
 
 
 # ---------------------------------------------------------------- principal
@@ -1691,9 +1737,8 @@ def main():
     def dist_od(t):
         co, cd = coords.get((t["c"], t["o"])), coords.get((t["c"], t["d"]))
         return v1.hav((co["lat"], co["lon"]), (cd["lat"], cd["lon"])) if co and cd else None
-    dia_hormigon, es_hormigonera = clasificar_motor_por_dia(dem)
-    por_dia = collections.defaultdict(list)
-    horm_dia = collections.defaultdict(list)          # hormigon: su propia pasada (plantas aprendidas), no la maquina de aridos
+    es_hormigonera = clasificar_vehiculo(dem)
+    por_dia = collections.defaultdict(list)           # TODAS las cargas del (camion, dia); se separan por tipo al procesar
     for idx, t in enumerate(dem):
         cg = ancla.get((t["c"], t["v"], t["cant"])) or []
         t["tipo"] = cg[0]["tipo"] if cg else ("hormigonera" if t.get("horm") else None)
@@ -1701,10 +1746,10 @@ def main():
         d = dist_od(t)
         t["dist_od"] = round(d, 1) if d is not None else None
         # LARGO = por DISTANCIA. «nacional» en GesRuta es el tipo de servicio (portes), no la distancia: hay portes de 30 km
-        # que caben en una jornada y van por la maquina de ciclos como los aridos.
-        es_h = (t["mat"], t["dia"]) in dia_hormigon
-        t["larga"] = (not es_h) and d is not None and d >= LARGA_KM
-        (horm_dia if es_h else por_dia)[(t["mat"], t["dia"])].append(idx)
+        # que caben en una jornada y van por la maquina de ciclos como los aridos. El hormigon (por SU propio dato, carga a
+        # carga: Roberto 28/09/2026) nunca es «largo»: su ciclo es planta-obra-planta, no un porte de un extremo a otro.
+        t["larga"] = (not t.get("horm")) and d is not None and d >= LARGA_KM
+        por_dia[(t["mat"], t["dia"])].append(idx)
     # ESPEJOS intercompania: el mismo porte fisico sale en Razo y en Agetrans (Agetrans lo vende y se lo subcontrata a Razo):
     # mismo camion, mismo nº de ticket / carta de porte, mismo dia. Se triangula UNA vez, en la linea de la casa duena del
     # camion (la que lo tiene en su ficha sin proveedor; si no se sabe, Razo); la otra hereda la medida marcada 'espejo_de'
@@ -1728,6 +1773,16 @@ def main():
     pos_dem = {id(t): i for i, t in enumerate(dem)}
     diag = collections.Counter()
     dias_diag = []
+    # ---- HORMIGON POR VIAJE (Roberto: hormigon tambien por viaje, todo por GPS): plantas APRENDIDAS de la traza (el maestro
+    # las tiene mal: PREBETONG CORUÑA apunta a la cantera a 40 km, PLANTA DE SABON al centro de Arteixo). Se aprenden de TODAS
+    # las cargas de hormigon (por su propio dato, Roberto 28/09/2026), no solo de las de un "dia de hormigon": ya no existe tal
+    # cosa, cada carga corre por su motor.
+    dem_h = [t for t in dem if t.get("horm")]
+    plantas = aprender_plantas(dem_h, jornadas_mat) if dem_h else {}
+    for key, pl in plantas.items():
+        coords[key] = {"lat": pl["lat"], "lon": pl["lon"], "fuente": "planta_aprendida", "radio_m": pl["radio_m"], "nombre": (ref.get(key) or {}).get("nombre")}
+    diag["hormigon_plantas_aprendidas"] = len(plantas)
+
     for (m, d) in sorted(por_dia, key=lambda k: (k[1], k[0])):
         idxs = por_dia[(m, d)]
         idxs.sort(key=lambda i: (v1.natkey(dem[i]["v"]), v1.natkey(dem[i]["cant"])))
@@ -1740,10 +1795,20 @@ def main():
             for i in idxs:
                 salida[i] = sin_dato("sin_traza", motivo)
             continue
+        # CADA CARGA POR SU MOTOR (Roberto 28/09/2026, segunda vuelta): se separa por el dato de LA CARGA (t["horm"]), no por
+        # el dia ni el camion. i_rep/i_larga/i_arid mantienen exactamente el criterio de antes (arido); i_h = las de hormigon.
+        i_rep = [i for i in idxs if any(c.get("repetida") for c in dem[i]["cargas"])]
+        i_rep_arid, i_rep_h = [i for i in i_rep if not dem[i]["horm"]], [i for i in i_rep if dem[i]["horm"]]
+        for i in i_rep_h:
+            dem[i]["_repetida"] = True                # ocupa su turno en el orden (es una carga real) pero no se mide
+        i_larga = [i for i in idxs if i not in i_rep and i not in espejo_de and dem[i]["larga"]]
+        i_arid = [i for i in idxs if i not in i_rep and i not in espejo_de and not dem[i]["larga"] and not dem[i]["horm"]]
+        i_h = [i for i in idxs if i not in espejo_de and dem[i]["horm"]]
         jor = por_fecha.get((m, d), [])
         # CARGA HOY, DESCARGA MANANA (aridos, regla de Roberto): si la jornada ANTERIOR del camion acabo cargada (descarga no
         # vista al fin de jornada) y la primera de hoy pasa por ese destino ANTES de cargar nada, es el MISMO viaje: se le suma
-        # el tramo de hoy (sin el descanso), se marca 'pernocta_cargado' y los viajes de hoy arrancan tras esa descarga.
+        # el tramo de hoy (sin el descanso), se marca 'pernocta_cargado' y los viajes de hoy arrancan tras esa descarga. Solo
+        # mira candidatas de ARIDO (el hormigon no tiene esta figura: su ciclo es planta-obra-planta, no un porte de ida).
         if jor:
             js = jornadas_mat[m]
             jn = jor[0]
@@ -1753,7 +1818,7 @@ def main():
                 c = prev["ciclos"][-1]
                 t = c.get("viaje")
                 if t is not None and c.get("falta") == "descarga_no_vista_fin_jornada" and not c.get("partes") and not jn.get("arranque"):
-                    td = primer_paso_destino(jn, t, [dem[i] for i in idxs], coords)
+                    td = primer_paso_destino(jn, t, [dem[i] for i in i_arid], coords)
                     if td:
                         cd = coords.get((t["c"], t["d"]))
                         kl = len(prev["ciclos"]) - 1
@@ -1771,12 +1836,24 @@ def main():
                         diag["pernocta_cargado"] += 1
         if not jor:
             # ¿hay traza del camion en esas fechas? Si no la hay a ±VENTANA_DIAS (p. ej. 2025, sin bajada), es 'sin traza en esas
-            # fechas', no 'sin jornada ese dia' (que sugiere que el camion paro). Rotular bien lo que no se sabe.
+            # fechas' para TODOS (ni arido ni hormigon tienen nada que buscar) y se sigue con el dia siguiente. Si SI la hay pero
+            # no arranco jornada justo ese dia, el hormigon (sin pasada de rescate) se da por vencido aqui igual que antes; el
+            # arido en cambio SIGUE (jor se queda vacio, ver mas abajo): asi triangular_dia() marca sus i_arid "sin_jornada_ese_dia"
+            # con su propio mecanismo, y sus i_larga (si los hay) se quedan sin resolver aqui para que la pasada de LARGO
+            # RECORRIDO, mas adelante, los intente de verdad — si aqui se les pusiera "sin_traza" ya no se tocan nunca mas
+            # (esa pasada solo coge salida[i] is None). CUIDADO: colapsar esto en un solo "continue" para los dos motores fue
+            # el bug real de la primera version de este cambio (28/09/2026): dejaba miles de nacionales sin su pasada de largo
+            # recorrido, aunque el camion siguiera con traza normal.
             d_ = dt.date.fromisoformat(d)
-            if not any((m, (d_ + dt.timedelta(days=k)).isoformat()) in trazas for k in range(-VENTANA_DIAS, VENTANA_DIAS + 1)):
+            hay_traza_fechas = any((m, (d_ + dt.timedelta(days=k)).isoformat()) in trazas for k in range(-VENTANA_DIAS, VENTANA_DIAS + 1))
+            if not hay_traza_fechas:
+                motivo_sin_locatel = "sin_traza_en_esas_fechas_locatel" if m in plates_locatel else "sin_traza_en_esas_fechas"
                 for i in idxs:
-                    salida[i] = sin_dato("sin_traza", "sin_traza_en_esas_fechas_locatel" if m in plates_locatel else "sin_traza_en_esas_fechas")
+                    salida[i] = sin_dato("sin_traza", motivo_sin_locatel)
                 continue
+            for i in i_h:
+                salida[i] = sin_dato("sin_traza", "sin_jornada_ese_dia")
+            i_h = []
         dprev = (dt.date.fromisoformat(d) - dt.timedelta(days=1)).isoformat()
         # el ciclo pertenece al dia de su CARGA (el albaran se hace al cargar), no al de su inicio (que puede ser la vuelta de ayer)
         prestados = [(c, j) for j in por_fecha.get((m, dprev), []) if j["nocturna"] and fecha_de(j["fin"]) == d
@@ -1784,64 +1861,39 @@ def main():
         for j in jor:
             if j["horas"] > MAX_JORNADA_H:
                 diag["jornadas_largas"] += 1
-        i_rep = [i for i in idxs if any(c.get("repetida") for c in dem[i]["cargas"])]
-        # los ESPEJOS no compiten por ciclos (heredan la medida de su linea principal) y los LARGOS van por su propia pasada
-        i_larga = [i for i in idxs if i not in i_rep and i not in espejo_de and dem[i]["larga"]]
-        i_arid = [i for i in idxs if i not in i_rep and i not in espejo_de and not dem[i]["larga"]]
         res = {}
-        for i in i_rep:
+        for i in i_rep_arid:
             res[i] = sin_dato("cantera_repetida", "mismo_numero_de_cantera_en_varias_lineas_del_ano", jor[0] if jor else None)
+        # Un dia con LAS DOS clases de carga: cada motor enmascara del OTRO el tramo de traza que ya es suyo (mismo criterio
+        # de deteccion de zonas que cada uno ya usaba), y trabaja sobre su PROPIA copia de la jornada para no pisar los
+        # ciclos/sobrantes del otro; fusionar_jornada junta despues los dos resultados en la jornada real (la necesitan tal
+        # cual el dia siguiente -pernocta-, la segunda pasada de sobrantes y la pasada de largo recorrido).
+        if i_arid and i_h:
+            ventanas_planta = [(a, b) for j in jor for (a, b, _, _) in visitas_plantas(j, plantas)]
+            ventanas_arid = [v for j in jor for v in ventanas_de_zona(j["pts"], {dem[i]["o"] for i in i_arid if dem[i]["o"]} | {dem[i]["d"] for i in i_arid if dem[i]["d"]}, coords, m)]
+            jor_arid = [jornada_enmascarada(j, ventanas_planta) for j in jor]
+            jor_h = [jornada_enmascarada(j, ventanas_arid) for j in jor]
+        else:
+            jor_arid = jor_h = jor
         if i_arid:
             dnext = (dt.date.fromisoformat(d) + dt.timedelta(days=1)).isoformat()
-            sig = [dem[i] for i in por_dia.get((m, dnext), []) if not dem[i]["larga"] and i not in espejo_de]
-            r = triangular_dia([dem[i] for i in i_arid], jor, prestados, fuente, coords, sens.get(m), acts.get(m, []), drvs.get(m, []), diag, viajes_sig=sig)
+            sig = [dem[i] for i in por_dia.get((m, dnext), []) if not dem[i]["larga"] and not dem[i]["horm"] and i not in espejo_de]
+            r = triangular_dia([dem[i] for i in i_arid], jor_arid, prestados, fuente, coords, sens.get(m), acts.get(m, []), drvs.get(m, []), diag, viajes_sig=sig)
             res.update(dict(zip(i_arid, r)))
+        if i_h:
+            r = triangular_hormigon([dem[i] for i in i_h], jor_h, plantas, coords, fuente, sens.get(m), acts.get(m, []), drvs.get(m, []), diag)
+            res.update(dict(zip(i_h, r)))
         for i, r in res.items():
             salida[i] = r
+        if jor_arid is not jor:
+            for j, jm in zip(jor, jor_arid):
+                fusionar_jornada(j, jm)
+        if jor_h is not jor:
+            for j, jm in zip(jor, jor_h):
+                fusionar_jornada(j, jm)
         if a.diag:
             dias_diag.append({"matricula": m, "fecha": d, "viajes": len(idxs), "larga": len(i_larga), "repetidas": len(i_rep), "prestados": len(prestados),
-                              "espejos": sum(1 for i in idxs if i in espejo_de),
-                              "jornadas": [{"ini": iso_min(j["ini"]), "fin": iso_min(j["fin"]), "horas": j["horas"], "nocturna": j["nocturna"],
-                                            "paradas": len(j["paradas"]), "modo": j["modo"], "ciclos": len(j["ciclos"] or []),
-                                            "asignados": j["asignados"], "sobrantes": len(j["sobrantes"]), "min_sobrantes": j.get("min_sobrantes", 0)} for j in jor],
-                              "medidos": sum(1 for i in idxs if (salida[i] or {}).get("medido"))})
-
-    # ---- HORMIGON POR VIAJE (Roberto: hormigon tambien por viaje, todo por GPS): plantas APRENDIDAS de la traza (el maestro las
-    # tiene mal: PREBETONG CORUÑA apunta a la cantera a 40 km, PLANTA DE SABON al centro de Arteixo), ciclos por planta (una
-    # jornada puede cargar en dos plantas), obra = parada mas larga fuera de plantas, asignacion por planta y orden de GesRuta.
-    dem_h = [dem[i] for idxs in horm_dia.values() for i in idxs]
-    plantas = aprender_plantas(dem_h, jornadas_mat) if dem_h else {}
-    for key, pl in plantas.items():
-        coords[key] = {"lat": pl["lat"], "lon": pl["lon"], "fuente": "planta_aprendida", "radio_m": pl["radio_m"], "nombre": (ref.get(key) or {}).get("nombre")}
-    diag["hormigon_plantas_aprendidas"] = len(plantas)
-    for (m, d) in sorted(horm_dia, key=lambda k: (k[1], k[0])):
-        idxs = horm_dia[(m, d)]
-        idxs.sort(key=lambda i: (v1.natkey(dem[i]["v"]), v1.natkey(dem[i]["cant"])))
-        fuente = (fuente_mat.get(m) or collections.Counter()).most_common(1)
-        fuente = fuente[0][0] if fuente else None
-        if m not in flujo:
-            ajeno = any(dem[i].get("propio") is False for i in idxs)
-            motivo = "sin_matricula" if not m else ("pendiente_bajada" if m in plates else ("camion_ajeno" if ajeno else "sin_telemetria_o_pendiente_locatel"))
-            for i in idxs:
-                salida[i] = sin_dato("sin_traza", motivo)
-            continue
-        jor = por_fecha.get((m, d), [])
-        if not jor:
-            d_ = dt.date.fromisoformat(d)
-            motivo = "sin_jornada_ese_dia" if any((m, (d_ + dt.timedelta(days=k)).isoformat()) in trazas for k in range(-VENTANA_DIAS, VENTANA_DIAS + 1)) else ("sin_traza_en_esas_fechas_locatel" if m in plates_locatel else "sin_traza_en_esas_fechas")
-            for i in idxs:
-                salida[i] = sin_dato("sin_traza", motivo)
-            continue
-        i_rep = [i for i in idxs if any(c.get("repetida") for c in dem[i]["cargas"])]
-        for i in i_rep:
-            dem[i]["_repetida"] = True                # ocupa su turno en el orden (es una carga real) pero no se mide
-        i_h = [i for i in idxs if i not in espejo_de]
-        if i_h:
-            r = triangular_hormigon([dem[i] for i in i_h], jor, plantas, coords, fuente, sens.get(m), acts.get(m, []), drvs.get(m, []), diag)
-            for i, x in zip(i_h, r):
-                salida[i] = x
-        if a.diag:
-            dias_diag.append({"matricula": m, "fecha": d, "viajes": len(idxs), "larga": 0, "repetidas": len(i_rep), "prestados": 0, "hormigon": True,
+                              "hormigon": bool(i_h), "arido": bool(i_arid), "mixto": bool(i_arid and i_h),
                               "espejos": sum(1 for i in idxs if i in espejo_de),
                               "jornadas": [{"ini": iso_min(j["ini"]), "fin": iso_min(j["fin"]), "horas": j["horas"], "nocturna": j["nocturna"],
                                             "paradas": len(j["paradas"]), "modo": j["modo"], "ciclos": len(j["ciclos"] or []),
@@ -1974,8 +2026,8 @@ def main():
             salida[i] = sin_dato("sin_ciclo", "sin_procesar")
             diag["sin_procesar"] += 1
 
-    for k_, v_ in horm_dia.items():                  # el hormigon vuelve al conteo por dia (viajes_dia, orden_dia)
-        por_dia[k_].extend(v_)
+    # por_dia ya trae juntas las cargas de arido Y de hormigon de cada (camion, dia) desde el principio (Roberto
+    # 28/09/2026): no hace falta volver a juntarlas aqui para el conteo por dia (viajes_dia, orden_dia).
     viajes_out = []
     for t, r in zip(dem, salida):
         co, cd = coords.get((t["c"], t["o"])), coords.get((t["c"], t["d"]))

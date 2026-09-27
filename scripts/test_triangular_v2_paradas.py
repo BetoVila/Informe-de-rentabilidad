@@ -60,33 +60,65 @@ class TestJornadaNoArrancaEnElHueco(unittest.TestCase):
 
 class TestMotorPorCargaNoPorCamion(unittest.TestCase):
     # Roberto 28/09/2026: «tienes que diferenciar por la carga, lo que es arido y lo que es hormigon», no por el camion
-    # entero. Caso real que motivo el cambio: 6081FHD es hormigonera (73% de sus cargas historicas), pero una carga suelta
-    # de aridos a otra planta (viaje 00024326, cantera 5063) le salia con el "obra" del motor de hormigon fabricado.
+    # entero (primera vuelta) NI por el dia del camion (segunda vuelta: «los viajes se identifican por camion pero el
+    # material es por el albaran de carga»). Cada carga corre HOY por su propio motor segun su dato UNIMED/CODCON; en un
+    # dia con las dos clases, cada motor enmascara del otro el tramo de traza que ya es suyo (ventanas_de_zona/
+    # enmascarar_pts/jornada_enmascarada) y fusionar_jornada junta los dos resultados en la jornada real.
     def ticket(self, mat, dia, horm):
         return {"mat": mat, "dia": dia, "horm": horm}
 
-    def test_dia_de_aridos_de_un_camion_mayoritariamente_hormigonera_va_por_aridos(self):
-        dem = ([self.ticket("6081FHD", "2026-01-05", True)] * 9 + [self.ticket("6081FHD", "2026-01-05", False)] * 3
-               + [self.ticket("6081FHD", "2026-06-10", False)])
-        dia_hormigon, es_hormigonera = t2.clasificar_motor_por_dia(dem)
-        self.assertIn("6081FHD", es_hormigonera, "el camion sigue siendo hormigonera en su historico (9 de 13, 69%)")
-        self.assertIn(("6081FHD", "2026-01-05"), dia_hormigon, "ese dia concreto tambien es mayoria hormigon (9 de 12)")
-        self.assertNotIn(("6081FHD", "2026-06-10"), dia_hormigon,
-                          "el dia suelto de aridos (100% arido ese dia) ya NO va por el motor de hormigon")
+    def test_clasificar_vehiculo_es_solo_informativo(self):
+        dem = [self.ticket("6081FHD", "2026-01-05", True)] * 9 + [self.ticket("6081FHD", "2026-01-05", False)] * 3
+        es_hormigonera = t2.clasificar_vehiculo(dem)
+        self.assertIn("6081FHD", es_hormigonera, "9 de 12 (75%) es mayoria hormigon en su historico")
 
-    def test_dia_mayoria_aridos_de_camion_hormigonera_va_por_aridos_aunque_el_historico_sea_hormigon(self):
-        dem = [self.ticket("6081FHD", "2026-02-02", True)] * 8 + [self.ticket("6081FHD", "2026-02-02", False)] * 2
-        dia_hormigon, es_hormigonera = t2.clasificar_motor_por_dia(dem)
-        self.assertIn("6081FHD", es_hormigonera)
-        self.assertIn(("6081FHD", "2026-02-02"), dia_hormigon, "ese dia es 80% hormigon: sigue yendo por hormigon")
+    def test_ventanas_de_zona_detecta_la_visita_y_descarta_un_paso_suelto(self):
+        casa = "Razo"
+        coords = {(casa, "PLANTA"): {"lat": 43.0, "lon": -8.0, "fuente": "gesruta"}}
+        t0 = 1000
+        # 5 min fuera, 10 min parado en la planta (frenada), 5 min fuera otra vez: la visita real debe salir completa
+        pts = ([{"t": t0 + s, "lat": 43.2, "lon": -8.0, "s": 40} for s in range(0, 300, 60)]
+               + [{"t": t0 + 300 + s, "lat": 43.0, "lon": -8.0, "s": 0} for s in range(0, 600, 60)]
+               + [{"t": t0 + 900 + s, "lat": 43.2, "lon": -8.0, "s": 40} for s in range(0, 300, 60)])
+        ventanas = t2.ventanas_de_zona(pts, {"PLANTA"}, coords, casa)
+        self.assertEqual(len(ventanas), 1)
+        self.assertEqual(ventanas[0], (t0 + 300, t0 + 300 + 540))
+        # un paso suelto a velocidad de carretera (1 solo punto dentro del radio, sin frenar) no cuenta como visita
+        paso = [{"t": t0, "lat": 43.2, "lon": -8.0, "s": 90}, {"t": t0 + 60, "lat": 43.0, "lon": -8.0, "s": 90},
+                {"t": t0 + 120, "lat": 42.8, "lon": -8.0, "s": 90}]
+        self.assertEqual(t2.ventanas_de_zona(paso, {"PLANTA"}, coords, casa), [])
 
-    def test_camion_mayoria_aridos_con_un_dia_de_hormigon_va_ese_dia_por_hormigon(self):
-        dem = ([self.ticket("2839FKP", "2026-03-01", False)] * 20
-               + [self.ticket("2839FKP", "2026-03-15", True)] * 2)
-        dia_hormigon, es_hormigonera = t2.clasificar_motor_por_dia(dem)
-        self.assertNotIn("2839FKP", es_hormigonera, "camion basicamente de aridos (20 de 22, 91%)")
-        self.assertNotIn(("2839FKP", "2026-03-01"), dia_hormigon)
-        self.assertIn(("2839FKP", "2026-03-15"), dia_hormigon, "el dia suelto de hormigon va por su motor aunque el camion no sea hormigonera")
+    def test_enmascarar_pts_quita_solo_lo_que_cae_en_la_ventana(self):
+        pts = [{"t": t, "lat": 0, "lon": 0, "s": 0} for t in range(0, 100, 10)]
+        out = t2.enmascarar_pts(pts, [(30, 50)])
+        self.assertEqual([p["t"] for p in out], [0, 10, 20, 60, 70, 80, 90])
+        self.assertEqual(t2.enmascarar_pts(pts, []), pts, "sin ventanas, no toca nada")
+
+    def test_jornada_enmascarada_copia_sin_tocar_la_real(self):
+        j = {"pts": [{"t": t, "lat": 0, "lon": 0, "s": 0} for t in range(0, 100, 10)],
+             "paradas": [{"t_in": 30, "t_out": 50}, {"t_in": 70, "t_out": 80}],
+             "ciclos": None, "sobrantes": [], "asignados": 0, "modo": None, "ini": 0, "fin": 100}
+        jm = t2.jornada_enmascarada(j, [(30, 50)])
+        self.assertEqual(len(jm["pts"]), 7, "los puntos de la ventana enmascarada se quitan de la COPIA")
+        self.assertEqual(len(j["pts"]), 10, "la jornada real no se toca")
+        self.assertEqual(len(jm["paradas"]), 1, "la parada dentro de la ventana enmascarada tambien se quita de la copia")
+        self.assertIsNone(jm["ciclos"], "la copia arranca igual de vacia que la real: cada motor pone lo suyo")
+        # sin ventanas, sigue copiando (para que cada motor escriba en SU copia y no se pisen aunque no haya nada que tapar)
+        jm2 = t2.jornada_enmascarada(j, [])
+        self.assertIsNot(jm2, j)
+        self.assertEqual(jm2["pts"], j["pts"])
+
+    def test_fusionar_jornada_junta_los_dos_motores_sin_perder_nada(self):
+        j = {"ciclos": None, "sobrantes": [], "asignados": 0, "modo": None, "min_sobrantes": 0}
+        arido = {"ciclos": [{"t0": 10, "t1": 20}], "sobrantes": [{"t0": 90, "t1": 95}], "asignados": 1, "modo": "geo", "min_sobrantes": 5.0}
+        hormigon = {"ciclos": [{"t0": 30, "t1": 40}], "sobrantes": [], "asignados": 1, "modo": "plantas", "min_sobrantes": 0.0}
+        t2.fusionar_jornada(j, arido)
+        t2.fusionar_jornada(j, hormigon)
+        self.assertEqual([c["t0"] for c in j["ciclos"]], [10, 30], "los ciclos de los dos motores, en orden")
+        self.assertEqual(j["sobrantes"], [{"t0": 90, "t1": 95}])
+        self.assertEqual(j["asignados"], 2)
+        self.assertEqual(j["min_sobrantes"], 5.0)
+        self.assertEqual(j["modo"], "geo+plantas")
 
 
 class TestRotuloCargaDescarga(unittest.TestCase):
