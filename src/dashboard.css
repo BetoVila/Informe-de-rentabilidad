@@ -235,10 +235,14 @@ span.ztog{cursor:default}
 .fctl{display:grid;gap:4px;font-size:12px;color:var(--muted);flex:1 1 160px;max-width:260px;min-width:0}
 .fctl>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fctl input,.fctl select{border:1px solid #cbd6e4;border-radius:7px;padding:7px 9px;font-size:13px;background:#fff;color:var(--ink);width:100%;min-width:0}
-.fctl.fnum{flex-basis:150px;max-width:210px}
+.fctl.fnum{flex-basis:190px;max-width:260px}
 .fctl.fnumhead{flex-basis:100%;max-width:none;font-weight:600;color:var(--ink);margin-top:2px}
-.fnumrow{display:flex;gap:6px}
-.fnumrow input{flex:1 1 0;min-width:0;width:auto}
+.fnumrango{font-weight:400;color:var(--muted);white-space:nowrap}
+.fnumrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.fnumrow input[data-tnumk]{flex:1 1 0;min-width:0;width:auto}
+.fnumrow input[data-tnumk]:disabled{background:#f1f4f8;color:var(--muted)}
+.fnumvacio{display:flex;align-items:center;gap:4px;flex:1 0 100%;font-size:11.5px;color:var(--muted);white-space:nowrap;cursor:pointer}
+.fnumvacio input{width:auto!important;padding:0!important}
 .fctl.fact{flex:0 0 auto;max-width:none}
 .tchips:empty{display:none}
 td.ctr,th.ctr{text-align:center}

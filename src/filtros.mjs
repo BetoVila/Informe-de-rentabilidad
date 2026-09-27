@@ -7,7 +7,7 @@
 // tarifas, paneles). Define UNA sola vez cómo se filtra una tabla:
 //   - buscar por palabras sueltas, sin tildes ni mayúsculas (Y lógico)
 //   - fecha desde / hasta
-//   - mínimo / máximo por cada columna numérica, combinables
+//   - mínimo / máximo por cada columna numérica, combinables, con "solo sin dato"
 //   - chips de filtros activos y "quitar todos"
 // parametrizado por las COLUMNAS de cada tabla.
 //
@@ -17,11 +17,22 @@
 //   const F = crearFiltro(cols, filas, redibujar);  // por tabla; redibujar() re-pinta la tabla
 //   // al pintar:  filtroToolsHTML(F, filas) encima, y tu tabla con filtroAplica(F, filas)
 //   // en redibujar():  const ft = filtroAplica(F, filas);  ...pinta ft...  filtroRefresca(F, ft.length);
+//   // filtro que sobrevive a cambiar de pestaña y a recargar la página (opcional, un id por tabla):
+//   //   const F = crearFiltro(cols, filas, redibujar, 'viajes');
 //
 // cols = [{label, key, filter?, numeric?, html?, dateLen?}]
 //   filter: 'text' | 'date' | 'number' | 'select' | false  (si no se pone, se
 //   deduce de las filas con filterKind: números -> number, AAAA-MM(-DD) -> date,
 //   resto -> text). numeric:true fuerza 'number'. html:true no filtra.
+//
+// PRÁCTICO (28/09/2026, Roberto: "mejora los filtros, hazlos más prácticos"):
+//   - Cada columna numérica muestra el rango real de sus datos (mín. – máx.) como pista.
+//   - Casilla "solo sin dato" por columna numérica: aísla las filas con esa cifra pendiente
+//     (coste sin calcular, margen sin cerrar…) sin tener que adivinar un mín./máx. que la excluya.
+//   - El texto buscado se normaliza UNA vez por fila y se reutiliza en las siguientes búsquedas de
+//     la misma tabla (antes se recalculaba entero en cada tecla; se nota en tablas de miles de filas).
+//   - `persistKey` opcional en crearFiltro: recuerda la búsqueda y los filtros de esa tabla en este
+//     navegador (localStorage) para no perderlos al cambiar de pestaña o recargar.
 // ============================================================================
 
 // -- utilidades mínimas (autocontenidas; una app puede pasar su propio nf) -----
@@ -54,14 +65,19 @@ export function filterBarHtml(columns, rows, filters, scope) {
   }
   const nums = columns.filter(c => c.filter === 'number'), N = f.__num || {};
   if (nums.length) {
-    out.push(`<div class="fctl fnumhead"><span>Filtrar por cifra: mínimo y máximo de cada columna (se combinan)</span></div>`);
-    for (const c of nums) { const r = N[c.key] || {}; out.push(`<label class="fctl fnum"><span>${esc(c.label)}</span><span class="fnumrow"><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="min" placeholder="mín." aria-label="${esc(c.label)} mínimo" value="${esc(r.min ?? '')}"><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="max" placeholder="máx." aria-label="${esc(c.label)} máximo" value="${esc(r.max ?? '')}"></span></label>`); }
+    out.push(`<div class="fctl fnumhead"><span>Filtrar por cifra: mínimo y máximo de cada columna (se combinan); o solo las filas sin ese dato</span></div>`);
+    for (const c of nums) {
+      const r = N[c.key] || {}, vals = rows.map(x => x[c.key]).filter(v => typeof v === 'number');
+      let lo = Infinity, hi = -Infinity; for (const v of vals) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      const rango = vals.length ? `<small class="fnumrango">${nf(lo)} – ${nf(hi)}</small>` : '';
+      out.push(`<label class="fctl fnum"><span>${esc(c.label)} ${rango}</span><span class="fnumrow"><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="min" placeholder="mín." aria-label="${esc(c.label)} mínimo" value="${esc(r.min ?? '')}" ${r.vacio ? 'disabled' : ''}><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="max" placeholder="máx." aria-label="${esc(c.label)} máximo" value="${esc(r.max ?? '')}" ${r.vacio ? 'disabled' : ''}><label class="fnumvacio"><input type="checkbox" data-fscope="${sc}" data-tnumvacio="${esc(c.key)}" ${r.vacio ? 'checked' : ''}> sin dato</label></span></label>`);
+    }
   }
   out.push(`<div class="fctl fact"><span>&nbsp;</span><button type="button" data-fclear="${sc}">Quitar todos los filtros</button></div>`);
   return out.join('');
 }
 
-export function filterCount(filters) { let k = 0; for (const [key, v] of Object.entries(filters)) { if (key === '__num') { for (const kk in (v || {})) { const r = v[kk]; if (r && (numSet(r.min) || numSet(r.max))) k++; } } else if (v && typeof v === 'object') { if (v.from) k++; if (v.to) k++; } else if (v != null && v !== '') k++; } return k; }
+export function filterCount(filters) { let k = 0; for (const [key, v] of Object.entries(filters)) { if (key === '__num') { for (const kk in (v || {})) { const r = v[kk]; if (r && (numSet(r.min) || numSet(r.max) || r.vacio)) k++; } } else if (v && typeof v === 'object') { if (v.from) k++; if (v.to) k++; } else if (v != null && v !== '') k++; } return k; }
 
 // -- ¿pasa una fila los filtros por columna? (sin la búsqueda por palabras) -----
 export function rowPasses(r, columns, filters) {
@@ -74,14 +90,20 @@ export function rowPasses(r, columns, filters) {
     else { const s = norm(raw); for (const t of norm(v).split(/\s+/)) if (t && !s.includes(t)) return false; }
   }
   const N = f.__num;
-  if (N) for (const key in N) { const n = N[key]; if (!n || !(numSet(n.min) || numSet(n.max))) continue; const x = r[key]; if (typeof x !== 'number') return false; if (numSet(n.min) && x < Number(n.min)) return false; if (numSet(n.max) && x > Number(n.max)) return false; }
+  if (N) for (const key in N) {
+    const n = N[key]; if (!n) continue; const x = r[key];
+    if (n.vacio) { if (typeof x === 'number') return false; continue; }
+    if (!(numSet(n.min) || numSet(n.max))) continue;
+    if (typeof x !== 'number') return false;
+    if (numSet(n.min) && x < Number(n.min)) return false; if (numSet(n.max) && x > Number(n.max)) return false;
+  }
   return true;
 }
 
 export function chipsHtml(columns, filters, scope) {
   const f = filters, out = [], sc = scope || '', lab = k => columns.find(c => c.key === k)?.label || k;
   for (const [key, v] of Object.entries(f)) {
-    if (key === '__num') { for (const kk in (v || {})) { const r = v[kk]; if (r && (numSet(r.min) || numSet(r.max))) out.push(`<button class="chip" data-fscope="${sc}" data-tremove="__num" data-part="${esc(kk)}" title="Quitar filtro">${esc(lab(kk))}${numSet(r.min) ? ' ≥ ' + esc(r.min) : ''}${numSet(r.max) ? ' ≤ ' + esc(r.max) : ''} ×</button>`); } }
+    if (key === '__num') { for (const kk in (v || {})) { const r = v[kk]; if (r && (numSet(r.min) || numSet(r.max) || r.vacio)) out.push(`<button class="chip" data-fscope="${sc}" data-tremove="__num" data-part="${esc(kk)}" title="Quitar filtro">${esc(lab(kk))}${r.vacio ? ' sin dato' : (numSet(r.min) ? ' ≥ ' + esc(r.min) : '') + (numSet(r.max) ? ' ≤ ' + esc(r.max) : '')} ×</button>`); } }
     else if (v && typeof v === 'object') { if (v.from) out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" data-part="from" title="Quitar filtro">${esc(lab(key))} desde ${esc(v.from)} ×</button>`); if (v.to) out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" data-part="to" title="Quitar filtro">${esc(lab(key))} hasta ${esc(v.to)} ×</button>`); }
     else if (v != null && v !== '') out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" title="Quitar filtro">${esc(lab(key))}: ${esc(v)} ×</button>`);
   }
@@ -90,23 +112,36 @@ export function chipsHtml(columns, filters, scope) {
 
 export function applyFilterTo(filters, el) {
   if (el.dataset.tfilter !== undefined) { const k = el.dataset.tfilter, p = el.dataset.part; if (p) { const cur = filters[k] && typeof filters[k] === 'object' ? filters[k] : {}; filters[k] = { ...cur, [p]: el.value }; } else filters[k] = el.value; return true; }
-  if (el.dataset.tnumk !== undefined) { const k = el.dataset.tnumk, box = el.closest('.filterbar') || document, g = p => box.querySelector(`[data-tnumk="${CSS.escape(k)}"][data-part="${p}"]`)?.value ?? ''; filters.__num = { ...(filters.__num || {}), [k]: { min: g('min'), max: g('max') } }; return true; }
+  if (el.dataset.tnumk !== undefined) { const k = el.dataset.tnumk, box = el.closest('.filterbar') || document, g = p => box.querySelector(`[data-tnumk="${CSS.escape(k)}"][data-part="${p}"]`)?.value ?? '', vacio = box.querySelector(`[data-tnumvacio="${CSS.escape(k)}"]`)?.checked || false; filters.__num = { ...(filters.__num || {}), [k]: { min: g('min'), max: g('max'), vacio } }; return true; }
+  if (el.dataset.tnumvacio !== undefined) { const k = el.dataset.tnumvacio, cur = (filters.__num || {})[k] || {}; filters.__num = { ...(filters.__num || {}), [k]: { ...cur, vacio: el.checked } }; return true; }
   return false;
 }
 
 export function removeFilterFrom(filters, key, part, bar) {
   const q = s => bar ? bar.querySelector(s) : null;
-  if (key === '__num') { if (part) { if (filters.__num) delete filters.__num[part]; if (bar) bar.querySelectorAll(`[data-tnumk="${CSS.escape(part)}"]`).forEach(el => { el.value = ''; }); if (filters.__num && !Object.keys(filters.__num).length) delete filters.__num; } else { delete filters.__num; if (bar) bar.querySelectorAll('[data-tnumk]').forEach(el => { el.value = ''; }); } }
+  if (key === '__num') { if (part) { if (filters.__num) delete filters.__num[part]; if (bar) { bar.querySelectorAll(`[data-tnumk="${CSS.escape(part)}"]`).forEach(el => { el.value = ''; el.disabled = false; }); const cb = bar.querySelector(`[data-tnumvacio="${CSS.escape(part)}"]`); if (cb) cb.checked = false; } if (filters.__num && !Object.keys(filters.__num).length) delete filters.__num; } else { delete filters.__num; if (bar) { bar.querySelectorAll('[data-tnumk]').forEach(el => { el.value = ''; el.disabled = false; }); bar.querySelectorAll('[data-tnumvacio]').forEach(el => { el.checked = false; }); } } }
   else if (part) { if (filters[key] && typeof filters[key] === 'object') { delete filters[key][part]; if (!filters[key].from && !filters[key].to) delete filters[key]; } const el = q(`[data-tfilter="${CSS.escape(key)}"][data-part="${part}"]`); if (el) el.value = ''; }
   else { delete filters[key]; const el = q(`[data-tfilter="${CSS.escape(key)}"]`); if (el) el.value = ''; }
 }
 
+// -- persistencia opcional por tabla (localStorage; nunca revienta si no hay acceso) -------------
+const PERSIST_PREFIX = 'rz_filtro_';
+function cargarPersistido(persistKey) {
+  if (!persistKey) return null;
+  try { const raw = localStorage.getItem(PERSIST_PREFIX + persistKey); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+function guardarPersistido(F) {
+  if (!F.persistKey) return;
+  try { localStorage.setItem(PERSIST_PREFIX + F.persistKey, JSON.stringify({ query: F.st.query, filters: F.st.filters, showFilters: F.st.showFilters })); } catch { /* privado/lleno: se pierde el recuerdo, no la app */ }
+}
+
 // -- una instancia de filtro por tabla -----------------------------------------
 export const _filtros = new Map(); let _filtroSeq = 0;
-export function crearFiltro(cols, rows, redibujar) {
+export function crearFiltro(cols, rows, redibujar, persistKey) {
   const id = 'f' + (++_filtroSeq);
   for (const c of cols) if (c.filter === undefined) c.filter = filterKind(c, rows);
-  const F = { id, cols, redibujar, st: { query: '', filters: {}, showFilters: false } };
+  const guardado = cargarPersistido(persistKey);
+  const F = { id, cols, redibujar, persistKey, st: { query: guardado?.query || '', filters: guardado?.filters || {}, showFilters: !!guardado?.showFilters } };
   _filtros.set(id, F);
   return F;
 }
@@ -115,10 +150,16 @@ export function filtroToolsHTML(F, rows) {
   const k = filterCount(F.st.filters), open = F.st.showFilters || k > 0;
   return `<div class="tabletools"><div class="tabletools-l"><input type="search" data-fsearch="${F.id}" placeholder="Buscar palabras (da igual tildes o mayúsculas)…" value="${esc(F.st.query)}"><button type="button" data-ftoggle="${F.id}" class="${open ? 'on' : ''}" aria-expanded="${open}">Filtros${k ? ' · ' + k : ''}</button></div><span data-fcount="${F.id}"></span></div><div class="filterbar" data-fbar="${F.id}" ${open ? '' : 'hidden'}>${filterBarHtml(F.cols, rows, F.st.filters, F.id)}</div><div class="active-filters tchips" data-fchips="${F.id}">${chipsHtml(F.cols, F.st.filters, F.id)}</div>`;
 }
-// filas que pasan la búsqueda por palabras + los filtros por columna
+// filas que pasan la búsqueda por palabras + los filtros por columna (el texto normalizado de cada
+// fila se guarda una vez por tabla y se reutiliza: en tablas de miles de filas, teclear ya no recalcula
+// todo desde cero en cada pulsación).
 export function filtroAplica(F, rows) {
   const terms = norm(F.st.query).split(/\s+/).filter(Boolean);
-  return rows.filter(r => rowPasses(r, F.cols, F.st.filters) && (!terms.length || terms.every(t => norm(F.cols.map(c => c.html ? '' : r[c.key]).join('\u0001')).includes(t))));
+  const pasan = rows.filter(r => rowPasses(r, F.cols, F.st.filters));
+  if (!terms.length) return pasan;
+  const blob = F._blob || (F._blob = new WeakMap());
+  const textoDe = r => { let s = blob.get(r); if (s === undefined) { s = norm(F.cols.map(c => c.html ? '' : r[c.key]).join('\u0001')); blob.set(r, s); } return s; };
+  return pasan.filter(r => terms.every(t => textoDe(r).includes(t)));
 }
 // actualiza contador, chips y botón tras un cambio (sin re-pintar la barra)
 export function filtroRefresca(F, total) {
@@ -126,6 +167,7 @@ export function filtroRefresca(F, total) {
   if (cnt) cnt.textContent = `${nf(total)} filas${(F.st.query || k) ? ' encontradas' : ''}`;
   const ch = document.querySelector(`[data-fchips="${F.id}"]`); if (ch) ch.innerHTML = chipsHtml(F.cols, F.st.filters, F.id);
   const bt = document.querySelector(`[data-ftoggle="${F.id}"]`); if (bt) { bt.textContent = 'Filtros' + (k ? ' · ' + k : ''); bt.classList.toggle('on', k > 0 || F.st.showFilters); }
+  guardarPersistido(F);
 }
 
 // -- cableado: UNA vez; enruta los eventos a la instancia por data-* -----------
@@ -135,13 +177,15 @@ export function wireFiltros() {
   document.addEventListener('input', e => {
     const t = e.target;
     if (t.dataset.fsearch !== undefined) { const F = _filtros.get(t.dataset.fsearch); if (F) { F.st.query = t.value; F.redibujar(); } return; }
-    if (t.dataset.tfilter === undefined && t.dataset.tnumk === undefined) return;
-    const F = _filtros.get(t.dataset.fscope || ''); if (F && applyFilterTo(F.st.filters, t)) F.redibujar();
+    if (t.dataset.tfilter === undefined && t.dataset.tnumk === undefined && t.dataset.tnumvacio === undefined) return;
+    const F = _filtros.get(t.dataset.fscope || ''); if (!F) return;
+    if (t.dataset.tnumvacio !== undefined) { const row = t.closest('.fnumrow'); if (row) row.querySelectorAll('input[data-tnumk]').forEach(el => { el.disabled = t.checked; }); }
+    if (applyFilterTo(F.st.filters, t)) F.redibujar();
   });
   document.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.ftoggle !== undefined) { const F = _filtros.get(b.dataset.ftoggle); if (F) { F.st.showFilters = !F.st.showFilters; const bar = document.querySelector(`[data-fbar="${F.id}"]`); if (bar) bar.hidden = !F.st.showFilters; b.setAttribute('aria-expanded', String(F.st.showFilters)); b.classList.toggle('on', F.st.showFilters || filterCount(F.st.filters) > 0); } return; }
-    if (b.dataset.fclear !== undefined) { const F = _filtros.get(b.dataset.fclear); if (F) { F.st.filters = {}; const bar = document.querySelector(`[data-fbar="${F.id}"]`); if (bar) bar.querySelectorAll('input,select').forEach(el => { el.value = ''; }); F.redibujar(); } return; }
+    if (b.dataset.ftoggle !== undefined) { const F = _filtros.get(b.dataset.ftoggle); if (F) { F.st.showFilters = !F.st.showFilters; const bar = document.querySelector(`[data-fbar="${F.id}"]`); if (bar) bar.hidden = !F.st.showFilters; b.setAttribute('aria-expanded', String(F.st.showFilters)); b.classList.toggle('on', F.st.showFilters || filterCount(F.st.filters) > 0); guardarPersistido(F); } return; }
+    if (b.dataset.fclear !== undefined) { const F = _filtros.get(b.dataset.fclear); if (F) { F.st.filters = {}; const bar = document.querySelector(`[data-fbar="${F.id}"]`); if (bar) bar.querySelectorAll('input,select').forEach(el => { if (el.type === 'checkbox') el.checked = false; else el.value = ''; el.disabled = false; }); F.redibujar(); } return; }
     if (b.dataset.tremove !== undefined) { const F = _filtros.get(b.dataset.fscope || ''); if (F) { removeFilterFrom(F.st.filters, b.dataset.tremove, b.dataset.part, document.querySelector(`[data-fbar="${b.dataset.fscope || ''}"]`)); F.redibujar(); } return; }
   });
 }

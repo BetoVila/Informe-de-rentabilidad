@@ -347,12 +347,17 @@ function filterBarHtml(columns,rows,filters,scope){
   else{const opts=[...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,300).map(e=>e[0]).sort((a,b)=>a.localeCompare(b,'es'));const lid='dl_'+sc+'_'+String(c.key).replace(/\W/g,'_');out.push(`<label class="fctl"><span>${esc(c.label)}</span><input type="search" list="${lid}" data-fscope="${sc}" data-tfilter="${esc(c.key)}" placeholder="escribe (varias palabras)…" autocomplete="off" value="${esc(v||'')}"><datalist id="${lid}">${opts.map(o=>`<option value="${esc(o)}">`).join('')}</datalist></label>`);}
  }
  const nums=columns.filter(c=>c.filter==='number'),N=f.__num||{};
- if(nums.length){out.push(`<div class="fctl fnumhead"><span>Filtrar por cifra: mínimo y máximo de cada columna (se combinan)</span></div>`);
-  for(const c of nums){const r=N[c.key]||{};out.push(`<label class="fctl fnum"><span>${esc(c.label)}</span><span class="fnumrow"><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="min" placeholder="mín." aria-label="${esc(c.label)} mínimo" value="${esc(r.min??'')}"><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="max" placeholder="máx." aria-label="${esc(c.label)} máximo" value="${esc(r.max??'')}"></span></label>`);}}
+ if(nums.length){out.push(`<div class="fctl fnumhead"><span>Filtrar por cifra: mínimo y máximo de cada columna (se combinan); o solo las filas sin ese dato</span></div>`);
+  for(const c of nums){
+   const r=N[c.key]||{},vals=rows.map(x=>x[c.key]).filter(v=>typeof v==='number');
+   let lo=Infinity,hi=-Infinity;for(const v of vals){if(v<lo)lo=v;if(v>hi)hi=v;}
+   const rango=vals.length?`<small class="fnumrango">${nf(lo)} – ${nf(hi)}</small>`:'';
+   out.push(`<label class="fctl fnum"><span>${esc(c.label)} ${rango}</span><span class="fnumrow"><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="min" placeholder="mín." aria-label="${esc(c.label)} mínimo" value="${esc(r.min??'')}" ${r.vacio?'disabled':''}><input type="number" step="any" data-fscope="${sc}" data-tnumk="${esc(c.key)}" data-part="max" placeholder="máx." aria-label="${esc(c.label)} máximo" value="${esc(r.max??'')}" ${r.vacio?'disabled':''}><label class="fnumvacio"><input type="checkbox" data-fscope="${sc}" data-tnumvacio="${esc(c.key)}" ${r.vacio?'checked':''}> sin dato</label></span></label>`);
+  }}
  out.push(`<div class="fctl fact"><span>&nbsp;</span><button type="button" ${sc?`data-fclear="${sc}"`:'id="tableClearFilters"'}>Quitar todos los filtros</button></div>`);
  return out.join('');
 }
-function filterCount(filters){let k=0;for(const [key,v] of Object.entries(filters)){if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)))k++;}}else if(v&&typeof v==='object'){if(v.from)k++;if(v.to)k++;}else if(v!=null&&v!=='')k++;}return k;}
+function filterCount(filters){let k=0;for(const [key,v] of Object.entries(filters)){if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)||r.vacio))k++;}}else if(v&&typeof v==='object'){if(v.from)k++;if(v.to)k++;}else if(v!=null&&v!=='')k++;}return k;}
 const activeFilterCount=()=>filterCount(tableState.filters);
 function rowPasses(r,columns,filters){
  const f=filters;
@@ -364,7 +369,13 @@ function rowPasses(r,columns,filters){
   else{const s=norm(raw);for(const t of norm(v).split(/\s+/))if(t&&!s.includes(t))return false;}
  }
  const N=f.__num;
- if(N)for(const key in N){const n=N[key];if(!n||!(numSet(n.min)||numSet(n.max)))continue;const x=r[key];if(typeof x!=='number')return false;if(numSet(n.min)&&x<Number(n.min))return false;if(numSet(n.max)&&x>Number(n.max))return false;}
+ if(N)for(const key in N){
+  const n=N[key];if(!n)continue;const x=r[key];
+  if(n.vacio){if(typeof x==='number')return false;continue;}
+  if(!(numSet(n.min)||numSet(n.max)))continue;
+  if(typeof x!=='number')return false;
+  if(numSet(n.min)&&x<Number(n.min))return false;if(numSet(n.max)&&x>Number(n.max))return false;
+ }
  return true;
 }
 // Texto de la fila para la búsqueda por palabras (se calcula una vez por fila y tabla)
@@ -372,7 +383,7 @@ const hayOf=(r,def)=>{if(r.__hayT!==def.title){r.__hay=def.columns.map(c=>c.html
 function chipsHtml(columns,filters,scope){
  const f=filters,out=[],sc=scope||'',lab=k=>columns.find(c=>c.key===k)?.label||k;
  for(const [key,v] of Object.entries(f)){
-  if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)))out.push(`<button class="chip" data-fscope="${sc}" data-tremove="__num" data-part="${esc(kk)}" title="Quitar filtro">${esc(lab(kk))}${numSet(r.min)?' ≥ '+esc(r.min):''}${numSet(r.max)?' ≤ '+esc(r.max):''} ×</button>`);}}
+  if(key==='__num'){for(const kk in (v||{})){const r=v[kk];if(r&&(numSet(r.min)||numSet(r.max)||r.vacio))out.push(`<button class="chip" data-fscope="${sc}" data-tremove="__num" data-part="${esc(kk)}" title="Quitar filtro">${esc(lab(kk))}${r.vacio?' sin dato':(numSet(r.min)?' ≥ '+esc(r.min):'')+(numSet(r.max)?' ≤ '+esc(r.max):'')} ×</button>`);}}
   else if(v&&typeof v==='object'){if(v.from)out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" data-part="from" title="Quitar filtro">${esc(lab(key))} desde ${esc(v.from)} ×</button>`);if(v.to)out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" data-part="to" title="Quitar filtro">${esc(lab(key))} hasta ${esc(v.to)} ×</button>`);}
   else if(v!=null&&v!=='')out.push(`<button class="chip" data-fscope="${sc}" data-tremove="${esc(key)}" title="Quitar filtro">${esc(lab(key))}: ${esc(v)} ×</button>`);
  }
@@ -380,19 +391,20 @@ function chipsHtml(columns,filters,scope){
 }
 function applyFilterTo(filters,el){   // aplica el cambio de UN control al objeto de filtros dado (no redibuja)
  if(el.dataset.tfilter!==undefined){const k=el.dataset.tfilter,p=el.dataset.part;if(p){const cur=filters[k]&&typeof filters[k]==='object'?filters[k]:{};filters[k]={...cur,[p]:el.value};}else filters[k]=el.value;return true;}
- if(el.dataset.tnumk!==undefined){const k=el.dataset.tnumk,box=el.closest('.filterbar')||document,g=p=>box.querySelector(`[data-tnumk="${CSS.escape(k)}"][data-part="${p}"]`)?.value??'';filters.__num={...(filters.__num||{}),[k]:{min:g('min'),max:g('max')}};return true;}
+ if(el.dataset.tnumk!==undefined){const k=el.dataset.tnumk,box=el.closest('.filterbar')||document,g=p=>box.querySelector(`[data-tnumk="${CSS.escape(k)}"][data-part="${p}"]`)?.value??'',vacio=box.querySelector(`[data-tnumvacio="${CSS.escape(k)}"]`)?.checked||false;filters.__num={...(filters.__num||{}),[k]:{min:g('min'),max:g('max'),vacio}};return true;}
+ if(el.dataset.tnumvacio!==undefined){const k=el.dataset.tnumvacio,cur=(filters.__num||{})[k]||{};filters.__num={...(filters.__num||{}),[k]:{...cur,vacio:el.checked}};return true;}
  return false;
 }
 function removeFilterFrom(filters,key,part,bar){
  const q=s=>bar?bar.querySelector(s):null;
- if(key==='__num'){if(part){if(filters.__num)delete filters.__num[part];if(bar)bar.querySelectorAll(`[data-tnumk="${CSS.escape(part)}"]`).forEach(el=>{el.value='';});if(filters.__num&&!Object.keys(filters.__num).length)delete filters.__num;}else{delete filters.__num;if(bar)bar.querySelectorAll('[data-tnumk]').forEach(el=>{el.value='';});}}
+ if(key==='__num'){if(part){if(filters.__num)delete filters.__num[part];if(bar){bar.querySelectorAll(`[data-tnumk="${CSS.escape(part)}"]`).forEach(el=>{el.value='';el.disabled=false;});const cb=bar.querySelector(`[data-tnumvacio="${CSS.escape(part)}"]`);if(cb)cb.checked=false;}if(filters.__num&&!Object.keys(filters.__num).length)delete filters.__num;}else{delete filters.__num;if(bar){bar.querySelectorAll('[data-tnumk]').forEach(el=>{el.value='';el.disabled=false;});bar.querySelectorAll('[data-tnumvacio]').forEach(el=>{el.checked=false;});}}}
  else if(part){if(filters[key]&&typeof filters[key]==='object'){delete filters[key][part];if(!filters[key].from&&!filters[key].to)delete filters[key];}const el=q(`[data-tfilter="${CSS.escape(key)}"][data-part="${part}"]`);if(el)el.value='';}
  else{delete filters[key];const el=q(`[data-tfilter="${CSS.escape(key)}"]`);if(el)el.value='';}
 }
 // setTable (scope '', estado global tableState): envoltorios sobre el módulo.
 function removeFilter(key,part){removeFilterFrom(tableState.filters,key,part,$('tableFilterBar'));tableState.page=0;drawTable();}
 function applyFilterControl(el){
- if(el.dataset.tfilter===undefined&&el.dataset.tnumk===undefined)return;
+ if(el.dataset.tfilter===undefined&&el.dataset.tnumk===undefined&&el.dataset.tnumvacio===undefined)return;
  const sc=el.dataset.fscope||'';
  if(sc){const F=_filtros.get(sc);if(F&&applyFilterTo(F.st.filters,el))F.redibujar();return;}
  if(applyFilterTo(tableState.filters,el)){tableState.page=0;drawTable();}
@@ -400,26 +412,39 @@ function applyFilterControl(el){
 // ===== crearFiltro: una instancia de filtro para CUALQUIER tabla que no sea setTable (Actividad, Por cliente, mini-tablas).
 // Guarda su estado, pinta su barra (búsqueda + filtros por columna + chips) y filtra su array. Misma lógica que setTable. =====
 const _filtros=new Map();let _filtroSeq=0;
-function crearFiltro(cols,rows,redibujar){
+const FILTRO_PERSIST='rz_filtro_';
+function crearFiltro(cols,rows,redibujar,persistKey){
  const id='f'+(++_filtroSeq);
  for(const c of cols)if(c.filter===undefined)c.filter=filterKind(c,rows);
- const F={id,cols,redibujar,st:{query:'',filters:{},showFilters:false}};
+ let guardado=null;if(persistKey)try{const raw=localStorage.getItem(FILTRO_PERSIST+persistKey);if(raw)guardado=JSON.parse(raw);}catch{}
+ const F={id,cols,redibujar,persistKey,st:{query:guardado?.query||'',filters:guardado?.filters||{},showFilters:!!guardado?.showFilters}};
  _filtros.set(id,F);
  return F;
+}
+function guardarFiltroPersistido(F){
+ if(!F.persistKey)return;
+ try{localStorage.setItem(FILTRO_PERSIST+F.persistKey,JSON.stringify({query:F.st.query,filters:F.st.filters,showFilters:F.st.showFilters}));}catch{}
 }
 function filtroToolsHTML(F,rows){   // barra de herramientas + barra de filtros + chips para una instancia
  const k=filterCount(F.st.filters),open=F.st.showFilters||k>0;
  return `<div class="tabletools"><div class="tabletools-l"><input type="search" data-fsearch="${F.id}" placeholder="Buscar palabras (da igual tildes o mayúsculas)…" value="${esc(F.st.query)}"><button type="button" data-ftoggle="${F.id}" class="${open?'on':''}" aria-expanded="${open}">Filtros${k?' · '+k:''}</button></div><span data-fcount="${F.id}"></span></div><div class="filterbar" data-fbar="${F.id}" ${open?'':'hidden'}>${filterBarHtml(F.cols,rows,F.st.filters,F.id)}</div><div class="active-filters tchips" data-fchips="${F.id}">${chipsHtml(F.cols,F.st.filters,F.id)}</div>`;
 }
-function filtroAplica(F,rows){   // filas que pasan la búsqueda por palabras + los filtros por columna de esta instancia
+// filas que pasan la búsqueda por palabras + los filtros por columna de esta instancia; el texto normalizado de cada
+// fila se cachea por instancia (F._blob) para no recalcularlo entero en cada tecla en tablas grandes.
+function filtroAplica(F,rows){
  const terms=norm(F.st.query).split(/\s+/).filter(Boolean);
- return rows.filter(r=>rowPasses(r,F.cols,F.st.filters)&&(!terms.length||terms.every(t=>norm(F.cols.map(c=>c.html?'':r[c.key]).join('\u0001')).includes(t))));
+ const pasan=rows.filter(r=>rowPasses(r,F.cols,F.st.filters));
+ if(!terms.length)return pasan;
+ const blob=F._blob||(F._blob=new WeakMap());
+ const textoDe=r=>{let s=blob.get(r);if(s===undefined){s=norm(F.cols.map(c=>c.html?'':r[c.key]).join('\u0001'));blob.set(r,s);}return s;};
+ return pasan.filter(r=>terms.every(t=>textoDe(r).includes(t)));
 }
 function filtroRefresca(F,total){   // actualiza contador, chips y botón tras un cambio de filtro (sin re-pintar la barra)
  const cnt=document.querySelector(`[data-fcount="${F.id}"]`),k=filterCount(F.st.filters);
  if(cnt)cnt.textContent=`${nf(total)} filas${(F.st.query||k)?' encontradas':''}`;
  const ch=document.querySelector(`[data-fchips="${F.id}"]`);if(ch)ch.innerHTML=chipsHtml(F.cols,F.st.filters,F.id);
  const bt=document.querySelector(`[data-ftoggle="${F.id}"]`);if(bt){bt.textContent='Filtros'+(k?' · '+k:'');bt.classList.toggle('on',k>0||F.st.showFilters);}
+ guardarFiltroPersistido(F);
 }
 function drawTable(){
  const def=tableDefinition;if(!def||!$('tableArea'))return;
@@ -1372,9 +1397,9 @@ function bind(){
   if(b.dataset.tcols){tableState.allCols=b.dataset.tcols==='all';document.querySelectorAll('[data-tcols]').forEach(x=>x.classList.toggle('selected',x===b));drawTable();return;}
   if(b.id==='themeToggle'){document.documentElement.dataset.theme=temaOscuro()?'light':'dark';try{localStorage.setItem('rz_tema',document.documentElement.dataset.theme);}catch(err){}temaBoton();renderContent();return;}
   if(b.id==='tableFilters'){tableState.showFilters=!tableState.showFilters;const bar=$('tableFilterBar');if(bar)bar.hidden=!tableState.showFilters;b.setAttribute('aria-expanded',String(tableState.showFilters));b.classList.toggle('on',tableState.showFilters||activeFilterCount()>0);return;}
-  if(b.id==='tableClearFilters'){tableState.filters={};const bar=$('tableFilterBar');if(bar)bar.querySelectorAll('input,select').forEach(el=>{el.value='';});tableState.page=0;drawTable();return;}
-  if(b.dataset.ftoggle!==undefined){const F=_filtros.get(b.dataset.ftoggle);if(F){F.st.showFilters=!F.st.showFilters;const bar=document.querySelector(`[data-fbar="${F.id}"]`);if(bar)bar.hidden=!F.st.showFilters;b.setAttribute('aria-expanded',String(F.st.showFilters));b.classList.toggle('on',F.st.showFilters||filterCount(F.st.filters)>0);}return;}
-  if(b.dataset.fclear!==undefined){const F=_filtros.get(b.dataset.fclear);if(F){F.st.filters={};const bar=document.querySelector(`[data-fbar="${F.id}"]`);if(bar)bar.querySelectorAll('input,select').forEach(el=>{el.value='';});F.redibujar();}return;}
+  if(b.id==='tableClearFilters'){tableState.filters={};const bar=$('tableFilterBar');if(bar)bar.querySelectorAll('input,select').forEach(el=>{if(el.type==='checkbox')el.checked=false;else el.value='';el.disabled=false;});tableState.page=0;drawTable();return;}
+  if(b.dataset.ftoggle!==undefined){const F=_filtros.get(b.dataset.ftoggle);if(F){F.st.showFilters=!F.st.showFilters;const bar=document.querySelector(`[data-fbar="${F.id}"]`);if(bar)bar.hidden=!F.st.showFilters;b.setAttribute('aria-expanded',String(F.st.showFilters));b.classList.toggle('on',F.st.showFilters||filterCount(F.st.filters)>0);guardarFiltroPersistido(F);}return;}
+  if(b.dataset.fclear!==undefined){const F=_filtros.get(b.dataset.fclear);if(F){F.st.filters={};const bar=document.querySelector(`[data-fbar="${F.id}"]`);if(bar)bar.querySelectorAll('input,select').forEach(el=>{if(el.type==='checkbox')el.checked=false;else el.value='';el.disabled=false;});F.redibujar();}return;}
   if(b.dataset.tremove!==undefined){const sc=b.dataset.fscope||'';if(sc){const F=_filtros.get(sc);if(F){removeFilterFrom(F.st.filters,b.dataset.tremove,b.dataset.part,document.querySelector(`[data-fbar="${sc}"]`));F.redibujar();}}else removeFilter(b.dataset.tremove,b.dataset.part);return;}
   if(b.dataset.infoHide!==undefined){infoSet(b.dataset.infoHide,true);return;}
   if(b.dataset.infoShow!==undefined){infoSet(b.dataset.infoShow,false);return;}
@@ -1410,6 +1435,7 @@ function bind(){
   if(e.target.id==='vehQ'){_vehQ=e.target.value;const ws=norm(_vehQ).split(/\s+/).filter(Boolean);document.querySelectorAll('#vehItems .mit').forEach(x=>{const h=norm(x.textContent+' '+x.dataset.veh);x.hidden=!ws.every(w=>h.includes(w));});return;}
   if(e.target.id==='tableSearch'){tableState.query=e.target.value;tableState.page=0;drawTable();return;}
   if(e.target.dataset.fsearch!==undefined){const F=_filtros.get(e.target.dataset.fsearch);if(F){F.st.query=e.target.value;F.redibujar();}return;}
+  if(e.target.dataset.tnumvacio!==undefined){const row=e.target.closest('.fnumrow');if(row)row.querySelectorAll('input[data-tnumk]').forEach(el=>{el.disabled=e.target.checked;});}
   applyFilterControl(e.target);
  });
  for(const id of ['from','to','dateBasis','compare','compareFrom','compareTo','costMode','billing'])$(id).addEventListener('change',()=>{if(id==='from'||id==='to')$('quick').value='';$('customCompare').hidden=$('compare').value!=='custom';tableState.page=0;update();});
