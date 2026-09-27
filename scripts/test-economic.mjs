@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {reconcileActivity,costSnapshot} from './economic-activity.mjs';
+import {reconcileActivity,costSnapshot,esComplemento} from './economic-activity.mjs';
 const dated=[{version_coste:2,generado:'2026-09-24T05:00:00'}];
 assert.equal(costSnapshot(dated,'2026-09-24T03:00:00').rows.length,1);
 assert.equal(costSnapshot(dated,'2026-09-25T03:00:00').rows.length,0);
@@ -87,3 +87,50 @@ assert.deepEqual(dos.rows.map(x=>x.imp),[50,70]);
 const cc=reconcileActivity({rows:[carga('Razo','1','7','2026-01-15',[['Razo|26-1',75]]),carga('Razo','1','7','2026-01-15',[['Razo|26-1',25]])]},[linea('Razo','26-1',100,'7050031001')],[cost('Razo',10)]);
 assert.deepEqual(cc.rows.map(x=>x.costeCanonico.componentes.gasoil),[7.5,2.5]);
 console.log('OK conciliacion: sociedades aisladas, facturas sin viaje, fechas, abonos, rechazo del coste antiguo, R solo con evidencia por viaje y enlace exacto carga -> factura (26-1, 26-24, minimos aparte, rectificativas, fuera de periodo, dos facturas).');
+
+// ---- esComplemento: revision 27/09 tras el aviso de ABONO (COMBUSTIBLE/PEAJE/COMISION a secas se quitaron por dar
+// falsos positivos reales sin aportar cobertura que no diera ya CLAUSULA/REVISON/COMPLEMENT/COMPLEMETO).
+assert.equal(esComplemento('TRANSPORTE DE ABONO ORGANICO'),false,'abono = fertilizante, una carga real');
+assert.equal(esComplemento('ABONO POR ERROR EN FACTURACION'),true);
+assert.equal(esComplemento('ABONO GASOIL DEL MES DE JUNIO'),true);
+assert.equal(esComplemento('SUMINISTRO DE COMBUSTIBLE A OBRA'),false,'venta real de combustible, no un ajuste');
+assert.equal(esComplemento('TRANSPORTE MADRID-CORUÑA CON PEAJES INCLUIDOS'),false,'porte real, no un peaje aparte');
+assert.equal(esComplemento('COMISION AGENCIA POR PORTE INTERNACIONAL'),false,'porte real, no una comision aparte');
+assert.equal(esComplemento('CLAUSULA COMBUSTIBLE MES DE JULIO'),true,'clausula si es un ajuste (cubierto por CLAUSULA)');
+assert.equal(esComplemento('GASTOS AUTOPISTAS'),true);assert.equal(esComplemento('GSATOS AUTOPISTAS'),true,'error de tecleo real');
+
+// ---- completarCostes: 20 cargas de referencia completas y no estimadas (ratio gasoil 0,2 / conductor 0,1 por € de venta).
+const ref=Array.from({length:20},(_,i)=>({c:'Razo',v:'ref'+i,cant:'ref'+i,albaranes:['ref'+i],imp:100,cli:'Cliente',mes:'2026-01',dia:'2026-01-15'}));
+const refCost=i=>({version_coste:2,empresa:'Razo',viaje:'ref'+i,cantera:'ref'+i,coste:{gasoil:20,conductor:10,material:0},coste_completo:true,faltantes:[]});
+const refCosts=ref.map((_,i)=>refCost(i));
+// Complemento de servicio (r.complemento) con un coste PARCIAL de Tarifas (d existe pero incompleto): debe ir a coste 0
+// por regla, no caer en la estimacion por proporcion inventando un coste de un complemento sin carga fisica propia.
+const compl={c:'Razo',v:'compl1',cant:'compl1',albaranes:['compl1'],imp:500,cli:'Cliente',mes:'2026-01',dia:'2026-01-15',complemento:true};
+const complCost={version_coste:2,empresa:'Razo',viaje:'compl1',cantera:'compl1',coste:{gasoil:999},coste_completo:false,faltantes:['litros']};
+const rc=reconcileActivity({rows:[...ref,compl]},[],[...refCosts,complCost]);
+const rcompl=rc.rows.find(x=>x.v==='compl1');
+assert.equal(rcompl.costeCanonico.completo,true);assert.equal(rcompl.costeCanonico.estimado,false);
+assert.equal(rcompl.costeCanonico.sinCostePropio,true);assert.deepEqual(rcompl.costeCanonico.componentes,{});
+assert.equal(rc.control.costesCompletados.complemento,1);
+
+// Coste con un motivo de "falta" que esta lista aun no traduce a un componente: no se acepta el parcial (999 inventado
+// de mentira en el propio test), se re-estima entero con la proporcion de las 20 cargas de referencia.
+const desconocido={c:'Razo',v:'desc1',cant:'desc1',albaranes:['desc1'],imp:500,cli:'Cliente',mes:'2026-01',dia:'2026-01-15'};
+const desconocidoCost={version_coste:2,empresa:'Razo',viaje:'desc1',cantera:'desc1',coste:{gasoil:999},coste_completo:false,faltantes:['motivo_que_tarifas_aun_no_manda']};
+const rd=reconcileActivity({rows:[...ref,desconocido]},[],[...refCosts,desconocidoCost]);
+const rdesc=rd.rows.find(x=>x.v==='desc1');
+near(rdesc.costeCanonico.componentes.gasoil,100,'500*(20*20/2000): se re-estima, no se queda con el 999 parcial');
+assert.equal(rd.control.costesCompletados.estimado,1,'no cuenta como "completado" (no se fio del coste parcial de Tarifas)');
+
+// ---- Rectificacion: emparejar solo cuando NO hay ambiguedad. Dos facturas reales de +80 (mismos importes, servicios
+// distintos) y un abono de -80 que corrige UNA de ellas: no hay forma de saber cual por el orden de llegada, así que
+// ninguna de las dos se marca "rectificada" (se estiman por proporcion en vez de adivinar cual coste 0).
+const ambig=[linea('Razo','RA-1',80,'7050020000'),linea('Razo','RA-2',80,'7050020000'),linea('Razo','RA-3',-80,'7050020000')];
+const ra=reconcileActivity({rows:ref},ambig,[...refCosts]);
+const solos=ra.rows.filter(x=>x.soloFactura&&x.enlaceIngreso==='factura_sin_cargas');
+assert.equal(solos.length,3);
+const positivos=solos.filter(x=>x.imp>0);
+assert.equal(positivos.length,2);
+assert.ok(positivos.every(x=>x.costeCanonico.metodo!=='Factura rectificada y su rectificativa: se anulan y el servicio lleva su coste donde se volvió a facturar.'),'ambiguo: ninguna se da por rectificada');
+assert.ok(positivos.every(x=>x.costeCanonico.estimado===true),'las dos positivas se estiman por proporcion, no coste 0 por regla');
+console.log('OK completarCostes: esComplemento sin los falsos positivos de COMBUSTIBLE/PEAJE/COMISION, complemento con coste parcial va a cero, falta desconocida se re-estima entera, rectificacion ambigua no se empareja.');

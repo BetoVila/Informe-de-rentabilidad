@@ -78,13 +78,23 @@ export function reconcileActivity(activity, invoices, costs){
 // atrapaba «TRANSPORTE DE ABONO ORGANICO» (abono = fertilizante, una carga real, no un abono/devolucion); Tarifas ya
 // lo protege con test_datos_reales usando las dos frases especificas de abajo. «AUTOPISTA» a secas (antes «GASTOS
 // AUTOPISTA») incluye tambien «GSATOS AUTOPISTAS» (error de tecleo) y «AUTOPISTA» sola.
+// REVISION 27/09 (revision de codigo tras el aviso de ABONO): «COMBUSTIBLE», «PEAJE» y «COMISION» a secas se probaron
+// contra el texto real de gasto_rentabilidad_gesruta_v3.json (40.307 lineas) y no aportan ninguna cobertura que no
+// diera ya CLAUSULA/REVISON/COMPLEMENT/COMPLEMETO (0 lineas reales exclusivas de COMBUSTIBLE; PEAJE y COMISION no
+// aparecen ni una vez), mientras que si atraparian un texto real como «TRANSPORTE... CON PEAJES INCLUIDOS» o una
+// venta real de combustible. Se quitan las tres; «AUTOPISTA» si aporta cobertura real y se mantiene.
 const COMPLEMENTO_KW=['MINIMO','HORA EXTRA','HORAS EXTRA','H. EXTRA','H EXTRA','INCREMENTO','COMIDA','DIETA','DESPLAZAM','ESPERA','DEMORA',
   'PARALIZAC','SUPLEM','FESTIVO','FACTURACION MINIMA','ABONO POR ERROR','ABONO GASOIL','COMPLEMENT','COMPLEMETO','CLAUSULA','REVISION CLAUSULA','REVISON',
-  'REGULARIZACION','DESCARGA ADICIONAL','EXTRAS','AUTOPISTA','DIFERENCIA','COMBUSTIBLE','PEAJE','COMISION'];
+  'REGULARIZACION','DESCARGA ADICIONAL','EXTRAS','AUTOPISTA','DIFERENCIA'];
 const sinTildes=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ');
 export const esComplemento=texto=>{const c=sinTildes(texto);return COMPLEMENTO_KW.some(k=>c.includes(k));};
 const COMPONENTES=['gasoil','conductor','material','subcontrata','peajes','vertedero','otros_albaran','otros_vehiculo','estructura'];
 const FALTA_A_COMPONENTES={'litros':['gasoil'],'precio gasoil':['gasoil'],'horas':['conductor'],'coste hora nomina':['conductor'],'indirectos':['otros_vehiculo','estructura']};
+// El unico "faltante" que se acepta SIN traducir a un componente (Tarifas no reparte la subcontratacion por carga; el
+// metodo lo dice explicito). Cualquier otro motivo que Tarifas no haya mandado aqui (vocabulario nuevo, aun no visto:
+// hoy solo emite litros/horas/este) NO se acepta como coste completo silencioso: se re-estima entero (revision 27/09,
+// tras el aviso de ABONO: mejor sobre-estimar que dar por bueno un coste con un hueco que no sabemos nombrar).
+const FALTANTE_SIN_COMPONENTE='reparto de subcontratacion no acreditado';
 // COSTE QUE FALTA (27/09/2026, Roberto: «hazlo»). El coste por carga lo pone Tarifas (coste_cargas); lo que no trae:
 //  - complemento o ajuste (sin carga fisica propia: su coste ya va en las cargas del viaje), diferencia de una factura con sus
 //    cargas, abono, factura rectificada con su rectificativa, e ingresos que no son transporte (cuentas 75/77/79: venta de
@@ -111,8 +121,11 @@ function completarCostes(rows){
   // parejas factura rectificada + rectificativa (misma empresa y cliente, importes opuestos) entre las lineas sin carga
   const opuestas=new Map();
   for(const r of rows)if(r.soloFactura&&!r.ajusteFactura){const k=r.c+'|'+(r.cli||'')+'|'+Math.round(Math.abs(r.imp)*100);if(!opuestas.has(k))opuestas.set(k,[]);opuestas.get(k).push(r);}
+  // Solo se empareja cuando NO hay ambiguedad (una unica positiva y una unica negativa del mismo importe): con dos o
+  // mas candidatas del mismo importe no hay forma de saber CUAL corrige a CUAL por el orden en que llegan las filas
+  // (revision 27/09, tras el aviso de ABONO: mejor dejar la carga con su coste estimado que adivinar el emparejamiento).
   const rectificadas=new Set();
-  for(const g of opuestas.values()){const pos=g.filter(r=>r.imp>0),neg=g.filter(r=>r.imp<0);for(let i=0;i<Math.min(pos.length,neg.length);i++){rectificadas.add(pos[i]);rectificadas.add(neg[i]);}}
+  for(const g of opuestas.values()){const pos=g.filter(r=>r.imp>0),neg=g.filter(r=>r.imp<0);if(pos.length===1&&neg.length===1){rectificadas.add(pos[0]);rectificadas.add(neg[0]);}}
   for(const r of rows){
     const d=r.costeCanonico;
     if(d?.completo)continue;
@@ -123,16 +136,21 @@ function completarCostes(rows){
       if(/^(75|77|79)/.test(cuenta)){cero(r,'No es transporte (venta de vehículo, alquiler u otros ingresos): sin coste de transporte.');st.sinCostePropio++;continue;}
       if(r.imp<0){cero(r,'Abono: no deshace el coste del servicio que corrige.');st.sinCostePropio++;continue;}
       if(rectificadas.has(r)){cero(r,'Factura rectificada y su rectificativa: se anulan y el servicio lleva su coste donde se volvió a facturar.');st.sinCostePropio++;continue;}
-    }else if(r.complemento&&!d){cero(r,'Complemento del servicio (mínimos, esperas, dietas, cláusula de combustible…): sin coste propio, su coste va en las cargas del viaje.');st.complemento++;continue;}
+    }else if(r.complemento){cero(r,'Complemento del servicio (mínimos, esperas, dietas, cláusula de combustible…): sin coste propio, su coste va en las cargas del viaje.');st.complemento++;continue;}
     const p=proporcion(r),base=r.soloFactura?r.imp:(r.importeAlbaran||0);
     if(!p){st.sinBase++;continue;}
-    // carga con albaranes sin coste en Tarifas: su coste conocido es solo de una parte -> se estima entera
-    const parcial=!!d&&(d.faltantes||[]).includes('coste de albaran sin enlace'),usa=d&&!parcial?d:null;
+    // carga con albaranes sin coste en Tarifas (su coste conocido es solo de una parte) o con un motivo de "falta" que
+    // no sabemos traducir a un componente (vocabulario nuevo de Tarifas, no visto hoy): en los dos casos no nos fiamos
+    // del coste parcial y se estima entera, en vez de aceptarlo completo con el hueco silenciosamente a cero.
+    const parcial=!!d&&(d.faltantes||[]).includes('coste de albaran sin enlace'),
+      reconocido=!d||(d.faltantes||[]).every(f=>FALTA_A_COMPONENTES[f]||f===FALTANTE_SIN_COMPONENTE),
+      usa=d&&!parcial&&reconocido?d:null;
     const faltan=usa?[...new Set((usa.faltantes||[]).flatMap(f=>FALTA_A_COMPONENTES[f]||[]))]:COMPONENTES;
     const comp={...(usa?.componentes||{})};
     for(const c of faltan)comp[c]=p.a.comp[c]/p.a.venta*base;
+    const motivoSinUsar=parcial?'la carga tiene albaranes sin coste en Tarifas':(d&&!reconocido?'el coste de Tarifas está incompleto por un motivo que este informe aún no traduce ('+(d.faltantes||[]).join(', ')+')':'sin coste por carga en Tarifas');
     const metodo=usa?`Tarifas${faltan.length?' + estimación de '+faltan.join(', ')+' (faltaba '+(usa.faltantes||[]).join(', ')+')':' (reparto de subcontratación sin acreditar)'} con la proporción coste/venta de ${p.a.n} cargas ${p.txt}.`
-      :`Estimado: ${parcial?'la carga tiene albaranes sin coste en Tarifas':'sin coste por carga en Tarifas'}${r.soloFactura?' (servicio facturado sin albarán)':''}; proporción coste/venta de ${p.a.n} cargas ${p.txt}.`;
+      :`Estimado: ${motivoSinUsar}${r.soloFactura?' (servicio facturado sin albarán)':''}; proporción coste/venta de ${p.a.n} cargas ${p.txt}.`;
     r.costeCanonico={componentes:comp,completo:true,estimado:true,realConfirmado:false,faltantes:d?.faltantes||[],fuente:usa?'Tarifas + estimación':'Estimado',metodo,generado:d?.generado||null};
     if(usa)st.completado++;else st.estimado++;
     st.eurEstimado+=faltan.reduce((s,c)=>s+(comp[c]||0),0);

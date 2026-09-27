@@ -516,7 +516,6 @@ export function createModel(data) {
         x.coste+=importe;
         if(costeReal){x.costesReales++;x.costesTransporteReales++;x.costeReal+=importe;x.materialReal+=d.aridos;}
         else{if(!d.incompleto||importe)x.costesEstimados++;if(!d.incompleto||transporte)x.costesTransporteEstimados++;x.costeEstimadoImporte+=importe;x.materialEstimado+=d.aridos;}
-        if(d.estimado)x.costeEstimado++;
       }
     };
     const cerrar=x=>{

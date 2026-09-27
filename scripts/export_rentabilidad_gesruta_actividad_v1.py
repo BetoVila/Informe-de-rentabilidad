@@ -249,10 +249,14 @@ def clasificar_unidad(um, cod, con):
 # «ABONO» a secas atrapaba «TRANSPORTE DE ABONO ORGANICO» (abono = fertilizante, una carga real): las dos frases de abajo
 # son las que usa y prueba Tarifas (test_datos_reales). «AUTOPISTA» a secas incluye «GASTOS AUTOPISTA» y el error de
 # tecleo «GSATOS AUTOPISTAS». La misma lista va en scripts/economic-activity.mjs (lineas de factura).
+# REVISION 27/09 (revision de codigo): "COMBUSTIBLE", "PEAJE" y "COMISION" a secas se probaron contra el texto real de
+# 40.307 lineas de factura y no daban ninguna cobertura que no diera ya CLAUSULA/REVISON/COMPLEMENT/COMPLEMETO (0
+# lineas reales exclusivas de COMBUSTIBLE; PEAJE y COMISION no aparecen ni una vez), con el mismo riesgo de "ABONO":
+# atrapar un texto real de un servicio (p.ej. una venta de combustible, o un porte "con peajes incluidos"). Se quitan.
 COMPLEMENTO_KW = ("MINIMO", "HORA EXTRA", "HORAS EXTRA", "H. EXTRA", "H EXTRA", "INCREMENTO", "COMIDA", "DIETA", "DESPLAZAM",
                   "ESPERA", "DEMORA", "PARALIZAC", "SUPLEM", "FESTIVO", "FACTURACION MINIMA", "ABONO POR ERROR", "ABONO GASOIL",
                   "COMPLEMENT", "COMPLEMETO", "CLAUSULA", "REVISION CLAUSULA", "REVISON", "REGULARIZACION", "DESCARGA ADICIONAL",
-                  "EXTRAS", "AUTOPISTA", "DIFERENCIA", "COMBUSTIBLE", "PEAJE", "COMISION")
+                  "EXTRAS", "AUTOPISTA", "DIFERENCIA")
 
 
 def es_complemento(con):
