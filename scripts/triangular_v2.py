@@ -1152,7 +1152,12 @@ def zona_larga(cod, coords, casa):
 
 def visitas_zona(pts, ts, zona, t0, t1, min_parada_s=600):
     """Visitas de la traza a una geocerca entre t0 y t1: tramos contiguos de puntos dentro del radio que contienen una PARADA
-    real (>= min_parada_s parado). Devuelve [{t_in, t_out, parado_s}] en orden. Pasar por delante por la autovia no cuenta."""
+    real (>= min_parada_s parado). Devuelve [{t_in, t_out, parado_s, t_parado_in}] en orden. Pasar por delante por la
+    autovia no cuenta. t_in = el momento de ENTRAR en la geocerca (que puede ser amplia, hasta 10 km, cuando solo se
+    conoce el centro del pueblo): el camion puede seguir circulando varios minutos mas dentro de ella antes de parar de
+    verdad. t_parado_in = el primer punto de la visita en el que YA esta parado (Roberto 28/09/2026, medido en
+    septiembre 2026: usar t_in como hora de llegada adelantaba la descarga una mediana de 5-6 min, siempre en la misma
+    direccion, con el camion circulando a velocidad de carretera en ese instante)."""
     lat, lon, r, _ = zona
     dlat = r / 111.0
     dlon = r / (111.0 * max(0.2, math.cos(math.radians(lat))))
@@ -1163,13 +1168,21 @@ def visitas_zona(pts, ts, zona, t0, t1, min_parada_s=600):
         dentro = abs(q["lat"] - lat) <= dlat and abs(q["lon"] - lon) <= dlon and v1.hav((q["lat"], q["lon"]), (lat, lon)) <= r
         if dentro:
             if cur is None:
-                cur = {"t_in": q["t"], "t_out": q["t"], "parado_s": 0}
+                cur = {"t_in": q["t"], "t_out": q["t"], "parado_s": 0, "t_parado_in": None}
+                ya_parado = (q.get("parada_min") or 0) > 0 if q["f"] == "locatel" else (q["s"] or 0) <= V_PARADO
+                if ya_parado:
+                    cur["t_parado_in"] = q["t"]
             else:
                 dtm = q["t"] - prev["t"]
+                parado_aqui = False
                 if q["f"] == "locatel":
+                    parado_aqui = (q.get("parada_min") or 0) > 0
                     cur["parado_s"] += int((q.get("parada_min") or 0) * 60)
                 elif (q["s"] or 0) <= V_PARADO and dtm <= 900:
+                    parado_aqui = True
                     cur["parado_s"] += dtm
+                if parado_aqui and cur["t_parado_in"] is None:
+                    cur["t_parado_in"] = q["t"]
                 cur["t_out"] = q["t"]
         elif cur is not None:
             if cur["parado_s"] >= min_parada_s:
@@ -1436,15 +1449,18 @@ def triangular_larga(m, idxs, dem, pts, jornadas, coords, fuente, tablas, acts, 
         a, b = bisect.bisect_left(ts, t_ini - 3600), bisect.bisect_right(ts, t_fin + 3600)
         pj = {"pts": pts[a:b]}
         mt = medir(pj, fuente, t_ini, t_fin, tablas, t_ini, t_fin, acts, drvs)
+        # llegada de verdad = cuando el camion ya esta parado dentro de la zona de destino, no cuando entra en ella (puede
+        # seguir circulando varios minutos mas si la zona es ancha - Roberto 28/09/2026, ver docstring de visitas_zona)
+        t_llegada = U.get("t_parado_in") or U["t_in"]
         kv, lv = (None, None) if vacio_desconocido else ((0.0, 0.0) if t_ini >= L["t_in"] else km_litros(pj["pts"], fuente, tablas, t_ini, L["t_in"]))
-        kc, lc = km_litros(pj["pts"], fuente, tablas, L["t_out"], U["t_in"])
+        kc, lc = km_litros(pj["pts"], fuente, tablas, L["t_out"], t_llegada)
         trabajo = sum(max(0, min(t_fin, j["fin"]) - max(t_ini, j["ini"])) for j in jornadas if j["fin"] > t_ini and j["ini"] < t_fin) / 60.0
         mt.update({"km_vacio": kv, "km_cargado": kc, "litros_vacio": lv, "litros_cargado": lc,
                    "min_transcurridos": round((t_fin - t_ini) / 60.0, 1), "duracion_min": round(trabajo, 1),
                    "min_espera": round(max(0.0, trabajo - (mt.get("min_conduccion") or 0)), 1),
                    "metodo": "geo", "confianza": conf, "medido": True, "repartido": False, "t_ini": t_ini, "t_fin": t_fin,
                    "jornada": jornada_de(L["t_out"]), "orden_ciclo": None, "geo_score": 2 * MATCH,
-                   "t_carga_in": L["t_in"], "t_carga_out": L["t_out"], "t_descarga_in": U["t_in"], "t_descarga_out": min(U["t_out"], t_fin),
+                   "t_carga_in": L["t_in"], "t_carga_out": L["t_out"], "t_descarga_in": t_llegada, "t_descarga_out": min(U["t_out"], t_fin),
                    "motivo": "vacio_desconocido_traza_empieza_en_marcha" if vacio_desconocido else None})
         for x in restar:
             rl_ = salida[x["i"]] if salida is not None else None

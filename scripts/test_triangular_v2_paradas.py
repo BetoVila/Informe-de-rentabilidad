@@ -136,6 +136,38 @@ class TestRotuloCargaDescarga(unittest.TestCase):
         self.assertIsNone(t2.rotulo_en_lugar({'lat': 43.0, 'lon': -8.0}, 'XXX', {}, 'Razo', lambda la, lo: None))
 
 
+class TestVisitasZonaLlegadaReal(unittest.TestCase):
+    # Roberto 28/09/2026, medido en septiembre 2026 (nacional, largo recorrido): usar el momento de ENTRAR en la
+    # geocerca del destino (hasta 10 km de radio cuando solo se conoce el centro del pueblo) como hora de llegada
+    # adelantaba la descarga una mediana de 5-6 min, siempre en la misma direccion, con el camion aun circulando a
+    # velocidad de carretera. t_parado_in marca el primer punto YA parado dentro de la zona, no el de entrar en ella.
+    zona = (43.0, -8.0, 1.0, 'nominatim_localidad')
+
+    def test_t_parado_in_llega_mas_tarde_que_t_in_si_sigue_circulando_al_entrar(self):
+        t0 = ep('2026-09-10T10:00')
+        # 5 min circulando ya DENTRO de la zona (velocidad de carretera), luego 12 min parado de verdad
+        pts = tramo(t0, 5, 43.0, 43.0, 80) + tramo(t0 + 5 * 60, 12, 43.0, 43.0, 0)
+        ts = [p['t'] for p in pts]
+        vis = t2.visitas_zona(pts, ts, self.zona, t0, t0 + 3600)
+        self.assertEqual(len(vis), 1)
+        self.assertEqual(vis[0]['t_in'], t0)
+        self.assertEqual(vis[0]['t_parado_in'], t0 + 5 * 60)
+
+    def test_t_parado_in_coincide_con_t_in_si_ya_esta_parado_al_entrar(self):
+        t0 = ep('2026-09-10T10:00')
+        pts = tramo(t0, 12, 43.0, 43.0, 0)   # parado desde que entra
+        ts = [p['t'] for p in pts]
+        vis = t2.visitas_zona(pts, ts, self.zona, t0, t0 + 3600)
+        self.assertEqual(len(vis), 1)
+        self.assertEqual(vis[0]['t_parado_in'], vis[0]['t_in'])
+
+    def test_sin_ninguna_parada_real_no_hay_visita(self):
+        t0 = ep('2026-09-10T10:00')
+        pts = tramo(t0, 12, 43.0, 43.0, 80)   # nunca para, solo pasa por delante
+        ts = [p['t'] for p in pts]
+        self.assertEqual(t2.visitas_zona(pts, ts, self.zona, t0, t0 + 3600), [])
+
+
 class TestDestinoHormigonPorGPS(unittest.TestCase):
     # Roberto 28/09/2026: «en los viajes de hormigon... el lugar de descarga no deberia ser la planta, deberia ser
     # el lugar que te sale en el localizador al triangular el viaje». El albaran de hormigon siempre repite la

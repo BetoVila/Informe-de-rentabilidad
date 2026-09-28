@@ -235,8 +235,13 @@ def medir(tr, t0, t1, tablas, d0=None, d1=None):
     d1 = t1 if d1 is None else min(t1, d1)
     dur = round(max(0, d1 - d0) / 60.0, 1)
     if tr["fuente"] == "locatel":
-        km = sum((q.get("rec") or 0) for q in pts[1:])
-        return {"km": round(km, 2), "km_fuente": "locatel_recorrido", "litros": None, "litros_calibrados": None, "duracion_min": dur}
+        # el "rec" que manda el propio Locatel en cada punto puede perder puntos y quedarse corto (medido: 17-30% por
+        # debajo del GPS real en varios viajes de septiembre 2026, siempre en la misma direccion, nunca por encima) -
+        # igual que Wialon ya tiene un plan B con el GPS cuando falta el contador CAN, aqui se coge el mayor de los dos
+        # (nunca el menor: si el propio "rec" se queda corto, el punto a punto real no baja la cifra, solo puede subirla)
+        km_rec, km_pts = sum((q.get("rec") or 0) for q in pts[1:]), km_gps(pts)
+        km, fuente_km = (km_pts, "gps") if km_pts > km_rec else (km_rec, "locatel_recorrido")
+        return {"km": round(km, 2), "km_fuente": fuente_km, "litros": None, "litros_calibrados": None, "duracion_min": dur}
     tk, tf = (tablas or {}).get("tabla_km"), (tablas or {}).get("tabla_fuel")
     ks = [(q["t"], aplicar_tabla(q["kmc"], tk)) for q in pts if q["kmc"] is not None]
     km = reducir(ks, 2.5) if len(ks) >= 2 else None
