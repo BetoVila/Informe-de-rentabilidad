@@ -309,18 +309,34 @@ export function createModel(data) {
   // por su ingreso. Así un mes sin traza no cuelga su gasto de los meses con traza, ni las bañeras medidas cargan con el
   // gasoil de las hormigoneras sin traza. Un mes sin contabilidad cerrada usa los coeficientes del último mes cerrado
   // (coste ESTIMADO, marcado). El impuesto de sociedades no es coste del viaje (margen antes de impuestos).
+  // Una carga puede tener, dentro de la MISMA factura, alguna línea suelta con un código contable de OTRO tipo (705000
+  // nacional / 705002 bañera / 705003 hormigonera) que el resto — un recargo, una migaja de reparto, un error de
+  // grabación. Antes esa línea salía como un "viaje" aparte: heredaba una porción de km/tiempo PROPORCIONAL a su
+  // ingreso (ridícula: una línea de 0,12 € de una carga de 121,76 € se llevaba el 0,1 % de sus 59 km) y su propio tipo,
+  // así que un viaje real de hormigón podía aparecer también como un viaje fantasma «nacional» de 0,1 km. Roberto
+  // 28/09/2026: fusionarla con el tipo dominante de esa carga ese mes+cliente, dejando camino para revertir sin más
+  // que poner este umbral a 0 (vuelve a salir cada tipo como su propio viaje, tal cual antes).
+  const UMBRAL_FUSION_TIPO_MENOR=0.05;   // un tipo con menos del 5 % del importe de la carga ese mes+cliente se funde con el dominante
   function economicRows(f){
     const A=activity, out=[],dateField=f.dateBasis==='line'?'lineDate':'invoiceDate';
     for(const [cicloId,original] of A.rows.entries()){
       if(!includes(f.companies,A.co[original[0]]))continue;
       if(f.plates?.length&&!f.plates.some(p=>plateKeyOf(p)===plateKeyOf(A.mat[original[3]])))continue;
-      const all=original[64]||[],den=all.reduce((s,l)=>s+Math.abs(l.revenue),0), groups=new Map();
+      const all=original[64]||[],den=all.reduce((s,l)=>s+Math.abs(l.revenue),0), groups=new Map(), porMesCli=new Map();
       for(const l of all){
         if(!inRange(l[dateField],f.from,f.to)||!includes(f.clients,l.clientId)||!includes(f.categories,l.category)||!includes(f.loads,l.load)||!includes(f.concepts,l.concept))continue;
         const month=l[dateField].slice(0,7),account=String(l.account||'');
         const type=account.startsWith('705003')?'hormigonera':account.startsWith('705002')?'banera':account.startsWith('705000')?'nacional':'otros servicios';
-        const k=month+'|'+l.clientId+'|'+type;
+        const mc=month+'|'+l.clientId,k=mc+'|'+type;
         if(!groups.has(k))groups.set(k,{month,type,lines:[]});groups.get(k).lines.push(l);
+        if(!porMesCli.has(mc))porMesCli.set(mc,new Set());porMesCli.get(mc).add(k);
+      }
+      if(UMBRAL_FUSION_TIPO_MENOR>0)for(const claves of porMesCli.values()){
+        if(claves.size<2)continue;
+        const gs=[...claves].map(k=>groups.get(k)),ing=g=>g.lines.reduce((s,l)=>s+Math.abs(l.revenue),0),total=gs.reduce((s,g)=>s+ing(g),0);
+        if(!total)continue;
+        const dominante=gs.slice().sort((a,b)=>ing(b)-ing(a))[0];
+        for(const k of claves){const g=groups.get(k);if(g===dominante||ing(g)/total>=UMBRAL_FUSION_TIPO_MENOR)continue;dominante.lines.push(...g.lines);groups.delete(k);}
       }
       for(const {month,type,lines:ls} of groups.values()){
         const r=original.slice(),ratio=den?ls.reduce((s,l)=>s+Math.abs(l.revenue),0)/den:1;
