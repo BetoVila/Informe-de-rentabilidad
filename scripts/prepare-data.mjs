@@ -239,7 +239,7 @@ if(actividadSrc?.metadata?.disponible){
    String(r.v||''),String(r.cant||'')];
   // 64..68: lineas de ingreso (de su factura), coste por carga, fila solo de factura, VENTA del albaran (sus lineas de albaran;
   // null en filas solo de factura) y como se enlazo con la factura (factura / factura_con_diferencia / ajuste_factura / …)
-  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3,r.impro||0,dd].concat(v2,[r.economia,r.costeCanonico,!!r.soloFactura,r.importeAlbaran??null,r.enlaceIngreso||null]);
+  return [c,mi,ci,mti,oi,di,li,ld,r.km||0,r.m3||0,r.t||0,r.imp||0,r.horm?1:0,po,pd,r.kmr||0,r.lit||0,r.dur||0,TRM[r.trm]??3,r.impro||0,dd].concat(v2,[r.economia,r.costeCanonico,!!r.soloFactura,r.importeAlbaran??null,r.enlaceIngreso||null,r.qc??null]);   // 69: carga real (m³ o t) de la carga, solo sus líneas de carga
  });
  // Margen operativo de GesRuta (inggas): P&L por mes×cliente. Antes del coste real de flota/personal/indirectos.
  let margen=null;

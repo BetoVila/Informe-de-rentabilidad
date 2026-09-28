@@ -1084,36 +1084,58 @@ function wireMeses(){document.querySelectorAll('svg[data-meses]').forEach(s=>{co
 // abanico de un dato por viaje (como tarifas): mediana y media, histograma, la mitad, 8 de cada 10, mínimo–máximo
 const qtl=(a,p)=>{if(!a.length)return null;const i=(a.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);return a[lo]+(a[hi]-a[lo])*(i-lo);};
 function abStats(vals){const a=vals.filter(v=>v!=null&&Number.isFinite(v)).sort((p,q)=>p-q);if(!a.length)return null;const n=a.length;return {n,mean:a.reduce((s,v)=>s+v,0)/n,med:qtl(a,.5),q1:qtl(a,.25),q3:qtl(a,.75),p10:qtl(a,.1),p90:qtl(a,.9),p1:qtl(a,.01),p99:qtl(a,.99),min:a[0],max:a[n-1],a};}
-function abHist(s,tick,col){
- const W=300,H=112,pl=4,pr=4,top=15,bot=20,nb=8,lo=s.p1,hi=s.p99>lo?s.p99:lo+1,w=(hi-lo)/nb,c=new Array(nb).fill(0);
- for(const v of s.a){let i=Math.floor((v-lo)/w);if(i<0)i=0;if(i>=nb)i=nb-1;c[i]++;}
- const mx=Math.max(...c)||1,bw=(W-pl-pr)/nb,X=v=>pl+(Math.min(Math.max(v,lo),hi)-lo)/(hi-lo)*(W-pl-pr);
- let g='';c.forEach((n,i)=>{const h=(H-top-bot)*n/mx,bx=pl+i*bw;g+=`<rect x="${bx+1.5}" y="${H-bot-h}" width="${bw-3}" height="${Math.max(h,.5)}" rx="2" fill="${col}" opacity="${n?.85:.25}"/>`+(n?`<text x="${bx+bw/2}" y="${H-bot-h-3}" text-anchor="middle">${nf(n)}</text>`:'');});
- for(let i=0;i<=nb;i+=2)g+=`<text x="${pl+i*bw}" y="${H-5}" text-anchor="${i===0?'start':i===nb?'end':'middle'}">${tick(lo+i*w)}</text>`;
+// eje del abanico desde 0 con marcas redondas: el menor tope (paso 1, 2, 2,5 o 5 × 10^n, de 4 a 6 tramos) que queda POR ENCIMA del
+// percentil 99, para que el último valor no comparta barra con el anterior (Roberto 28/09: «tiene dos sietes y arranca en cinco»)
+function ejeRedondo(max){
+ if(!(max>0))return {hi:1,paso:.25,k:4};let mejor=null;const e0=Math.floor(Math.log10(max/6))-1;
+ for(let e=e0;e<=e0+3;e++)for(const b of [1,2,2.5,5]){const paso=b*Math.pow(10,e);for(const k of [4,5,6]){const hi=paso*k;
+  if(hi>max+1e-9&&(!mejor||hi<mejor.hi-1e-9||(Math.abs(hi-mejor.hi)<1e-9&&paso<mejor.paso)))mejor={hi,paso,k};}}
+ return mejor;}
+// escala propia de la CARGA: m³ desde 0 en barras de 0,5; toneladas desde el múltiplo de 5 bajo el percentil 1 (unas 20 t en
+// áridos) en barras de 1 t; siempre con el tope por encima del percentil 99 para que la carga llena no comparta barra
+const ejeCarga=ud=>s=>{const bin=ud==='m³'?.5:1,lo=ud==='m³'?0:Math.max(0,Math.floor(s.p1/5)*5),hi=Math.max(lo+bin,(Math.floor(s.p99/bin+1e-9)+1)*bin),r=hi-lo;
+ return {lo,hi,bin,paso:r<=6?1:(r<=12?2:(r<=30?5:10))};};
+function abHist(s,tick,col,eje){
+ const W=300,H=112,pl=6,pr=6,top=15,bot=20,Q=eje?eje(s):null,d0=!Q&&s.min>=0,E=d0?ejeRedondo(s.p99>0?s.p99:s.max):null;
+ const lo=Q?Q.lo:(d0?0:s.p1),hi=Q?Q.hi:(d0?E.hi:(s.p99>lo?s.p99:lo+1)),nb=Q?Math.round((Q.hi-Q.lo)/Q.bin):(d0?E.k*2:8),w=(hi-lo)/nb,c=new Array(nb).fill(0);
+ for(const v of s.a){let i=Math.floor((v-lo)/w+1e-9);if(i<0)i=0;if(i>=nb)i=nb-1;c[i]++;}
+ const mx=Math.max(...c)||1,bw=(W-pl-pr)/nb,X=v=>pl+(Math.min(Math.max(v,lo),hi)-lo)/(hi-lo)*(W-pl-pr),dec=Q?(Q.paso>=1?0:1):(d0?(E.paso>=1?0:(E.paso>=.1?1:2)):0);
+ let g='';c.forEach((n,i)=>{const h=(H-top-bot)*n/mx,bx=pl+i*bw;g+=`<rect x="${bx+1.5}" y="${H-bot-h}" width="${bw-3}" height="${Math.max(h,.5)}" rx="2" fill="${col}" opacity="${n?.85:.25}"/>`+(n&&(bw>=24||n===mx)?`<text x="${bx+bw/2}" y="${H-bot-h-3}" text-anchor="middle">${nf(n)}</text>`:'');});
+ if(Q)for(let v=Q.lo;v<=Q.hi+1e-9;v+=Q.paso){g+=`<text x="${X(v)}" y="${H-5}" text-anchor="${v===Q.lo?'start':Math.abs(v-Q.hi)<1e-9?'end':'middle'}">${nf(v,dec)}</text>`;}
+ else if(d0)for(let j=0;j<=E.k;j++){const v=j*E.paso;g+=`<text x="${X(v)}" y="${H-5}" text-anchor="${j===0?'start':j===E.k?'end':'middle'}">${nf(v,dec)}</text>`;}
+ else for(let i=0;i<=nb;i+=2)g+=`<text x="${pl+i*bw}" y="${H-5}" text-anchor="${i===0?'start':i===nb?'end':'middle'}">${tick(lo+i*w)}</text>`;
  g+=`<line x1="${X(s.med)}" x2="${X(s.med)}" y1="${top-6}" y2="${H-bot}" stroke="var(--ink)" stroke-width="1.6"/><line x1="${X(s.mean)}" x2="${X(s.mean)}" y1="${top-6}" y2="${H-bot}" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="3 3"/>`;
  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="histograma">${g}</svg><svg viewBox="0 0 ${W} 12" aria-hidden="true"><rect x="${X(s.p10)}" y="3" width="${Math.max(2,X(s.p90)-X(s.p10))}" height="6" rx="3" fill="${col}" opacity=".3"/><rect x="${X(s.q1)}" y="3" width="${Math.max(2,X(s.q3)-X(s.q1))}" height="6" rx="3" fill="${col}"/></svg>`;
 }
-function abCard(t,vals,fmt,tick,col,nota){
+function abCard(t,vals,fmt,tick,col,nota,eje){
  const s=abStats(vals);if(!s)return `<div class="ab" style="border-top-color:${col}"><div class="t">${t}</div><div class="n">sin viajes medidos</div></div>`;
- return `<div class="ab" style="border-top-color:${col}"><div class="t">${t}<span>${nf(s.n)} viajes</span></div><div class="big"><div><small>mediana</small><b>${fmt(s.med)}</b></div><div><small>media</small><b>${fmt(s.mean)}</b></div></div>${abHist(s,tick,col)}<div class="rows"><div><span>La mitad de los viajes</span><span>${fmt(s.q1)} – ${fmt(s.q3)}</span></div><div><span>8 de cada 10</span><span>${fmt(s.p10)} – ${fmt(s.p90)}</span></div><div><span>Mínimo – máximo</span><span>${fmt(s.min)} – ${fmt(s.max)}</span></div></div>${nota?`<div class="n">${nota}</div>`:''}</div>`;
+ return `<div class="ab" style="border-top-color:${col}"><div class="t">${t}<span>${nf(s.n)} viajes</span></div><div class="big"><div><small>mediana</small><b>${fmt(s.med)}</b></div><div><small>media</small><b>${fmt(s.mean)}</b></div></div>${abHist(s,tick,col,eje)}<div class="rows"><div><span>La mitad de los viajes</span><span>${fmt(s.q1)} – ${fmt(s.q3)}</span></div><div><span>8 de cada 10</span><span>${fmt(s.p10)} – ${fmt(s.p90)}</span></div><div><span>Mínimo – máximo</span><span>${fmt(s.min)} – ${fmt(s.max)}</span></div></div>${nota?`<div class="n">${nota}</div>`:''}</div>`;
 }
 // minutos entre dos horas «HH:MM» del triangulado (si pasa de medianoche, del día siguiente)
 const minHH=(a,b)=>{if(!a||!b)return null;const [h1,m1]=String(a).slice(-5).split(':').map(Number),[h2,m2]=String(b).slice(-5).split(':').map(Number);if([h1,m1,h2,m2].some(x=>!Number.isFinite(x)))return null;let d=(h2*60+m2)-(h1*60+m1);if(d<0)d+=1440;return d;};
 // una fila por CARGA FÍSICA: el modelo reparte cada carga entre las líneas de factura que la cobran y multiplica sus m³ y t por su
 // parte (7,99 + 0,01 m³); aquí se suman las partes y la hora de carga cuenta una vez. Sin subcontratadas ni espejos.
 function cargasFisicas(trips){const u=new Map();for(const t of trips){if(t.sub||t.espejo)continue;const k=t.cicloId??[t.emp,t.viaje,t.cantera,t.dia].join('|');const x=u.get(k);
- if(x){x.t+=t.t||0;x.m3+=t.m3||0;}else u.set(k,{t:t.t||0,m3:t.m3||0,tCarga:t.tCarga,tCargaFin:t.tCargaFin,medido:t.medido});}return [...u.values()];}
+ if(x){x.t+=t.t||0;x.m3+=t.m3||0;}else u.set(k,{t:t.t||0,m3:t.m3||0,qc:t.qc,horm:!!t.horm,tipo:t.tipo,tCarga:t.tCarga,tCargaFin:t.tCargaFin,tini:t.tini,tfin:t.tfin?String(t.tfin).replace(' +1',''):null,horas:t.fisica?t.fisica.horas:t.horas,medido:t.medido});}
+ // carga REAL: «qc» (solo las líneas que son carga: sin metros mínimos, camión a disposición, km ni complementos); si la lectura
+ // aún no lo trae, la suma dentro de lo que cabe en un camión (12 m³ / 40 t) — por encima es un total o un importe, no una carga
+ for(const c of u.values()){if(c.qc===undefined){c.qc=null;const v=c.m3>0.05?c.m3:c.t;if(v>0.05&&v<=(c.m3>0.05?12:40))c.qc=v;}c.carga=c.qc;}return [...u.values()];}
+// dos filas de tres: tiempos arriba; carga, km y gasoil abajo (estilo inyectado una vez: el CSS del informe es de otra pieza)
+if(typeof document!=='undefined'&&!document.getElementById('ab3css')){const st=document.createElement('style');st.id='ab3css';st.textContent='.ab3{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}@media (max-width:760px){.ab3{grid-template-columns:1fr}}.abfila{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:4px 0 6px}';document.head.appendChild(st);}
 function abanicoFicha(trips){
  const med=trips.filter(t=>t.medido&&!t.sub);
  // carga por viaje (Roberto 28/09: «me falta el kpi de carga media y mediana»): toneladas o m³ según lo que más lleven sus cargas
  const cf=cargasFisicas(trips),nT=cf.filter(c=>c.t>0.05).length,nM=cf.filter(c=>c.m3>0.05).length,enM3=nM>nT,udC=enM3?'m³':'t';
- return `<section class="fcard"><h3>El abanico de sus viajes <small>${nf(med.length)} de ${nf(trips.length)} viajes medidos por el localizador · línea continua = mediana, discontinua = media</small></h3><div class="fgrid4">${
-  abCard('Carga por viaje',cf.map(c=>{const v=enM3?c.m3:c.t;return v>0.05?v:null;}),v=>nf(v,1)+' '+udC,v=>nf(v,0),'#2563eb','lo cargado en cada viaje, según el albarán (cada carga una vez)')+
-  abCard('Tiempo de carga',cf.filter(c=>c.medido).map(c=>minHH(c.tCarga,c.tCargaFin)),durTxt,v=>nf(v,0),'#c2410c','de la llegada a cargar a la salida cargado (minutos en el eje)')+
+ return `<section class="fcard"><h3>El abanico de sus viajes <small>${nf(med.length)} de ${nf(trips.length)} viajes medidos por el localizador · línea continua = mediana, discontinua = media</small></h3>
+  <div class="abfila">Tiempos</div><div class="fgrid4 ab3">${
+  abCard('Tiempo de carga',cf.filter(c=>c.medido).map(c=>{const m=minHH(c.tCarga,c.tCargaFin);return m!=null&&m<=180?m:null;}),durTxt,v=>nf(v,0),'#c2410c','de la llegada a cargar a la salida cargado, con la cola; sin estancias de más de 3 h (camión aparcado)')+
+  abCard('Tiempo del viaje',cf.filter(c=>c.medido).map(c=>{if(c.tipo==='hormigonera'||(!c.tipo&&c.horm))return minHH(c.tCargaFin,c.tfin);const antes=minHH(c.tini,c.tCarga),car=minHH(c.tCarga,c.tCargaFin);
+   return c.horas!=null&&(antes==null||antes<=180)&&(car==null||car<=180)?c.horas*60:null;}),durTxt,v=>nf(v,0),'var(--c-flota)','hormigón: de la salida cargado de la planta a la vuelta (planta → obra → planta); resto: el ciclo completo, sin los que empiezan con el camión aparcado')+
+  abCard('Espera por viaje',med.map(t=>t.espera),durTxt,v=>nf(v,0),'var(--warn)','todo el tiempo sin conducir: carga, descarga y esperas')}</div>
+  <div class="abfila">Carga, km y gasoil</div><div class="fgrid4 ab3">${
+  abCard('Carga por viaje',cf.filter(c=>enM3?c.m3>0.05:c.t>0.05).map(c=>c.carga>0?c.carga:null),v=>nf(v,1)+' '+udC,v=>nf(v,0),'#2563eb','lo cargado de verdad en cada viaje: sin metros mínimos, camión a disposición ni complementos; cada carga una vez',ejeCarga(udC))+
   abCard('Km por viaje',med.map(t=>t.km>0?t.km:null),v=>nf(v,1)+' km',v=>nf(v,0),'var(--acc)','ciclo completo: ida cargado y vuelta en vacío')+
-  abCard('Gasoil por viaje',med.map(t=>t.lit>0?t.lit:null),v=>nf(v,1)+' L',v=>nf(v,0),'var(--c-comb)','litros medidos por el sensor')+
-  abCard('Tiempo del viaje',med.map(t=>t.horas!=null?t.horas*60:null),durTxt,v=>nf(v,0),'var(--c-flota)','de la salida a la vuelta (minutos en el eje)')+
-  abCard('Espera por viaje',med.map(t=>t.espera),durTxt,v=>nf(v,0),'var(--warn)','todo el tiempo sin conducir: carga, descarga y esperas')}</div><details class="mas" style="margin-top:10px"><summary>Todas las cifras del abanico en una tabla, con las rectas para calcular</summary>${estadViajes(trips,'')}</details></section>`;
+  abCard('Gasoil por viaje',med.map(t=>t.lit>0?t.lit:null),v=>nf(v,1)+' L',v=>nf(v,0),'var(--c-comb)','litros medidos por el sensor')}</div><details class="mas" style="margin-top:10px"><summary>Todas las cifras del abanico en una tabla, con las rectas para calcular</summary>${estadViajes(trips,'')}</details></section>`;
 }
 // rutas (lugar de carga → lugar de descarga), clientes o camiones de una lista de viajes, con su margen
 function rutasLista(trips,campo,titulo,max=8){

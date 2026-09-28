@@ -467,6 +467,7 @@ export function createModel(data) {
       // 67..68: VENTA del albaran de la carga (sus lineas de albaran; la parte de este grupo si la factura mezcla servicios) y
       // como se enlazo con la factura que la cobro (por la cabecera del albaran). Sus facturas, de sus lineas de ingreso.
       x.ventaAlbaran=r[67]==null?null:Math.round(r[67]*(r.costShare??1)*100)/100;x.enlaceIngreso=r[68]||null;x.soloFactura=!!r[66];
+      x.qc=r.length>69?(r[69]??null):undefined;   // carga real de la carga física (no se reparte: cuenta una vez por cicloId)
       x.costeMetodo=d.metodo||null;x.costePorProporcion=!!d.porProporcion;x.sinCostePropio=!!d.sinCostePropio;
       {const fs=new Map();for(const l of r[64]||[])if(l.invoice&&!fs.has(l.invoice))fs.set(l.invoice,l.invoiceDate||null);x.facturas=[...fs].map(([f,fecha])=>({f,fecha}));}
       x.cicloId=r.cicloId;x.fisica=r.fisica;

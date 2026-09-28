@@ -259,6 +259,26 @@ COMPLEMENTO_KW = ("MINIMO", "HORA EXTRA", "HORAS EXTRA", "H. EXTRA", "H EXTRA", 
                   "EXTRAS", "AUTOPISTA", "DIFERENCIA")
 
 
+NO_CARGA_COD = {"MMD", "MK1", "MK2", "MK3", "M25", "M16", "DIS", "KM"}
+NO_CARGA_TXT = ("MINIMO", "MÍNIMO", "DISPOSICION", "DISPOSICIÓN", "KILOMETRO", "KILÓMETRO")
+TOPE_CARGA = {"m3": 12.0, "t": 40.0}   # lo que cabe en un camión: por encima es un total o un importe, no una carga
+
+
+def cantidad_de_carga(unidad, cod, con, cantidreal, cantid):
+    """Lo que de verdad lleva el camión en esta línea (m³ o t), o 0 si la línea no es carga: metros o m³ MÍNIMOS que se cobran
+    sin llevarlos, camión a disposición, kilómetros, complementos. La cantidad real manda salvo que sea imposible para un camión
+    (entonces la facturada); si las dos lo son, 0 (Roberto 28/09/2026)."""
+    if unidad not in ("m3", "t"):
+        return 0.0
+    cod = (cod or "").strip().upper(); con_u = (con or "").strip().upper()
+    if cod in NO_CARGA_COD or any(x in con_u for x in NO_CARGA_TXT) or es_complemento(con):
+        return 0.0
+    for q in (cantidreal, cantid):
+        if q and 0 < q <= TOPE_CARGA[unidad]:
+            return float(q)
+    return 0.0
+
+
 def es_complemento(con):
     import unicodedata
     c = "".join(ch for ch in unicodedata.normalize("NFD", (con or "").upper()) if unicodedata.category(ch) != "Mn")
@@ -414,7 +434,7 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
                               "cli": c["cliente"] if c else "", "o": o, "d": dest,
                               "op": rprov(o), "ol": rloc(o), "on": rnom(o),
                               "dp": rprov(dest), "dl": rloc(dest), "dn": rnom(dest),
-                              "km": 0.0, "m3": 0.0, "t": 0.0, "imp": 0.0, "impro": 0.0, "horm": False, "nac": not tiene_cantera,
+                              "km": 0.0, "m3": 0.0, "t": 0.0, "qc": 0.0, "imp": 0.0, "impro": 0.0, "horm": False, "nac": not tiene_cantera,
                               "albaranes": [], "conceptos": [], "facturas": {}, "n_lineas": 0, "n_compl": 0}
         if a not in t["albaranes"]: t["albaranes"].append(a)
         concepto = str(ln.get(r, "CODCON") or "").strip()
@@ -431,6 +451,7 @@ def leer_sociedad(base, empresa, desde, hasta, override, pend, lugar, impro_excl
         t["facturas"][f_] = t["facturas"].get(f_, 0.0) + imp_val
         t["impro"] += impro_val
         cr = ln.get(r, "CANTIDREAL") or ln.get(r, "CANTID") or 0
+        t["qc"] += cantidad_de_carga(unidad, ln.get(r, "CODCON"), ln.get(r, "CONCEP"), ln.get(r, "CANTIDREAL"), ln.get(r, "CANTID"))
         if unidad == "m3":
             t["m3"] += cr; t["horm"] = True
             t["km"] += limpio_km(ln.get(r, "CAMPO2"))   # «Km. Viaje» solo tiene sentido en hormigon; el arido se triangula
@@ -587,6 +608,8 @@ def main():
             t["chg"] = tr.get("chofer_gesruta"); t["chok"] = tr.get("chofer_coincide"); t["tipo"] = tr.get("tipo")
             t["larga"] = bool(tr.get("larga_distancia")); t["esp"] = bool(tr.get("espejo_de"))
         t["imp"] = round(t["imp"], 2); t["km"] = round(t["km"], 1); t["m3"] = round(t["m3"], 2); t["t"] = round(t["t"], 2)
+        # carga real: si la suma de las líneas de carga no cabe en un camión (varias cargas bajo la misma clave), no se da
+        t["qc"] = round(t["qc"], 2) if 0 < t["qc"] <= TOPE_CARGA["m3" if t["horm"] else "t"] else None
         t["facturas"] = [[f_, round(v_, 2)] for f_, v_ in t["facturas"].items()]   # [[«empresa|serie-numero», venta]]
         # todas sus lineas son complementos (sin carga fisica propia: su coste va en las cargas del viaje)
         t["complemento"] = t["n_lineas"] > 0 and t["n_compl"] == t["n_lineas"]
