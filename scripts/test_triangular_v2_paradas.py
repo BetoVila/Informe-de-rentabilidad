@@ -1,3 +1,4 @@
+import bisect
 import collections
 import datetime as dt
 import unittest
@@ -41,6 +42,45 @@ class TestParadasSinSenal(unittest.TestCase):
         for hueco in (t2.HUECO_S, None):
             par = t2.paradas_flujo(pts, hueco)
             self.assertEqual([(p['t_in'], p['t_out']) for p in par], [(t, t + 119 * 60)])
+
+
+class TestReposoContradichoPorMovimientoReal(unittest.TestCase):
+    # 8026KDV, agosto 2026 (Roberto/Claude 28/09/2026): un SOLO punto Locatel con "parada_min" erroneo (3.739 min =
+    # 62,3 h) afirmaba un reposo que tapaba dos jornadas reales de conduccion (~215 km GPS reales en esos dias). El
+    # motor se fiaba de ese reposo sin comprobarlo: al solaparse con un hueco sin señal mas corto y posterior, el
+    # cierre de la jornada quedaba con c0 (fin del reposo ancho) POR DELANTE de c1 (inicio del hueco corto) -
+    # invertidos - y j["pts"] = pts[i0:i1] salia VACIA (i0 > i1): km=0 y duracion=0 en una ventana de 58 horas.
+    def punto_locatel(self, t, parada_min, lat=42.21, lon=-8.65):
+        return {"t": t, "f": "locatel", "s": 0.0, "lat": lat, "lon": lon, "parada_min": parada_min,
+                "kmc": None, "litc": None, "rec": None}
+
+    def test_reposo_de_un_punto_con_movimiento_real_dentro_se_descarta(self):
+        t0 = ep('2026-08-03T07:00')
+        bogus = self.punto_locatel(t0 + 22 * 60, 3739)  # 07:22, afirma 62,3 h de reposo
+        dia1 = tramo(t0 + 23 * 60, 30, 42.0, 42.05, 40)          # 07:23-07:52, conduciendo de verdad
+        dia2_ini = t0 + 23 * 60 + 29 * 60 + 9 * 3600              # 9 h reales sin señal despues de dia1
+        dia2 = tramo(dia2_ini, 30, 42.05, 42.1, 40)               # tambien conduciendo de verdad
+        pts = sorted([bogus] + dia1 + dia2, key=lambda q: q["t"])
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        # el reposo de 62,3 h queda descartado (movimiento real dentro): dia1 y dia2 salen como DOS jornadas propias,
+        # no una sola jornada de mas de 9 h fundiendo el hueco real con el reposo inventado
+        self.assertEqual(len(jor), 2)
+        for j in jor:
+            self.assertLessEqual(j["c0"], j["c1"], "c0 nunca por delante de c1 (jornada invertida = pts vacia)")
+            i0, i1 = bisect.bisect_left([q["t"] for q in pts], j["c0"]), bisect.bisect_right([q["t"] for q in pts], j["c1"])
+            self.assertGreater(i1 - i0, 0, "la ventana de la jornada no debe quedar vacia")
+
+    def test_reposo_real_sin_movimiento_dentro_no_se_toca(self):
+        # caso normal (sin contradiccion): un reposo de dias genuino, sin ningun punto de movimiento dentro, se
+        # mantiene igual que antes de este arreglo (no cambia el comportamiento del caso 0063NBM)
+        t22 = ep('2025-08-22T17:15')
+        pts = (tramo(t22, 60, 43.2, 43.3, 40) + tramo(ep('2025-08-22T18:15'), 345, 43.3, 43.3, 0)
+               + tramo(ep('2025-08-24T00:04'), 2154, 43.3, 43.3, 0) + tramo(ep('2025-08-25T11:58'), 60, 43.3, 43.2, 40))
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        self.assertEqual(len(jor), 2)
+        self.assertEqual(jor[1]['ini'], ep('2025-08-25T11:58'))
+        self.assertEqual(jor[1]['c0'], ep('2025-08-25T11:57'))
+        self.assertEqual(jor[0]['c1'], ep('2025-08-22T18:15'))
 
 
 class TestJornadaNoArrancaEnElHueco(unittest.TestCase):

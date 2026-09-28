@@ -155,20 +155,30 @@ def jornadas_de(pts, paradas, rest_s, reposos=None):
     (reposos: paradas_flujo(pts, None)) o hueco sin posicion de rest_s o mas. j["paradas"] = las paradas cortas."""
     if reposos is None:
         reposos = paradas_flujo(pts, None)
-    cortes = [(p["t_in"], p["t_out"]) for p in reposos if p["t_out"] - p["t_in"] >= rest_s]
-    for a, b in zip(pts, pts[1:]):
-        if b["t"] - a["t"] >= rest_s:
-            cortes.append((a["t"], b["t"]))
-    cortes.sort()
     ts = [q["t"] for q in pts]
     mov = [q["t"] for q in pts if es_mov(q)]
     if not mov:
         return []
+    cortes = [(p["t_in"], p["t_out"]) for p in reposos if p["t_out"] - p["t_in"] >= rest_s]
+    # un reposo puede venir de un SOLO punto Locatel con "parada_min" erroneo (8026KDV agosto 2026: un punto con
+    # parada_min=3.739 min, 62,3 h, tapaba dos jornadas reales de conduccion como si fuera un descanso). Si la propia
+    # traza tiene movimiento real DENTRO del tramo que el reposo afirma, el reposo no es de fiar: se descarta (mejor
+    # no cortar ahi que fundir dias de trabajo reales en un descanso que nunca ocurrio).
+    cortes = [(a, b) for (a, b) in cortes if bisect.bisect_right(mov, a) >= bisect.bisect_left(mov, b)]
+    for a, b in zip(pts, pts[1:]):
+        if b["t"] - a["t"] >= rest_s:
+            cortes.append((a["t"], b["t"]))
+    cortes.sort()
     jor, ci, ini, ult, c0 = [], 0, None, None, ts[0]
     for t in mov:
         while ci < len(cortes) and cortes[ci][1] <= t:
             if ini is not None and cortes[ci][0] > ini:
-                jor.append({"ini": ini, "fin": ult, "c0": c0, "c1": cortes[ci][0]})
+                # c0 puede venir CONTAMINADO por un corte ANCHO que contiene a este (mismo hueco visto dos veces: por
+                # paradas_flujo(pts, None) y por el hueco sin señal suelto), consumido antes en este mismo bucle por
+                # empezar antes aunque acabe despues: c0 quedaria por delante de c1 (cierre invertido -> j["pts"] vacio,
+                # 8026KDV agosto 2026, parada_min de un solo punto Locatel = 3.739 min = una jornada "cerrada" el dia
+                # siguiente por un corte mas corto y anterior). Si pasara, usar ini (siempre valido: c0 <= ini <= c1).
+                jor.append({"ini": ini, "fin": ult, "c0": c0 if c0 <= cortes[ci][0] else ini, "c1": cortes[ci][0]})
                 ini = None
             # descansos SOLAPADOS (una parada de dias con un hueco sin señal dentro) van por su inicio: el fin del ultimo no
             # es el mayor. Sin max, la jornada arrancaba al acabar el hueco (0063NBM: 24/08/2025 00:04, carga el 25 a las 12:00)
@@ -178,7 +188,7 @@ def jornadas_de(pts, paradas, rest_s, reposos=None):
             ini = t
         ult = t
     if ini is not None:
-        jor.append({"ini": ini, "fin": ult, "c0": c0, "c1": ts[-1]})
+        jor.append({"ini": ini, "fin": ult, "c0": c0 if c0 <= ts[-1] else ini, "c1": ts[-1]})
     for j in jor:
         j["fecha"] = fecha_de(j["ini"])
         j["nocturna"] = fecha_de(j["ini"]) != fecha_de(j["fin"])
