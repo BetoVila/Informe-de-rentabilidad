@@ -299,6 +299,17 @@ def rotulo_en_lugar(stop, cod, coords, casa, cercano):
     return cod if cerca_cod(stop, cod, coords, casa) == MATCH else cercano(stop["lat"], stop["lon"])
 
 
+def destino_hormigon(t, obra, coords, cercano):
+    """El destino REAL de una carga de hormigon: el sitio que ve el GPS en la obra (mismo criterio que rotulo_en_lugar,
+    ya usado para las paradas), en vez del codigo del albaran, que siempre repite la planta de carga (Roberto 28/09/2026:
+    «el lugar de descarga no deberia ser la planta, deberia ser el lugar que te sale en el localizador al triangular el
+    viaje»). Si no hay coordenada de la obra o no hay ningun lugar conocido cerca, se mantiene el codigo del albaran
+    (nunca se inventa un destino)."""
+    if not t.get("horm") or not obra or obra.get("lat") is None:
+        return t["d"]
+    return rotulo_en_lugar(obra, t["d"], coords, t["c"], cercano) or t["d"]
+
+
 KM_MISMA_CARGA = 3.0    # dos paradas en el mismo origen con menos de 3 km recorridos entre ellas = la misma carga (espera en cantera)
 
 
@@ -2030,7 +2041,8 @@ def main():
     # 28/09/2026): no hace falta volver a juntarlas aqui para el conteo por dia (viajes_dia, orden_dia).
     viajes_out = []
     for t, r in zip(dem, salida):
-        co, cd = coords.get((t["c"], t["o"])), coords.get((t["c"], t["d"]))
+        destino_real = destino_hormigon(t, r.get("obra"), coords, lugar_cerca)
+        co, cd = coords.get((t["c"], t["o"])), coords.get((t["c"], destino_real))
         j = r.get("jornada")
         cargas = t.get("cargas") or []
         medido = bool(r.get("medido"))
@@ -2068,7 +2080,7 @@ def main():
         viajes_out.append({
             "empresa": t["c"], "viaje": t["v"], "cantera": t["cant"], "matricula": t["mat"],
             "fecha": fecha_de(r["t_ini"]) if medido and r.get("t_ini") else t["dia"], "fecha_gesruta": t["dia"],
-            "origen": t["o"], "destino": t["d"], "tipo": t.get("tipo"), "larga_distancia": bool(t.get("larga")), "dist_od_km": t.get("dist_od"),
+            "origen": t["o"], "destino": destino_real, "tipo": t.get("tipo"), "larga_distancia": bool(t.get("larga")), "dist_od_km": t.get("dist_od"),
             "km": r.get("km"), "duracion_min": r.get("duracion_min"), "litros": r.get("litros"), "litros_calibrados": r.get("litros_calibrados"),
             "metodo": r.get("metodo"), "medido": medido, "fuente": (j["pts"][0]["f"] if j and j.get("pts") else None),
             "km_fuente": r.get("km_fuente"), "repartido": r.get("repartido"), "confianza": r.get("confianza"), "motivo": r.get("motivo"),
@@ -2092,7 +2104,7 @@ def main():
             "pendiente_pasada_nacional": bool(r.get("pendiente_pasada_nacional")),
             "paradas": par_v, "obra": r.get("obra"), "matricula_de_baja": (bajas.get(t["mat"]) or {}).get("fecha_baja"),
             "coord_origen": co["fuente"] if co else None, "coord_destino": cd["fuente"] if cd else None,
-            "coord_revisar": ((t["c"], t["o"]) in discrepantes) or ((t["c"], t["d"]) in discrepantes)})
+            "coord_revisar": ((t["c"], t["o"]) in discrepantes) or ((t["c"], destino_real) in discrepantes)})
     for (m, d), idxs in por_dia.items():
         for pos, i in enumerate(idxs):
             viajes_out[i]["orden_dia"] = pos + 1

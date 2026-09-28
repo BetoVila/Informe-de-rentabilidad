@@ -136,5 +136,33 @@ class TestRotuloCargaDescarga(unittest.TestCase):
         self.assertIsNone(t2.rotulo_en_lugar({'lat': 43.0, 'lon': -8.0}, 'XXX', {}, 'Razo', lambda la, lo: None))
 
 
+class TestDestinoHormigonPorGPS(unittest.TestCase):
+    # Roberto 28/09/2026: «en los viajes de hormigon... el lugar de descarga no deberia ser la planta, deberia ser
+    # el lugar que te sale en el localizador al triangular el viaje». El albaran de hormigon siempre repite la
+    # planta como destino (t["d"]); destino_hormigon lo sustituye por el sitio real que ve el GPS en la obra,
+    # SOLO cuando hay coordenada de la obra y un lugar conocido cerca; si no, nunca inventa: se queda como estaba.
+    coords = {('Razo', 'SABO'): {'lat': 43.0, 'lon': -8.0, 'fuente': 'gesruta'}}
+
+    def ticket(self, horm=True, d='SABO'):
+        return {"c": "Razo", "d": d, "horm": horm}
+
+    def test_resuelve_por_gps_cuando_hay_lugar_conocido_cerca_de_la_obra(self):
+        obra = {"lat": 43.126, "lon": -8.0}
+        cercano = lambda lat, lon: 'DORNEDA'  # noqa: E731
+        self.assertEqual(t2.destino_hormigon(self.ticket(), obra, self.coords, cercano), 'DORNEDA')
+
+    def test_mantiene_la_planta_si_no_hay_obra(self):
+        self.assertEqual(t2.destino_hormigon(self.ticket(), None, self.coords, lambda la, lo: 'DORNEDA'), 'SABO')
+        self.assertEqual(t2.destino_hormigon(self.ticket(), {"lat": None, "lon": None}, self.coords, lambda la, lo: 'DORNEDA'), 'SABO')
+
+    def test_mantiene_la_planta_si_no_hay_ningun_lugar_conocido_cerca(self):
+        obra = {"lat": 43.126, "lon": -8.0}
+        self.assertEqual(t2.destino_hormigon(self.ticket(), obra, self.coords, lambda la, lo: None), 'SABO')
+
+    def test_no_toca_arido_ni_nacional(self):
+        obra = {"lat": 43.126, "lon": -8.0}
+        self.assertEqual(t2.destino_hormigon(self.ticket(horm=False, d='CANTERA'), obra, self.coords, lambda la, lo: 'DORNEDA'), 'CANTERA')
+
+
 if __name__ == '__main__':
     unittest.main()
