@@ -838,13 +838,14 @@ const ESTR_FLOTA=['amortizacion','reparaciones','seguros','repuestos','alquilere
 // lectura de contabilidad. Sirve para el panel del periodo y para el detalle de cada mes.
 function estructuraPartes(lv,f){
  const amt=id=>lv.expenseCategories.filter(c=>c.id===id).reduce((s,c)=>s+c.amount,0);
- const tot=lv.expenses,comb=amt('combustible'),pers=amt('personal')+amt('dietas'),flota=ESTR_FLOTA.reduce((s,id)=>s+amt(id),0),compras=ESTR_COMPRAS.reduce((s,id)=>s+amt(id),0);
+ const tot=lv.expenses,comb=amt('combustible'),pers=amt('personal'),dietas=amt('dietas'),flota=ESTR_FLOTA.reduce((s,id)=>s+amt(id),0),compras=ESTR_COMPRAS.reduce((s,id)=>s+amt(id),0);
  const known=new Set(['combustible','personal','dietas','impuesto_sociedades',...ESTR_FLOTA,...ESTR_COMPRAS]),isoc=amt('impuesto_sociedades');
  const gen=lv.expenseCategories.filter(c=>!known.has(c.id)).reduce((s,c)=>s+c.amount,0);
  const pt=M.personnelByTramo?M.personnelByTramo(f):null,fe=pt&&pt.total?pt.structureCost/pt.total:null;
  const persEst=fe!=null?pers*fe:0,persCond=pers-persEst;
  const partes=[['Combustible',comb,'#d97706'],[fe!=null?'Personal: conductores':'Personal',persCond,'#2563eb']]
   .concat(fe!=null?[['Personal de estructura (oficina, taller)',persEst,'#7c3aed']]:[])
+  .concat([['Dietas del personal',dietas,'#16a34a']])
   .concat([['Vehículos: amortización, reparaciones, repuestos y neumáticos, seguros, peajes, renting',flota,'#0e9488'],['Compras: áridos y subcontratación',compras,'#64748b'],['Estructura general: otros servicios, tributos, financieros, otras compras, suministros, extraordinarios',gen,'#c1394b']]).concat(isoc?[['Impuesto de sociedades (sobre el resultado; no es coste de explotación)',isoc,'#94a3b8']]:[]);
  return {partes,tot,fe,estrTot:gen+persEst,aridos:amt('aridos'),subcontratacion:amt('subcontratacion'),ventas:lv.incomeCategories.filter(c=>c.id==='ventas').reduce((s,c)=>s+c.amount,0)};
 }
