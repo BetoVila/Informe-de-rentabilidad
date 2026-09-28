@@ -1257,7 +1257,10 @@ function temaBoton(){const t=$('themeToggle');if(t)t.textContent=temaOscuro()?'T
 function alturaCabecera(){const t=document.querySelector('.topbar');if(t)document.documentElement.style.setProperty('--topbar-h',t.offsetHeight+'px');}
 
 function renderContent(){
- tableDefinition=null;_fichaPost=null;renderTabsUI();$('cards').hidden=state.tab==='expenses'||state.tab==='tarifas'||state.tab==='tarifasp';let html='';
+ tableDefinition=null;_fichaPost=null;renderTabsUI();
+ const enResumen=tabGroupOf(state.tab)==='summary';$('cards').hidden=!enResumen;
+ if(!enResumen){const cd=$('cardDetail');if(cd)cd.hidden=true;}
+ let html='';
  if(state.tab==='summary'&&ledgerCtx.ledgerOn){
    const {lv,br,lvBase}=ledgerCtx,op=new Map(M.group(selection,state,'month').groups.map(m=>[m.key,m]));
    const plRows=lv.byMonth.map(m=>({key:m.key,label:monthName(m.key),income:m.income,expenses:m.expenses,result:m.result,marginPct:m.marginPct,marginState:'R',gesruta:op.get(m.key)?.revenue??0,parts:op.get(m.key)?.[state.costMode==='stored'?'rawCost':state.costMode==='recalculated'?'calcCost':'realCost']??0}));
