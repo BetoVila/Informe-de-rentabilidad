@@ -1097,9 +1097,19 @@ function abCard(t,vals,fmt,tick,col,nota){
  const s=abStats(vals);if(!s)return `<div class="ab" style="border-top-color:${col}"><div class="t">${t}</div><div class="n">sin viajes medidos</div></div>`;
  return `<div class="ab" style="border-top-color:${col}"><div class="t">${t}<span>${nf(s.n)} viajes</span></div><div class="big"><div><small>mediana</small><b>${fmt(s.med)}</b></div><div><small>media</small><b>${fmt(s.mean)}</b></div></div>${abHist(s,tick,col)}<div class="rows"><div><span>La mitad de los viajes</span><span>${fmt(s.q1)} – ${fmt(s.q3)}</span></div><div><span>8 de cada 10</span><span>${fmt(s.p10)} – ${fmt(s.p90)}</span></div><div><span>Mínimo – máximo</span><span>${fmt(s.min)} – ${fmt(s.max)}</span></div></div>${nota?`<div class="n">${nota}</div>`:''}</div>`;
 }
+// minutos entre dos horas «HH:MM» del triangulado (si pasa de medianoche, del día siguiente)
+const minHH=(a,b)=>{if(!a||!b)return null;const [h1,m1]=String(a).slice(-5).split(':').map(Number),[h2,m2]=String(b).slice(-5).split(':').map(Number);if([h1,m1,h2,m2].some(x=>!Number.isFinite(x)))return null;let d=(h2*60+m2)-(h1*60+m1);if(d<0)d+=1440;return d;};
+// una fila por CARGA FÍSICA: el modelo reparte cada carga entre las líneas de factura que la cobran y multiplica sus m³ y t por su
+// parte (7,99 + 0,01 m³); aquí se suman las partes y la hora de carga cuenta una vez. Sin subcontratadas ni espejos.
+function cargasFisicas(trips){const u=new Map();for(const t of trips){if(t.sub||t.espejo)continue;const k=t.cicloId??[t.emp,t.viaje,t.cantera,t.dia].join('|');const x=u.get(k);
+ if(x){x.t+=t.t||0;x.m3+=t.m3||0;}else u.set(k,{t:t.t||0,m3:t.m3||0,tCarga:t.tCarga,tCargaFin:t.tCargaFin,medido:t.medido});}return [...u.values()];}
 function abanicoFicha(trips){
  const med=trips.filter(t=>t.medido&&!t.sub);
+ // carga por viaje (Roberto 28/09: «me falta el kpi de carga media y mediana»): toneladas o m³ según lo que más lleven sus cargas
+ const cf=cargasFisicas(trips),nT=cf.filter(c=>c.t>0.05).length,nM=cf.filter(c=>c.m3>0.05).length,enM3=nM>nT,udC=enM3?'m³':'t';
  return `<section class="fcard"><h3>El abanico de sus viajes <small>${nf(med.length)} de ${nf(trips.length)} viajes medidos por el localizador · línea continua = mediana, discontinua = media</small></h3><div class="fgrid4">${
+  abCard('Carga por viaje',cf.map(c=>{const v=enM3?c.m3:c.t;return v>0.05?v:null;}),v=>nf(v,1)+' '+udC,v=>nf(v,0),'#2563eb','lo cargado en cada viaje, según el albarán (cada carga una vez)')+
+  abCard('Tiempo de carga',cf.filter(c=>c.medido).map(c=>minHH(c.tCarga,c.tCargaFin)),durTxt,v=>nf(v,0),'#c2410c','de la llegada a cargar a la salida cargado (minutos en el eje)')+
   abCard('Km por viaje',med.map(t=>t.km>0?t.km:null),v=>nf(v,1)+' km',v=>nf(v,0),'var(--acc)','ciclo completo: ida cargado y vuelta en vacío')+
   abCard('Gasoil por viaje',med.map(t=>t.lit>0?t.lit:null),v=>nf(v,1)+' L',v=>nf(v,0),'var(--c-comb)','litros medidos por el sensor')+
   abCard('Tiempo del viaje',med.map(t=>t.horas!=null?t.horas*60:null),durTxt,v=>nf(v,0),'var(--c-flota)','de la salida a la vuelta (minutos en el eje)')+
