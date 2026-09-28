@@ -120,8 +120,13 @@ tr.total td{font-weight:700;background:#f7faff;border-top:1px solid #d6dfeb}
 .tabletools input{padding:9px 12px;border-radius:7px;border:1px solid #cbd6e4;font-size:13px;width:280px;max-width:100%}
 .tabletools span{font-size:12.5px;color:var(--muted)}
 .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:10px;max-height:640px}
+/* el adaptador RAZO-UI mete su propio .rz-table-scroll (overflow-x:auto, que por la propia CSS también deja overflow-y en
+   auto) DENTRO de .tablewrap: ese envoltorio se convierte en el contenedor de scroll real y rompe el sticky de abajo.
+   .tablewrap ya resuelve el scroll horizontal por sí solo (overflow:auto = las dos direcciones), así que aquí se anula. */
+.tablewrap .rz-table-scroll{overflow:visible!important}
 table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap;background:#fff}
-thead{position:sticky;top:0;z-index:3}
+/* sticky en <thead> no funciona con border-collapse:collapse (limitación de los navegadores): hay que ponerlo en cada <th> */
+thead th{position:sticky;top:0;z-index:3}
 th{background:#e9eff8;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.045em;color:#3c557a;border-bottom:2px solid #cbd8ea;font-weight:700;padding:0}
 th button{font-size:11px;text-transform:uppercase;letter-spacing:.045em;text-align:inherit;border:0;background:none;width:100%;border-radius:0;padding:11px 12px;color:inherit;font-weight:inherit;cursor:pointer}
 th button:hover{color:var(--navy)}
