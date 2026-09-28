@@ -1006,6 +1006,12 @@ def triangular_hormigon(viajes, jor, plantas, coords, fuente, tablas, acts, drvs
     n = len(viajes)
     res = [None] * n
     casa = viajes[0]["c"]
+    # SOLO las plantas que este camion usa de verdad (sus propios origenes, en cualquier fecha): si se comprueba cada parada
+    # contra las ~20 plantas aprendidas de TODA la flota, una obra de entrega que caiga (por geografia, sin relacion alguna)
+    # dentro del radio de una planta AJENA a este camion se clasifica como "visita a esa planta" y deja de estar disponible
+    # como obra: el ciclo se queda sin descarga y se funde con el vecino (1533NFJ 21/09/2026, obra a 104-216 m de «OURAL»,
+    # una planta de otra ruta con solo 2 dias aprendidos - Roberto/Claude 28/09/2026).
+    plantas = {k: v for k, v in plantas.items() if k in {(t["c"], t["o"]) for t in viajes if t.get("o")}}
     ciclos = []
     for j in jor:
         cic = ciclos_plantas(j, plantas, fuente, tablas)

@@ -1,3 +1,4 @@
+import collections
 import datetime as dt
 import unittest
 import triangular_v2 as t2
@@ -119,6 +120,67 @@ class TestMotorPorCargaNoPorCamion(unittest.TestCase):
         self.assertEqual(j["asignados"], 2)
         self.assertEqual(j["min_sobrantes"], 5.0)
         self.assertEqual(j["modo"], "geo+plantas")
+
+
+class TestPlantaAjenaNoTapaLaObra(unittest.TestCase):
+    # 1533NFJ, 21/09/2026 (Roberto/Claude 28/09/2026): la obra de entrega de esta hormigonera cae a 104-216 m de «OURAL»,
+    # una planta APRENDIDA pero de otra ruta (solo 2 dias). visitas_plantas() comprobaba cada parada contra las ~20
+    # plantas de TODA la flota: la obra se clasificaba como "visita a OURAL" y dejaba de estar disponible como obra
+    # para ciclos_plantas(); el ciclo se quedaba sin descarga y se fundia con el vecino (07:58->13:17, 129,55 km
+    # "vacio"). Arreglo: triangular_hormigon() acota `plantas` a las que este camion usa de verdad como origen (sus
+    # propios albaranes), antes de pasarlas a ciclos_plantas()/cand_planta().
+    casa = "Razo"
+    planta_propia = ("Razo", "A")
+    planta_ajena = ("Razo", "OURAL")
+    coords_planta_propia = {"lat": 42.000, "lon": -8.000, "radio_m": 450}
+    coords_planta_ajena = {"lat": 42.100, "lon": -8.000, "radio_m": 450}  # a la MISMA obra que visita esta hormigonera
+
+    def ticket(self, v, cant):
+        return {"c": self.casa, "o": "A", "d": "A", "horm": True, "v": v, "cant": cant, "m3": 8.0, "cargas": []}
+
+    def jornada_dos_cargas(self):
+        t0 = ep('2026-09-21T08:00')
+        # tramos de movimiento antes de la 1a parada y despues de la ultima: si no, jornadas_de() (que marca ini/fin
+        # por el primer/ultimo punto EN MOVIMIENTO) deja fuera la 1a y la ultima parada de j["paradas"]
+        pts = (tramo(t0 - 3 * 60, 3, 41.980, 42.000, 60)
+               + tramo(t0, 10, 42.000, 42.000, 0)                    # carga 1 en la planta propia
+               + tramo(t0 + 10 * 60, 10, 42.000, 42.100, 60)         # va a la obra (coincide con la planta ajena)
+               + tramo(t0 + 20 * 60, 15, 42.100, 42.100, 0)          # descarga 1 en la obra
+               + tramo(t0 + 35 * 60, 10, 42.100, 42.000, 60)         # vuelve a la planta propia
+               + tramo(t0 + 45 * 60, 10, 42.000, 42.000, 0)          # carga 2 (recarga)
+               + tramo(t0 + 55 * 60, 10, 42.000, 42.100, 60)         # va otra vez a la obra
+               + tramo(t0 + 65 * 60, 15, 42.100, 42.100, 0)          # descarga 2 en la obra
+               + tramo(t0 + 80 * 60, 3, 42.100, 42.120, 60))
+        return t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+
+    def test_dos_cargas_dan_dos_ciclos_aunque_la_obra_coincida_con_otra_planta(self):
+        viajes = [self.ticket('00001', '0001'), self.ticket('00001', '0002')]
+        jor = self.jornada_dos_cargas()
+        plantas = {self.planta_propia: dict(self.coords_planta_propia, dias=10, visitas=50),
+                    self.planta_ajena: dict(self.coords_planta_ajena, dias=2, visitas=32)}
+        diag = collections.Counter()
+        res = t2.triangular_hormigon(viajes, jor, plantas, {}, "wialon", None, [], [], diag)
+        self.assertEqual(len(res), 2)
+        for r in res:
+            self.assertIsNotNone(r, "las dos cargas deben quedar medidas, no sin_ciclo")
+            self.assertIsNotNone(r.get("obra"), "cada ciclo debe encontrar su propia obra, no fundirse con el vecino")
+            self.assertGreaterEqual(r["duracion_min"], t2.MIN_MIN_CICLO)
+        # las dos cargas van a ciclos DISTINTOS (nunca al mismo, que seria la señal de la fusion)
+        self.assertNotEqual(res[0]["t_ini"], res[1]["t_ini"])
+
+    def test_sin_la_planta_ajena_da_el_mismo_resultado(self):
+        # la planta ajena no deberia cambiar nada: es solo ruido que el acotado por camion debe neutralizar
+        viajes = [self.ticket('00001', '0001'), self.ticket('00001', '0002')]
+        diag = collections.Counter()
+        con_ajena = t2.triangular_hormigon(list(viajes), self.jornada_dos_cargas(),
+                                            {self.planta_propia: dict(self.coords_planta_propia, dias=10, visitas=50),
+                                             self.planta_ajena: dict(self.coords_planta_ajena, dias=2, visitas=32)},
+                                            {}, "wialon", None, [], [], diag)
+        sin_ajena = t2.triangular_hormigon(list(viajes), self.jornada_dos_cargas(),
+                                            {self.planta_propia: dict(self.coords_planta_propia, dias=10, visitas=50)},
+                                            {}, "wialon", None, [], [], diag)
+        self.assertEqual([r["t_ini"] for r in con_ajena], [r["t_ini"] for r in sin_ajena])
+        self.assertEqual([r["km"] for r in con_ajena], [r["km"] for r in sin_ajena])
 
 
 class TestRotuloCargaDescarga(unittest.TestCase):
