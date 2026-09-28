@@ -1116,19 +1116,20 @@ const minHH=(a,b)=>{if(!a||!b)return null;const [h1,m1]=String(a).slice(-5).spli
 // una fila por CARGA FÍSICA: el modelo reparte cada carga entre las líneas de factura que la cobran y multiplica sus m³ y t por su
 // parte (7,99 + 0,01 m³); aquí se suman las partes y la hora de carga cuenta una vez. Sin subcontratadas ni espejos.
 function cargasFisicas(trips){const u=new Map();for(const t of trips){if(t.sub||t.espejo)continue;const k=t.cicloId??[t.emp,t.viaje,t.cantera,t.dia].join('|');const x=u.get(k);
- if(x){x.t+=t.t||0;x.m3+=t.m3||0;}else u.set(k,{t:t.t||0,m3:t.m3||0,qc:t.qc,horm:!!t.horm,tipo:t.tipo,tCarga:t.tCarga,tCargaFin:t.tCargaFin,tini:t.tini,tfin:t.tfin?String(t.tfin).replace(' +1',''):null,horas:t.fisica?t.fisica.horas:t.horas,medido:t.medido});}
+ if(x){x.t+=t.t||0;x.m3+=t.m3||0;}else u.set(k,{t:t.t||0,m3:t.m3||0,qc:t.qc,horm:!!t.horm,tipo:t.tipo,tCarga:t.tCarga,tCargaFin:t.tCargaFin,tDesc:t.tDesc,tDescFin:t.tDescFin,obraMin:t.obraMin,tini:t.tini,tfin:t.tfin?String(t.tfin).replace(' +1',''):null,horas:t.fisica?t.fisica.horas:t.horas,medido:t.medido});}
  // carga REAL: «qc» (solo las líneas que son carga: sin metros mínimos, camión a disposición, km ni complementos); si la lectura
  // aún no lo trae, la suma dentro de lo que cabe en un camión (12 m³ / 40 t) — por encima es un total o un importe, no una carga
  for(const c of u.values()){if(c.qc===undefined){c.qc=null;const v=c.m3>0.05?c.m3:c.t;if(v>0.05&&v<=(c.m3>0.05?12:40))c.qc=v;}c.carga=c.qc;}return [...u.values()];}
 // dos filas de tres: tiempos arriba; carga, km y gasoil abajo (estilo inyectado una vez: el CSS del informe es de otra pieza)
-if(typeof document!=='undefined'&&!document.getElementById('ab3css')){const st=document.createElement('style');st.id='ab3css';st.textContent='.ab3{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}@media (max-width:760px){.ab3{grid-template-columns:1fr}}.abfila{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:4px 0 6px}';document.head.appendChild(st);}
+if(typeof document!=='undefined'&&!document.getElementById('ab3css')){const st=document.createElement('style');st.id='ab3css';st.textContent='.ab3{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}.ab4{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:10px}@media (max-width:760px){.ab3,.ab4{grid-template-columns:1fr}}.abfila{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:4px 0 6px}';document.head.appendChild(st);}
 function abanicoFicha(trips){
  const med=trips.filter(t=>t.medido&&!t.sub);
  // carga por viaje (Roberto 28/09: «me falta el kpi de carga media y mediana»): toneladas o m³ según lo que más lleven sus cargas
  const cf=cargasFisicas(trips),nT=cf.filter(c=>c.t>0.05).length,nM=cf.filter(c=>c.m3>0.05).length,enM3=nM>nT,udC=enM3?'m³':'t';
  return `<section class="fcard"><h3>El abanico de sus viajes <small>${nf(med.length)} de ${nf(trips.length)} viajes medidos por el localizador · línea continua = mediana, discontinua = media</small></h3>
-  <div class="abfila">Tiempos</div><div class="fgrid4 ab3">${
+  <div class="abfila">Tiempos</div><div class="fgrid4 ab4">${
   abCard('Tiempo de carga',cf.filter(c=>c.medido).map(c=>{const m=minHH(c.tCarga,c.tCargaFin);return m!=null&&m<=180?m:null;}),durTxt,v=>nf(v,0),'#c2410c','de la llegada a cargar a la salida cargado, con la cola; sin estancias de más de 3 h (camión aparcado)')+
+  abCard('Tiempo de descarga',cf.filter(c=>c.medido).map(c=>{if(c.tipo==='hormigonera'||(!c.tipo&&c.horm))return c.obraMin!=null&&c.obraMin<=180?c.obraMin:null;const m=minHH(c.tDesc,c.tDescFin);return m!=null&&m<=180?m:null;}),durTxt,v=>nf(v,0),'#0e9488','hormigón: tiempo real parado en la obra; resto: de la llegada a descargar a la salida, con la cola; sin estancias de más de 3 h')+
   abCard('Tiempo del viaje',cf.filter(c=>c.medido).map(c=>{if(c.tipo==='hormigonera'||(!c.tipo&&c.horm))return minHH(c.tCargaFin,c.tfin);const antes=minHH(c.tini,c.tCarga),car=minHH(c.tCarga,c.tCargaFin);
    return c.horas!=null&&(antes==null||antes<=180)&&(car==null||car<=180)?c.horas*60:null;}),durTxt,v=>nf(v,0),'var(--c-flota)','hormigón: de la salida cargado de la planta a la vuelta (planta → obra → planta); resto: el ciclo completo, sin los que empiezan con el camión aparcado')+
   abCard('Espera por viaje',med.map(t=>t.espera),durTxt,v=>nf(v,0),'var(--warn)','todo el tiempo sin conducir: carga, descarga y esperas')}</div>
