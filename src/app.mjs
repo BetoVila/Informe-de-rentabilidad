@@ -62,7 +62,7 @@ function comparisonRange(){
 function update(){
  state.from=$('from').value;state.to=$('to').value;state.dateBasis=$('dateBasis').value;state.costMode=$('costMode').value;state.consolidado=$('billing').value==='consolidada';
  syncFilters();
- if(!state.from||!state.to||state.from>state.to||state.from<D.metadata.from||state.to>D.metadata.to){$('message').innerHTML=`<div class="alert error">Seleccione un periodo válido dentro de ${date(D.metadata.from)}–${date(D.metadata.to)}.</div>`;$('cards').innerHTML='';$('content').innerHTML='';return;}
+ if(!state.from||!state.to||state.from>state.to||state.from<D.metadata.from||state.to>D.metadata.to){$('message').innerHTML=`<div class="alert error">Seleccione un periodo válido dentro de ${date(D.metadata.from)}–${date(D.metadata.to)}.</div>`;$('message').hidden=false;$('cards').innerHTML='';$('content').innerHTML='';return;}
  selection=M.select(state);current=M.group(selection,state,'plate');
  const range=comparisonRange();baseline=range?.valid?M.run({...state,...range}).totals:null;
  const unassignedParts=selection.physicalParts.filter(p=>!M.weights.has(p.date.slice(0,7)+'|'+p.plate));
@@ -1292,6 +1292,7 @@ function renderContent(){
  tableDefinition=null;_fichaPost=null;renderTabsUI();
  const enResumen=tabGroupOf(state.tab)==='summary';$('cards').hidden=!enResumen;
  if(!enResumen){const cd=$('cardDetail');if(cd)cd.hidden=true;}
+ const msg=$('message');if(msg)msg.hidden=!(enResumen||tabGroupOf(state.tab)==='audit');
  let html='';
  if(state.tab==='summary'&&ledgerCtx.ledgerOn){
    const {lv,br,lvBase}=ledgerCtx,op=new Map(M.group(selection,state,'month').groups.map(m=>[m.key,m]));
