@@ -493,6 +493,8 @@ td{padding:5px 8px;max-width:340px}
 .rlist .b{height:5px;border-radius:3px;background:var(--line2);margin-top:2px}
 .rlist .b i{display:block;height:100%;border-radius:3px;background:var(--acc)}
 .rlist .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rlist .r.rtipo{width:100%;text-align:left;background:none;border:0;padding:4px 6px;margin:-4px -6px;font:inherit;color:inherit;cursor:pointer;border-radius:6px}
+.rlist .r.rtipo:hover,.rlist .r.rtipo:focus-visible{background:var(--surf2)}
 .vtab{width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap}
 .vtab th{position:sticky;top:0;background:var(--th);text-align:left;font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink2);padding:6px 8px}
 .vtab td{padding:5px 8px;border-bottom:1px solid var(--line2);max-width:260px;overflow:hidden;text-overflow:ellipsis}

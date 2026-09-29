@@ -1271,10 +1271,46 @@ function transporteResumen(){
  if(!D.actividad)return '';
  const rvM=M.realView(state,'month');if(!rvM||!rvM.real)return '';
  const rvT=M.realView(state,'tipo'),tipos=(rvT?rvT.groups:[]).filter(g=>g.viajes>0||g.ingreso),mx=Math.max(1,...tipos.map(g=>Math.abs(g.margen||0)));
- const tiposHtml=`<div class="rlist w3">${tipos.map(g=>`<div class="r"><div><div class="nm">${esc(g.key?tipoLabel(g.key):'(sin tipo)')}</div><div class="b"><i style="width:${(Math.abs(g.margen||0)/mx*100).toFixed(1)}%;background:${(g.margen||0)>=0?'var(--good)':'var(--bad)'}"></i></div></div><div class="num" style="color:var(--muted)">${nf(g.viajes)} cargas facturadas</div><div class="num ${(g.margen||0)>=0?'pos':'neg'}">${g.margen==null?'Pendiente':eurMarked(g.margen,g.margenEstado)} · ${pctMarked(g.margenTransPct,g.margenEstado)}</div></div>`).join('')}</div>`;
+ const tiposHtml=`<div class="rlist w3">${tipos.map(g=>`<div class="r rtipo" data-fichatipo="${esc(g.key)}" tabindex="0" role="button" aria-label="Ver el detalle de ${esc(g.key?tipoLabel(g.key):'sin tipo')}"><div><div class="nm">${esc(g.key?tipoLabel(g.key):'(sin tipo)')}</div><div class="b"><i style="width:${(Math.abs(g.margen||0)/mx*100).toFixed(1)}%;background:${(g.margen||0)>=0?'var(--good)':'var(--bad)'}"></i></div></div><div class="num" style="color:var(--muted)">${nf(g.viajes)} cargas facturadas</div><div class="num ${(g.margen||0)>=0?'pos':'neg'}">${g.margen==null?'Pendiente':eurMarked(g.margen,g.margenEstado)} · ${pctMarked(g.margenTransPct,g.margenEstado)}</div></div>`).join('')}</div>`;
  const pendiente=rvM.tot.pendientes||0;
  const calidad=`<div class="info"><b>Ingresos de facturas · costes calculados por carga</b>. El coste usa consumos, nómina e indirectos repartidos; no equivale a una factura de gasto del viaje.${pendiente?` <b>${nf(pendiente)} operaciones con coste pendiente (${eur(rvM.tot.ingresoPendiente)} de ingreso).</b> Su margen se muestra como «—». Los huecos del gráfico no son ceros.`:''} <button class="textbtn" data-tab="viajes">Ver operaciones y fuentes ↗</button></div>`;
- return calidad+`<div class="fgrid2" style="margin-bottom:12px"><section class="fcard"><h3>El transporte mes a mes <small>ingreso de facturas y coste calculado (sin material); margen solo con coste completo</small></h3>${mesesSVG(rvM.groups)}</section><section class="fcard"><h3>Por tipo de servicio <small>margen calculado y % sobre ingreso; «—» = coste incompleto</small></h3>${tiposHtml}</section></div>`;
+ return calidad+`<div class="fgrid2" style="margin-bottom:12px"><section class="fcard"><h3>El transporte mes a mes <small>ingreso de facturas y coste calculado (sin material); margen solo con coste completo</small></h3>${mesesSVG(rvM.groups)}</section><section class="fcard"><h3>Por tipo de servicio <small>margen calculado y % sobre ingreso; «—» = coste incompleto · pincha un tipo para ver el detalle</small></h3>${tiposHtml}</section></div>`;
+}
+// ---------- FICHA DE TIPO DE SERVICIO: por qué nacional / hormigón / áridos gana o pierde (Roberto 29/09: «quiero ver a
+// detalle qué sucede, poder entrar en las cifras de pérdida»). Mismo motor que el panel «Por tipo de servicio»: realView('tipo').
+// OJO (trampa real, no repetirla): el filtro «Tipo» de la cabecera (segmentador state.categories, slicerDefs) filtra el campo
+// .category de los PARTES de Access (dataset ESTIMADO); esta ficha usa tipoOf(r) sobre el dataset REAL de GesRuta — dos campos
+// distintos. Por eso las filas del panel llevan su propio data-fichatipo en vez de reusar data-drill="categories".
+let _tipoSel=null;
+// mismo tipoOf() de model.mjs, reconstruido con los campos base que SIEMPRE trae netaTrips (t.tipo solo viene con triangulado
+// v2 completo; t.horm y t.sub son incondicionales) para que la lista de «peores viajes» cuadre con el grupo de realView.
+const tipoDeViaje=t=>t.tipo||(t.horm?'hormigonera':(t.sub?'subcontratado':''));
+function tipoDet(key){
+ const rvT=M.realView(state,'tipo'),g=rvT&&rvT.groups.find(x=>x.key===key);
+ if(!g)return '<div class="info">Este tipo ya no tiene datos con los filtros actuales.</div>';
+ _rvCur=rvT;
+ const det=rvT.detail(key),real=rvT.real,gana=(g.margen||0)>=0,tone=gana?'pos':'neg';
+ const kk=(l,v,cl='')=>`<div class="mk"><div class="l">${l}</div><div class="v ${cl}">${v}</div></div>`;
+ const miniPeor=(title,rows,first,max=10)=>{
+  const rs=rows.filter(x=>x.viajes>0).slice().sort((a,b)=>(a.margen??1e15)-(b.margen??1e15));
+  if(!rs.length)return `<h3>${title}</h3><div class="empty">Sin datos.</div>`;
+  const cols=[{label:first,key:'label'},numberCol('Viajes','viajes'),moneyCol('Ing. transporte','ingTransporte')].concat(real?[moneyStatusCol('Coste transporte','costeTransporte','costeTransporteEstado'),moneyStatusCol('Margen','margen','margenEstado'),percentStatusCol('%','margenTransPct','margenEstado')]:[]);
+  return `<h3>${title} <small>peor margen primero${rs.length>max?' · primeros '+max+' de '+nf(rs.length):''}</small></h3>${simpleTable(cols,rs.slice(0,max).map(x=>({...x,label:x.key})))}`;
+ };
+ const porCliente=det.byClient.filter(x=>x.viajes>0).slice().sort((a,b)=>(a.margen??1e15)-(b.margen??1e15));
+ const peoresClientes=porCliente.filter(c=>(c.margen||0)<0).slice(0,6);
+ // sin soloFactura: son ajustes de factura sin viaje físico (realView tampoco los cuenta en g.viajes; si se incluyen aquí el
+ // recuento de «cargas de este tipo» deja de cuadrar con el de la cabecera, que es justo lo que no debe pasar en esta ficha.
+ const trips=viajesPeriodo().filter(t=>tipoDeViaje(t)===key&&!t.soloFactura);
+ const peoresViajes=trips.filter(t=>t.margen!=null).slice().sort((a,b)=>a.margen-b.margen).slice(0,15);
+ let h=`<div class="noprint" style="margin-bottom:10px"><button class="textbtn" type="button" data-tipovolver>← Volver al resumen</button></div>`;
+ h+=`<section class="fcard"><div class="fhead"><h2>${esc(key?tipoLabel(key):'(sin tipo)')}</h2><span class="badge-gp ${g.margen==null?'':gana?'g':'p'}">${g.margen==null?'PENDIENTE':gana?'MARGEN POSITIVO':'MARGEN NEGATIVO'} ${eurMarked(g.margen,g.margenEstado)}</span><span class="d">${nf(g.viajes)} cargas facturadas · ${nf(g.clientes||0)} clientes · ${Math.round((g.fiable||0)*100)} % del ingreso con medidas enlazadas</span></div>
+ <div class="minik">${kk('Ingreso de transporte',eur(g.ingTransporte))}${kk('Coste de transporte',real?eurMarked(g.costeTransporte,g.costeTransporteEstado):'—')}${kk('Margen',real?eurMarked(g.margen,g.margenEstado):'—',tone)}${kk('% sobre transporte',real?pctMarked(g.margenTransPct,g.margenEstado):'—',tone)}${kk('% sobre facturado',real?pctMarked(g.margenPct,g.margenEstado):'—',tone)}${kk('Facturado',eur(g.ingreso))}${kk('Material (áridos)',eurMarked(g.materialReal,g.materialRealEstado)+' + '+eurMarked(g.materialEstimado,g.materialEstimadoEstado))}</div></section>`;
+ if(real)h+=costeApilado(g);
+ h+=`<section class="fcard"><h3>Mes a mes <small>ingreso y coste de transporte; la barra es el margen de cada mes · pasa el ratón para ver las cifras</small></h3>${mesesSVG(det.byMonth)}</section>`;
+ h+=`<div class="fgrid2"><section class="fcard">${miniPeor('Por cliente',det.byClient,'Cliente')}${peoresClientes.length?`<div class="grp noprint" style="margin-top:8px">${peoresClientes.map(c=>`<button class="textbtn" type="button" data-fichacli="${esc(c.key)}">${esc(c.key)} ↗</button>`).join(' · ')}</div>`:''}</section><section class="fcard">${miniPeor('Por ruta (provincia de carga → provincia de descarga)',det.byRuta,'Ruta')}</section></div>`;
+ h+=`<section class="fcard"><h3>Sus peores viajes <small>${nf(trips.length)} cargas de este tipo en el periodo · los ${Math.min(15,peoresViajes.length)} de peor margen</small></h3>${peoresViajes.length?simpleTable([{label:'Día',key:'dia',format:date},{label:'Cliente',key:'cliente'},{label:'Ruta',key:'ruta'},moneyCol('Ingreso','ingreso'),moneyStatusCol('Coste','coste','costeEstado'),moneyStatusCol('Margen','margen','margenEstado'),percentStatusCol('%','margenPct','margenEstado')],peoresViajes):'<div class="empty">Sin viajes con margen calculado en este tipo.</div>'}</section>`;
+ return h;
 }
 // ---------- pestañas con subapartados (las 13 de antes caben en una línea) ----------
 const TAB_GROUPS={summary:['summary','actividad'],audit:['audit','expenses','invoices','parts'],tarifas:['tarifas','tarifasp']},SUB_LABEL={summary:'Resultado',actividad:'Actividad',audit:'Conciliación',expenses:'Gastos documentados',invoices:'Facturas',parts:'Partes y costes',tarifas:'De clientes',tarifasp:'De proveedores'};
@@ -1295,7 +1331,10 @@ function renderContent(){
  if(!enResumen){const cd=$('cardDetail');if(cd)cd.hidden=true;}
  const msg=$('message');if(msg)msg.hidden=!(enResumen||tabGroupOf(state.tab)==='audit');
  let html='';
- if(state.tab==='summary'&&ledgerCtx.ledgerOn){
+ if(_tipoSel){const rvTchk=M.realView(state,'tipo');if(!rvTchk||!rvTchk.groups.find(g=>g.key===_tipoSel))_tipoSel=null;}
+ if(state.tab==='summary'&&_tipoSel){
+   html=tipoDet(_tipoSel);
+ }else if(state.tab==='summary'&&ledgerCtx.ledgerOn){
    const {lv,br,lvBase}=ledgerCtx,op=new Map(M.group(selection,state,'month').groups.map(m=>[m.key,m]));
    const plRows=lv.byMonth.map(m=>({key:m.key,label:monthName(m.key),income:m.income,expenses:m.expenses,result:m.result,marginPct:m.marginPct,marginState:'R',gesruta:op.get(m.key)?.revenue??0,parts:op.get(m.key)?.[state.costMode==='stored'?'rawCost':state.costMode==='recalculated'?'calcCost':'realCost']??0}));
    const totalExp=lv.expenses||1,cats=lv.expenseCategories.filter(c=>c.amount>0).slice(0,11).map(c=>({label:c.label,cost:c.amount,note:nf(c.amount/totalExp*100,0)+' %'}));
@@ -1424,7 +1463,7 @@ function tarifasMontar(){
  _tarifasVista=_tarifasVista||new Promise((ok,ko)=>{const sc=document.createElement('script');sc.src=TARIFAS_BASE()+'vista.js?v='+new Date().toISOString().slice(0,10);sc.onload=ok;sc.onerror=()=>{_tarifasVista=null;sc.remove();ko();};document.head.appendChild(sc);});
  _tarifasVista.then(()=>{if($('tarifasRaiz')===el)window.RazoTarifas.montar(el,opc);}).catch(()=>{if($('tarifasRaiz')===el)el.innerHTML='<div class="alert">No se ven las tarifas. Se publican cada noche en \\\\SERVIDOR\\Programas\\_TARIFAS\\tarifas: compruebe que esa carpeta se abre desde este equipo y vuelva a cargar.</div>';});
 }
-function switchTab(tab){if(tab==='clientedet'){tab='client';_vistaReal.client='lista';}state.tab=tab;tableState=freshTable();renderContent();}
+function switchTab(tab){if(tab==='clientedet'){tab='client';_vistaReal.client='lista';}_tipoSel=null;state.tab=tab;tableState=freshTable();renderContent();}
 // DENTRO DE «RENTABILIDAD Y TARIFAS» (Roberto 26/09/2026: una sola app, sin duplicados). informe.html?embebido=1 oculta la marca y la
 // pestaña «Viajes» (esta en Tarifas: «Viajes por vehiculo y dia», medida por la tractora) y manda alli los enlaces a viajes;
 // informe.html#tab=plate (o client, summary, audit, mapa, hallazgos, personal, method, actividad...) abre esa pestaña.
@@ -1439,6 +1478,7 @@ function bind(){
   if(!e.target.closest('.srcbox'))document.querySelectorAll('.srcbox[open]').forEach(d=>{d.open=false;});
   if(!e.target.closest('.perbox'))document.querySelectorAll('.perbox[open]').forEach(d=>{d.open=false;});
   const vi=e.target.closest('[data-veh]');if(vi&&!e.target.closest('button')){_vehSel=vi.dataset.veh;document.querySelectorAll('#vehItems .mit').forEach(x=>x.classList.toggle('on',x===vi));const f=$('fichaVeh');if(f&&_rvCur){f.innerHTML=fichaVehiculo(_rvCur,_rvCur.groups.find(g=>g.key===_vehSel));postFicha();}return;}
+  const ti=e.target.closest('[data-fichatipo]');if(ti){_tipoSel=ti.dataset.fichatipo;renderContent();const el=$('content');if(el)el.scrollIntoView({block:'start'});return;}
   const vr=e.target.closest('tr.vr[data-vt]');if(vr&&!e.target.closest('a,button,input,select,label')){const id=vr.dataset.vt,S=_vt[id];if(S){const k=vr.dataset.k;if(S.open.has(k))S.open.delete(k);else S.open.add(k);const c=$('vt_'+id);if(c)c.innerHTML=vtCuerpo(id);}return;}
   const ct=e.target.closest('tr.vr[data-cti]');if(ct&&!e.target.closest('a,button,input,select,label')){const nx=ct.nextElementSibling;if(nx&&nx.classList.contains('vd')){nx.remove();ct.classList.remove('open');}else{const t=_cliTrips[+ct.dataset.cti];if(t){ct.insertAdjacentHTML('afterend',`<tr class="vd"><td colspan="${ct.children.length}">${tripDetail(t)}</td></tr>`);ct.classList.add('open');}}return;}
   const tr=e.target.closest('tr.exp');
@@ -1468,6 +1508,7 @@ function bind(){
   if(b.dataset.drill){state[b.dataset.drill]=[b.dataset.key==='Sin matrícula'?UNASSIGNED:b.dataset.key];update();}
   if(b.dataset.verviajes!==undefined){const q=b.dataset.verviajes;switchTab('viajes');tableState.query=q;const inp=$('tableSearch');if(inp)inp.value=q;drawTable();return;}
   if(b.dataset.fichacli!==undefined){_cliSel=b.dataset.fichacli;switchTab('clientedet');return;}
+  if(b.dataset.tipovolver!==undefined){_tipoSel=null;renderContent();return;}
   if(b.dataset.sort){tableState.asc=tableState.sort===b.dataset.sort?!tableState.asc:true;tableState.sort=b.dataset.sort;drawTable();}
   if(b.dataset.page){tableState.page+=Number(b.dataset.page);drawTable();}
   if(b.dataset.period){const [from,to]=b.dataset.period.split('|');$('from').value=from;$('to').value=to;tableState.page=0;update();}
