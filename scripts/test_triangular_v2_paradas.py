@@ -454,5 +454,54 @@ class TestCiclosGeoLlegadaReal(unittest.TestCase):
         self.assertEqual(ciclos[0]["descarga"]["t_out"], t0 + 33 * 60, "t_out de la visita de descarga sin tocar por el arreglo")
 
 
+class TestCiclosGeoNoUsaPlantaDeHormigonEnDiaMixto(unittest.TestCase):
+    # 8803NKR, 22/07/2026 (Roberto/Claude 29/09/2026): la cantera "27150" sirve HORMIGON y ARIDOS con el mismo codigo.
+    # Su coordenada aprendida (aprender_plantas) es el centro preciso de la hormigonera (radio_m=450), pero cerca()
+    # no distingue fuente="planta_aprendida" de un lugar generico y cae en el radio por defecto (3 km): un punto de
+    # la traza a 2-3 km del centro de la planta seguia contando "dentro" de la zona para el TICKET DE ARIDOS que
+    # comparte el mismo codigo ese dia, fundiendo rondas y arrastrando km/tiempo de la jornada entera (+15,8% de km
+    # medido). Se descarto arreglar cerca()/RADIO_MATCH directamente (28-29/09/2026, commit 7d5d705) porque esos dos
+    # se leen tambien en dias SIN hormigon, en canteras que sirven aridos con normalidad a 1-3 km del centro
+    # aprendido: acotarlo ahi rompia cientos de viajes de aridos/banera reales (medido_por_viaje -724,
+    # carga_por_paso 33->961). El arreglo va en triangular_dia()/ciclos_geo(): en un dia MIXTO, los codigos que hoy
+    # son planta de hormigon de ESTE camion se excluyen de las zonas del motor de aridos (ya los mide, con su radio
+    # exacto, ciclos_plantas()); fuera de un dia mixto no cambia nada (excluir=None de toda la vida).
+    casa = "Razo"
+
+    def coords_de(self, cod, lat, lon, fuente, radio_m=None):
+        c = {"lat": lat, "lon": lon, "fuente": fuente}
+        if radio_m is not None:
+            c["radio_m"] = radio_m
+        return (self.casa, cod), c
+
+    def ticket(self, o, d):
+        return {"o": o, "d": d, "v": "00001", "cant": "0001"}
+
+    def escenario(self):
+        # planta en (42.000, -8.000); la traza pasa a ~2 km (0.018 grados de latitud: dentro del radio generico de
+        # 3 km, muy fuera del radio real de la planta de 450 m) -- el punto exacto que arrastraba la ronda.
+        t0 = ep('2026-07-22T08:00')
+        pts = (tramo(t0, 10, 42.018, 42.018, 0)                 # "carga" a 2 km de la planta, parado de verdad
+               + tramo(t0 + 10 * 60, 8, 42.018, 42.100, 60)     # se aleja de verdad (obra)
+               + tramo(t0 + 18 * 60, 15, 42.100, 42.100, 0)     # descarga en la obra
+               + tramo(t0 + 33 * 60, 8, 42.100, 42.018, 60)     # vuelve
+               + tramo(t0 + 41 * 60, 10, 42.018, 42.018, 0))    # "descarga" de vuelta a 2 km de la planta
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        coords = dict([self.coords_de('27150', 42.000, -8.000, fuente="planta_aprendida", radio_m=450)])
+        return jor, coords
+
+    def test_sin_excluir_el_punto_a_2_km_cuenta_como_dentro_de_la_planta(self):
+        # documenta el comportamiento fuera de un dia mixto (excluir=None): el radio generico de 3 km sigue viendo
+        # el punto a 2 km como "dentro" de la planta, tal cual antes de este arreglo.
+        jor, coords = self.escenario()
+        ciclos = t2.ciclos_geo(jor[0], [self.ticket('27150', '27150')], coords, self.casa, "wialon", None)
+        self.assertTrue(any(c.get("o") == '27150' for c in ciclos))
+
+    def test_excluyendo_el_codigo_de_hoy_no_arrastra_la_ronda(self):
+        jor, coords = self.escenario()
+        ciclos = t2.ciclos_geo(jor[0], [self.ticket('27150', '27150')], coords, self.casa, "wialon", None, excluir={'27150'})
+        self.assertEqual(ciclos, [], "en un dia mixto, el codigo de la planta de hormigon de HOY no es zona del motor de aridos")
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -348,14 +348,21 @@ def fundir_pequenos(ciclos, j, fuente, tablas, km_min=KM_MIN_CICLO, min_min=MIN_
     return ciclos
 
 
-def ciclos_geo(j, viajes, coords, casa, fuente, tablas):
+def ciclos_geo(j, viajes, coords, casa, fuente, tablas, excluir=None):
     """Maquina de estados carga -> descarga sobre las paradas clasificadas en el mapa. Devuelve ciclos con (o, d) o [] si el
     dia no tiene geografia util. Convencion v1: un ciclo va del fin del anterior a la SALIDA de su descarga; el ultimo, al fin.
     - Dos paradas en el mismo origen con < KM_MISMA_CARGA recorridos entre ellas = la misma carga (espera en la cantera).
     - Si no hay parada de descarga (volcar una banera dura 2-3 min), la descarga es el PASO de la traza por el destino (el
-      punto mas cercano dentro de su radio): 'descarga_por_paso'. Si tampoco pasa, 'descarga_no_vista' (se cierra al cargar)."""
-    O = {t["o"] for t in viajes if t["o"]}
-    Dd = {t["d"] for t in viajes if t["d"]}
+      punto mas cercano dentro de su radio): 'descarga_por_paso'. Si tampoco pasa, 'descarga_no_vista' (se cierra al cargar).
+    - excluir: codigos que hoy son planta de hormigon de ESTE camion (dia mixto, ver triangular_dia): una cantera puede
+      servir hormigon y aridos con el mismo codigo, y su coordenada aprendida es el centro preciso de la hormigonera
+      (~450 m), no el radio generico de aridos; visitas_plantas()/ciclos_plantas() ya la miden con su propio radio
+      exacto, asi que ciclos_geo() no debe tratarla ademas como zona propia (un punto a 2-3 km seguiria contando
+      'dentro' con el radio generico de 3 km y arrastraria km/tiempo de la ronda siguiente -- 8803NKR, 22/07/2026,
+      +15,8% de km; Roberto/Claude 29/09/2026). Fuera de un dia mixto esto no se usa: el radio generico de siempre
+      sigue igual para aridos/banera."""
+    O = {t["o"] for t in viajes if t["o"]} - (excluir or set())
+    Dd = {t["d"] for t in viajes if t["d"]} - (excluir or set())
     pares = {(t["o"], t["d"]) for t in viajes}
     pts = j["pts"]
     ts = [q["t"] for q in pts]
@@ -814,13 +821,15 @@ def reparto(tramos, fuente, tablas, acts, drvs, k, motivo, j):
             "tramos": [(a, b, jj) for (a, b, jj) in tramos], "k_reparto": k}   # para recortarlo si un viaje largo pisa sus tramos
 
 
-def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, drvs, diag, permitir_ciclos=True, viajes_sig=None):
+def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, drvs, diag, permitir_ciclos=True, viajes_sig=None, excluir_zonas=None):
     """viajes_sig = albaranes del dia SIGUIENTE del mismo camion: en una jornada nocturna sus cargas de madrugada estan en esta
-    traza, asi que sus lugares tambien cortan ciclos (que quedan sobrantes hoy y se prestan manana)."""
+    traza, asi que sus lugares tambien cortan ciclos (que quedan sobrantes hoy y se prestan manana).
+    excluir_zonas = codigos que hoy son planta de hormigon de este mismo camion (dia mixto): ver ciclos_geo()."""
     n = len(viajes)
     res = [None] * n
     pendientes = list(range(n))
     casa = viajes[0]["c"]
+    excluir_zonas = excluir_zonas or set()
     if permitir_ciclos:
         if prestados:
             jp = prestados[0][1]
@@ -829,11 +838,11 @@ def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, dr
             pendientes, libres = asignar_dp(viajes, pendientes, cic, libres, jp, fuente, tablas, acts, drvs, res, coords, casa, prestada=True)
             diag["ciclos_prestados_usados"] += len(cic) - len(libres)
             jp["sobrantes"] = [c for k, c in enumerate(cic) if k in libres] + [c for c in jp["sobrantes"] if c not in cic]
-        codigos = {c for t in viajes for c in (t["o"], t["d"]) if c}
+        codigos = {c for t in viajes for c in (t["o"], t["d"]) if c} - excluir_zonas
         for j in jornadas:
             if j["ciclos"] is None:
                 base = viajes + (list(viajes_sig) if (j["nocturna"] and viajes_sig) else [])
-                cic = ciclos_geo(j, base, coords, casa, fuente, tablas)
+                cic = ciclos_geo(j, base, coords, casa, fuente, tablas, excluir=excluir_zonas)
                 if cic:
                     j["modo"] = "geo"
                 else:
@@ -1957,9 +1966,19 @@ def main():
         # de deteccion de zonas que cada uno ya usaba), y trabaja sobre su PROPIA copia de la jornada para no pisar los
         # ciclos/sobrantes del otro; fusionar_jornada junta despues los dos resultados en la jornada real (la necesitan tal
         # cual el dia siguiente -pernocta-, la segunda pasada de sobrantes y la pasada de largo recorrido).
+        codigos_h_hoy = set()
         if i_arid and i_h:
+            # codigos que HOY son planta de hormigon de este mismo camion: la coordenada aprendida es el centro preciso
+            # de la hormigonera (~450 m, ver aprender_plantas), no un lugar generico de aridos; ciclos_geo()/
+            # ventanas_de_zona() no deben tratarla como zona propia del motor de aridos (8803NKR, 22/07/2026: un punto
+            # a 2-3 km de la planta contaba como "dentro" con el radio generico de 3 km y arrastraba km/tiempo de la
+            # ronda siguiente; Roberto/Claude 29/09/2026 -- descartado el 29/09 aplicarlo via cerca()/RADIO_MATCH
+            # porque esos dos se leen tambien fuera de un dia mixto y regresionaban aridos/banera en canteras que SI
+            # sirven ambos materiales; acotado aqui a codigos que HOY tiene tambien carga de hormigon).
+            codigos_h_hoy = {t["o"] for i in i_h for t in [dem[i]] if t.get("o") and (t["c"], t["o"]) in plantas}
             ventanas_planta = [(a, b) for j in jor for (a, b, _, _) in visitas_plantas(j, plantas)]
-            ventanas_arid = [v for j in jor for v in ventanas_de_zona(j["pts"], {dem[i]["o"] for i in i_arid if dem[i]["o"]} | {dem[i]["d"] for i in i_arid if dem[i]["d"]}, coords, m)]
+            codigos_arid_hoy = ({dem[i]["o"] for i in i_arid if dem[i]["o"]} | {dem[i]["d"] for i in i_arid if dem[i]["d"]}) - codigos_h_hoy
+            ventanas_arid = [v for j in jor for v in ventanas_de_zona(j["pts"], codigos_arid_hoy, coords, m)]
             jor_arid = [jornada_enmascarada(j, ventanas_planta) for j in jor]
             jor_h = [jornada_enmascarada(j, ventanas_arid) for j in jor]
         else:
@@ -1967,7 +1986,7 @@ def main():
         if i_arid:
             dnext = (dt.date.fromisoformat(d) + dt.timedelta(days=1)).isoformat()
             sig = [dem[i] for i in por_dia.get((m, dnext), []) if not dem[i]["larga"] and not dem[i]["horm"] and i not in espejo_de]
-            r = triangular_dia([dem[i] for i in i_arid], jor_arid, prestados, fuente, coords, sens.get(m), acts.get(m, []), drvs.get(m, []), diag, viajes_sig=sig)
+            r = triangular_dia([dem[i] for i in i_arid], jor_arid, prestados, fuente, coords, sens.get(m), acts.get(m, []), drvs.get(m, []), diag, viajes_sig=sig, excluir_zonas=codigos_h_hoy)
             res.update(dict(zip(i_arid, r)))
         if i_h:
             r = triangular_hormigon([dem[i] for i in i_h], jor_h, plantas, coords, fuente, sens.get(m), acts.get(m, []), drvs.get(m, []), diag)
