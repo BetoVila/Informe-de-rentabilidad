@@ -347,5 +347,112 @@ class TestDestinoHormigonPorGPS(unittest.TestCase):
         self.assertEqual(t2.destino_hormigon(self.ticket(horm=False, d='CANTERA'), obra, self.coords, lambda la, lo: 'DORNEDA'), 'CANTERA')
 
 
+class TestCiclosGeoLlegadaReal(unittest.TestCase):
+    # Auditoria de abril 2026 (Roberto/Claude 29/09/2026): ciclos_geo() tiene su PROPIA deteccion de "visitas" a una
+    # zona (bucle "visitas, cur = [], None"), separada de visitas_zona() (arreglada ayer, commit 7d5d705, para
+    # nacional de largo recorrido) pero con el MISMO problema: t_in (momento de ENTRAR en la geocerca) se usaba tal
+    # cual como hora de carga/descarga en medir_ciclo(), sin exigir que el camion se quedase parado de verdad. Afecta
+    # a TODOS los viajes locales que pasan por ciclos_geo() (nacional corto, aridos, banera). Medido en la auditoria:
+    # 95-100% de los viajes nacionales LOCALES con parada de carga o descarga registrada la tenian ANTES que la
+    # parada real (mediana 5 min, hasta 21 min, siempre en la misma direccion). Casos reales de referencia: 9791JLT
+    # 09/04 viaje 00028149 destino Mazaricos (t_descarga publicado 12:48, parada real 13:09) y 5665FXZ 25/05 viaje
+    # 00028558 destino POIO (t_descarga publicado 17:56, parada real 18:31).
+    casa = "Razo"
+
+    def coords_de(self, cod, lat, lon, fuente="gesruta", radio_m=None):
+        c = {"lat": lat, "lon": lon, "fuente": fuente}
+        if radio_m is not None:
+            c["radio_m"] = radio_m
+        return (self.casa, cod), c
+
+    def ticket(self, o, d):
+        return {"o": o, "d": d, "v": "00001", "cant": "0001"}
+
+    def test_descarga_llega_tarde_si_el_camion_sigue_circulando_al_entrar_en_la_zona(self):
+        # zona ancha (nominatim_localidad, 5 km): el camion entra en ella circulando a velocidad de carretera y solo
+        # para de verdad varios minutos despues (igual que el patron medido en abril: geocerca ancha, t_in adelantado).
+        t0 = ep('2026-04-09T08:00')
+        pts = (tramo(t0 - 3 * 60, 3, 41.980, 42.000, 60)
+               + tramo(t0, 10, 42.000, 42.000, 0)                 # carga en A, parado de verdad
+               + tramo(t0 + 10 * 60, 8, 42.000, 42.100, 60)       # viaje hacia B, aun fuera de su zona
+               + tramo(t0 + 18 * 60, 5, 42.200, 42.200, 60)       # YA dentro de la zona de B (centro exacto), pero sigue circulando
+               + tramo(t0 + 23 * 60, 10, 42.200, 42.200, 0)       # ahora si, parado de verdad (descarga real)
+               + tramo(t0 + 33 * 60, 3, 42.200, 42.220, 60))
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        self.assertEqual(len(jor), 1)
+        (ka, ca), (kb, cb) = self.coords_de('A', 42.000, -8.000, fuente="gesruta"), self.coords_de('B', 42.200, -8.000, fuente="nominatim_localidad")
+        coords = {ka: ca, kb: cb}
+        ciclos = t2.ciclos_geo(jor[0], [self.ticket('A', 'B')], coords, self.casa, "wialon", None)
+        self.assertEqual(len(ciclos), 1)
+        c = ciclos[0]
+        self.assertIsNotNone(c.get("descarga"))
+        self.assertEqual(c["descarga"]["t_in"], t0 + 18 * 60, "t_in crudo = al entrar en la geocerca, aun circulando")
+        self.assertEqual(c["descarga"]["t_parado_in"], t0 + 23 * 60, "t_parado_in = la parada real, mas tarde")
+        m = t2.medir_ciclo(jor[0], c, 0, 1, "wialon", None, [], [])
+        self.assertEqual(m["t_descarga_in"], t0 + 23 * 60, "medir_ciclo debe usar la parada real, no t_in crudo")
+        self.assertGreater(m["t_descarga_in"], c["descarga"]["t_in"], "la hora publicada nunca debe adelantarse a la parada real")
+
+    def test_un_frenazo_suelto_dentro_de_la_zona_no_confirma_la_llegada(self):
+        # un unico punto a baja velocidad (cruce, rotonda) dentro de la zona de descarga, con el camion circulando a
+        # velocidad de carretera justo antes y despues, NO debe confirmar t_parado_in (mismo criterio que
+        # visitas_zona(), commit 7d5d705, caso real 5003MBV 09/07/2026).
+        t0 = ep('2026-04-09T08:00')
+        pts = (tramo(t0 - 3 * 60, 3, 41.980, 42.000, 60)
+               + tramo(t0, 10, 42.000, 42.000, 0)                              # carga en A
+               + tramo(t0 + 10 * 60, 8, 42.000, 42.100, 60)                    # viaje hacia B
+               + [dict(tramo(t0 + 18 * 60, 1, 42.200, 42.200, 2.0)[0])]        # frenazo suelto, 1 punto a 2 km/h en la zona
+               + tramo(t0 + 19 * 60, 5, 42.200, 42.200, 60)                    # sigue circulando de verdad
+               + tramo(t0 + 24 * 60, 10, 42.200, 42.200, 0)                    # parada real, sostenida
+               + tramo(t0 + 34 * 60, 3, 42.200, 42.220, 60))
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        (ka, ca), (kb, cb) = self.coords_de('A', 42.000, -8.000, fuente="gesruta"), self.coords_de('B', 42.200, -8.000, fuente="nominatim_localidad")
+        coords = {ka: ca, kb: cb}
+        ciclos = t2.ciclos_geo(jor[0], [self.ticket('A', 'B')], coords, self.casa, "wialon", None)
+        self.assertEqual(len(ciclos), 1)
+        c = ciclos[0]
+        self.assertEqual(c["descarga"]["t_parado_in"], t0 + 24 * 60, "la parada sostenida, no el frenazo suelto de t0+18min")
+
+    def test_parada_corta_sin_llegar_a_sostenerse_cae_hacia_t_in_crudo(self):
+        # porte muy corto (banera: volcar dura 2-3 min real, pero la traza solo trae 2 puntos parados = 60 s de
+        # separacion, sin llegar a los DWELL_S=180s): medir_ciclo() debe seguir dando una hora (el t_in crudo, como
+        # antes de este arreglo), no perder el hito por exigir una parada que la traza no puede confirmar.
+        t0 = ep('2026-04-09T08:00')
+        pts = (tramo(t0 - 3 * 60, 3, 41.980, 42.000, 60)
+               + tramo(t0, 5, 42.000, 42.000, 0)
+               + tramo(t0 + 5 * 60, 3, 42.000, 42.020, 60)
+               + tramo(t0 + 8 * 60, 2, 42.020, 42.020, 0)          # descarga de solo 1 min entre puntos: no sostiene DWELL_S
+               + tramo(t0 + 10 * 60, 3, 42.020, 42.040, 60))
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        (ka, ca), (kb, cb) = self.coords_de('A', 42.000, -8.000, fuente="gps_aprendida", radio_m=300), self.coords_de('B', 42.020, -8.000, fuente="gps_aprendida", radio_m=300)
+        coords = {ka: ca, kb: cb}
+        ciclos = t2.ciclos_geo(jor[0], [self.ticket('A', 'B')], coords, self.casa, "wialon", None)
+        self.assertEqual(len(ciclos), 1)
+        c = ciclos[0]
+        self.assertIsNotNone(c.get("descarga"))
+        self.assertIsNone(c["descarga"].get("t_parado_in"), "un porte tan corto no llega a sostener la parada")
+        m = t2.medir_ciclo(jor[0], c, 0, 1, "wialon", None, [], [])
+        self.assertEqual(m["t_descarga_in"], c["descarga"]["t_in"], "sin parada sostenida, cae hacia t_in crudo (no se pierde el hito)")
+
+    def test_no_cambia_los_limites_del_ciclo_solo_la_hora_publicada(self):
+        # el arreglo NO debe tocar t0/t1 del ciclo (siguen fijados por t_out, como siempre): solo cambia t_carga_in /
+        # t_descarga_in que salen al JSON. Compara el mismo escenario con y sin el "circulando dentro de la zona" y
+        # comprueba que el limite del ciclo (t1) no se mueve.
+        t0 = ep('2026-04-09T08:00')
+        pts = (tramo(t0 - 3 * 60, 3, 41.980, 42.000, 60)
+               + tramo(t0, 10, 42.000, 42.000, 0)
+               + tramo(t0 + 10 * 60, 8, 42.000, 42.100, 60)
+               + tramo(t0 + 18 * 60, 5, 42.200, 42.200, 60)
+               + tramo(t0 + 23 * 60, 10, 42.200, 42.200, 0)
+               + tramo(t0 + 33 * 60, 3, 42.200, 42.450, 60))   # se aleja bien fuera del radio de B (5 km) para cerrar la visita
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        (ka, ca), (kb, cb) = self.coords_de('A', 42.000, -8.000, fuente="gesruta"), self.coords_de('B', 42.200, -8.000, fuente="nominatim_localidad")
+        coords = {ka: ca, kb: cb}
+        ciclos = t2.ciclos_geo(jor[0], [self.ticket('A', 'B')], coords, self.casa, "wialon", None)
+        # el ultimo ciclo del dia se extiende al fin de la jornada (comportamiento de siempre, sin tocar por este
+        # arreglo): lo que NO debe moverse es el limite real de la descarga, el t_out de su visita.
+        self.assertEqual(ciclos[0]["t1"], jor[0]["fin"])
+        self.assertEqual(ciclos[0]["descarga"]["t_out"], t0 + 33 * 60, "t_out de la visita de descarga sin tocar por el arreglo")
+
+
 if __name__ == '__main__':
     unittest.main()

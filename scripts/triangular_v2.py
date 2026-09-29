@@ -362,11 +362,39 @@ def ciclos_geo(j, viajes, coords, casa, fuente, tablas):
     # VISITAS a las zonas del dia por GEOCERCA sobre los puntos de la traza (sin exigir parada: en un porte de 3 km ni la carga
     # ni la descarga llegan a 3 min). Visita = puntos consecutivos dentro de la zona; vale si tiene >= 2 puntos o el camion
     # frena (< 10 km/h) dentro. Un punto suelto a velocidad de carretera no es una visita (paso por delante).
+    # Ademas de t_in (momento de ENTRAR en la geocerca, que puede ser ancha), cada visita lleva t_parado_in: el primer
+    # instante de un tramo parado que se SOSTIENE >= DWELL_S seguidos, mismo criterio que visitas_zona() (Roberto/Claude
+    # 28-29/09/2026, auditoria de abril: usar t_in crudo como hora de carga/descarga adelantaba sistematicamente en
+    # nacional local, aridos y banera -95-100% de los viajes con parada registrada, mediana 5 min, hasta 21 min, siempre
+    # en la misma direccion- porque marca la ENTRADA en la zona, no la parada real; un solo punto a baja velocidad
+    # -frenazo suelto en un cruce o rotonda- no debe contar como llegada. medir_ciclo() usa t_parado_in cuando existe y
+    # cae hacia t_in crudo si la visita no llega a sostenerse (porte muy corto, volcado de banera de 2-3 min): esto NO
+    # cambia los limites del ciclo (siguen fijados por t_out, sin tocar), solo la hora de carga/descarga publicada.
     zonas = []
     for cod in O | Dd:
         c = coords.get((casa, cod))
         if c and v1.RADIO_MATCH.get(c["fuente"], 1) is not None:
             zonas.append((cod, c))
+
+    def marcar_parado(cur, q):
+        """Actualiza cur['t_parado_in'] con el mismo criterio que visitas_zona(): confirma solo cuando el tramo parado
+        se sostiene >= DWELL_S segundos seguidos; un frenazo suelto no lo confirma y vuelve a circular lo descarta."""
+        prev = cur["_prev"]
+        dtm = (q["t"] - prev["t"]) if prev is not None else 0
+        if q["f"] == "locatel":
+            if (q.get("parada_min") or 0) > 0 and cur["t_parado_in"] is None:
+                cur["t_parado_in"] = q["t"]
+        elif (q["s"] or 0) <= V_PARADO and dtm <= 900:
+            if cur["t_parado_in"] is None:
+                if cur["_cand_in"] is None:
+                    cur["_cand_in"], cur["_cand_s"] = q["t"], 0
+                cur["_cand_s"] += dtm
+                if cur["_cand_s"] >= DWELL_S:
+                    cur["t_parado_in"] = cur["_cand_in"]
+        elif (q["s"] or 0) > V_MOVIL:
+            cur["_cand_in"], cur["_cand_s"] = None, 0    # volvio a circular de verdad: el candidato era un frenazo suelto
+        cur["_prev"] = q
+
     visitas, cur = [], None
     for q in pts:
         dentro = [(v1.hav((q["lat"], q["lon"]), (c["lat"], c["lon"])), cod) for cod, c in zonas if v1.cerca(q, c, c["fuente"], c.get("radio_m"))]
@@ -375,11 +403,14 @@ def ciclos_geo(j, viajes, coords, casa, fuente, tablas):
             cod = min(dentro)[1]        # zonas solapadas (planta a 1 km de la cantera): manda la mas cercana
         if cur and cod == cur["cod"]:
             cur["t_out"] = q["t"]; cur["n"] += 1; cur["lat"] += q["lat"]; cur["lon"] += q["lon"]; cur["vmin"] = min(cur["vmin"], q["s"] or 0)
+            marcar_parado(cur, q)
             continue
         if cur:
             visitas.append(cur); cur = None
         if cod:
-            cur = {"cod": cod, "t_in": q["t"], "t_out": q["t"], "n": 1, "lat": q["lat"], "lon": q["lon"], "vmin": q["s"] or 0}
+            cur = {"cod": cod, "t_in": q["t"], "t_out": q["t"], "n": 1, "lat": q["lat"], "lon": q["lon"], "vmin": q["s"] or 0,
+                   "t_parado_in": None, "_prev": None, "_cand_in": None, "_cand_s": 0}
+            marcar_parado(cur, q)
     if cur:
         visitas.append(cur)
     # arranque: si la jornada empieza descargando el viaje de AYER (carga hoy, descarga manana), sus viajes arrancan despues
@@ -390,7 +421,9 @@ def ciclos_geo(j, viajes, coords, casa, fuente, tablas):
             continue
         if v["t_out"] <= desde:
             continue
-        s = {"t_in": max(v["t_in"], desde), "t_out": v["t_out"], "lat": v["lat"] / v["n"], "lon": v["lon"] / v["n"], "zona": v["cod"]}
+        tpi = max(v["t_parado_in"], desde) if v.get("t_parado_in") is not None else None
+        s = {"t_in": max(v["t_in"], desde), "t_out": v["t_out"], "lat": v["lat"] / v["n"], "lon": v["lon"] / v["n"], "zona": v["cod"],
+             "t_parado_in": tpi}
         cl.append((s, [v["cod"]] if v["cod"] in O else [], [v["cod"]] if v["cod"] in Dd else []))
     if not cl:
         return []
@@ -702,8 +735,12 @@ def medir_ciclo(j, c, k, nc, fuente, tablas, acts, drvs, prestada=False):
             kc, lc = km_litros(j["pts"], fuente, tablas, ca.get("t_out", ca["t_in"]), de["t_in"])
             m.update({"km_vacio": kv, "km_cargado": kc, "litros_vacio": lv, "litros_cargado": lc})
         # hitos del ciclo (hora real de llegar a cargar, salir cargado y llegar a descargar): los usa la pasada de largo
-        # recorrido para conciliar con los ciclos locales y salen al JSON como t_carga / t_carga_fin / t_descarga
-        m.update({"t_carga_in": ca.get("t_in"), "t_carga_out": ca.get("t_out", ca.get("t_in")), "t_descarga_in": de.get("t_in"), "t_descarga_out": de.get("t_out", de.get("t_in"))})
+        # recorrido para conciliar con los ciclos locales y salen al JSON como t_carga / t_carga_fin / t_descarga.
+        # t_parado_in (cuando ciclos_geo() lo pudo confirmar: parada sostenida >= DWELL_S) es la llegada REAL; t_in
+        # crudo (momento de entrar en la geocerca) es solo el respaldo cuando la visita no llega a sostenerse (Roberto/
+        # Claude 28-29/09/2026, ver docstring de ciclos_geo).
+        m.update({"t_carga_in": ca.get("t_parado_in") or ca.get("t_in"), "t_carga_out": ca.get("t_out", ca.get("t_in")),
+                  "t_descarga_in": de.get("t_parado_in") or de.get("t_in"), "t_descarga_out": de.get("t_out", de.get("t_in"))})
     m.setdefault("km_cargado", None); m.setdefault("km_vacio", None); m.setdefault("litros_cargado", None); m.setdefault("litros_vacio", None)
     m.setdefault("t_carga_in", None); m.setdefault("t_carga_out", None); m.setdefault("t_descarga_in", None); m.setdefault("t_descarga_out", None)
     m.setdefault("min_transcurridos", m.get("duracion_min"))
