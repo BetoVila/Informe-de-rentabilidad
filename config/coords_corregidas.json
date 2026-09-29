@@ -1,0 +1,19 @@
+{
+  "_nota": "Coordenadas corregidas a mano: mandan sobre GesRuta, la geocodificacion y lo aprendido por GPS (fuente 'corregida'). Clave 'casa|codigo'; radio_m = radio para dar por hecho que el camion esta en el lugar. Cada entrada dice quien lo afirmo y con que se comprobo.",
+  "razo|15142": {
+    "lat": 43.3173,
+    "lon": -8.5015,
+    "radio_m": 2000,
+    "nombre": "SABON (Arteixo)",
+    "quien": "Roberto, 29/09/2026: «la 15142 es Sabon»",
+    "comprobado": "GesRuta la tenia en 43,2247/-8,6712 (junto a Carballo, a 20 km): 0 paradas a < 1 km en 66 dias con traza. Paradas reales >= 5 min en los viajes a 15142: 43,3186/-8,5040 (24 dias), 43,3104/-8,5061 (9), 43,3328/-8,4940 (4), 43,3073/-8,4845 (3), 43,3168/-8,4920 (2); centro ponderado y radio que los cubre."
+  },
+  "agetrans|15142": {
+    "lat": 43.3173,
+    "lon": -8.5015,
+    "radio_m": 2000,
+    "nombre": "SABON (Arteixo)",
+    "quien": "Roberto, 29/09/2026: «la 15142 es Sabon»",
+    "comprobado": "Mismo codigo y nombre (ARTEIXO) que en Razo; hasta ahora iba al centro del pueblo de Arteixo con radio de localidad (5 km)."
+  }
+}

@@ -540,6 +540,24 @@ class TestObraNoEsLaComida(unittest.TestCase):
         self.assertIs(t2.elegir_obra([corta, comida], self.planta, acts), comida)
 
 
+class TestCoordenadaCorregida(unittest.TestCase):
+    """15142 (Arteixo/Sabon) estaba en GesRuta junto a Carballo, a 20 km: la correccion de Roberto manda sobre el maestro
+    y sobre lo aprendido (que se sembro desde la coordenada mala), con su propio radio."""
+    k = ('Razo', '15142')
+    corr = {'lat': 43.3173, 'lon': -8.5015, 'fuente': 'corregida', 'radio_m': 2000}
+
+    def test_manda_sobre_gesruta_y_sobre_lo_aprendido(self):
+        ges = {self.k: {'lat': 43.2247, 'lon': -8.6712, 'fuente': 'gesruta'}}
+        apr = {self.k: {'lat': 43.234675, 'lon': -8.68612, 'fuente': 'gps_aprendida', 'radio_m': 47}}
+        coords = t2.v1.mejor(t2.v1.mejor(ges, {self.k: self.corr}), apr)
+        self.assertEqual(coords[self.k]['fuente'], 'corregida')
+
+    def test_usa_su_propio_radio(self):
+        nave = {'lat': 43.3328, 'lon': -8.4940}              # parada real a 1,8 km del centro corregido
+        self.assertTrue(t2.v1.cerca(nave, self.corr, 'corregida', 2000))
+        self.assertFalse(t2.v1.cerca(nave, self.corr, 'gesruta'))
+
+
 class TestTacografoArrastrado(unittest.TestCase):
     """Enero 2026: dias sin eventos del tacografo; _integrar arrastraba el ultimo estado (conduccion) de un evento de
     hasta 82 h antes y cubria toda la ventana. La conduccion no se arrastra mas de 6 h sin eventos; el descanso si."""

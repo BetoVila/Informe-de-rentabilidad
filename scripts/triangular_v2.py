@@ -608,10 +608,7 @@ def dividir_por_alternancias(ciclos, pts, ts, coords, casa):
         if len(seg) < 6:
             out.append(c); continue
         def radio(cc):
-            r = v1.RADIO_MATCH.get(cc["fuente"], 3.0)
-            if cc["fuente"] == "gps_aprendida":
-                r = min(1.0, max(0.3, 2.0 * (cc.get("radio_m") or 150) / 1000.0))
-            return max(0.6, r)
+            return max(0.6, v1.radio_match_km(cc["fuente"], cc.get("radio_m")))
         ro, rd = radio(co), radio(cd)
         # secuencia de zonas por punto (o / d / None), colapsando repeticiones; una visita vale con 2 puntos o frenada
         hits, cur = [], None
@@ -1318,6 +1315,8 @@ def zona_larga(cod, coords, casa):
     f = c["fuente"]
     if f == "gps_aprendida":
         r = min(1.5, max(0.6, 2.0 * (c.get("radio_m") or 150) / 1000.0))
+    elif f == "corregida":
+        r = max(2.0, (c.get("radio_m") or 0) / 1000.0)
     elif f in ("gesruta", "nominatim_exacto"):
         r = 2.0
     elif f == "nominatim_localidad":
@@ -1710,10 +1709,7 @@ def primer_paso_destino(jn, t, viajes_hoy, coords):
             origs.append(c)
 
     def radio(cc):
-        r = v1.RADIO_MATCH.get(cc["fuente"], 3.0)
-        if cc["fuente"] == "gps_aprendida":
-            r = min(1.0, max(0.3, 2.0 * (cc.get("radio_m") or 150) / 1000.0))
-        return max(0.6, r)
+        return max(0.6, v1.radio_match_km(cc["fuente"], cc.get("radio_m")))
     rd = radio(cd)
     cur, n_o = None, 0
     for q in jn["pts"]:
@@ -1742,6 +1738,24 @@ def primer_paso_destino(jn, t, viajes_hoy, coords):
 
 
 # ---------------------------------------------------------------- ancla de GesRuta (tarifas)
+RUTA_CORREGIDAS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "coords_corregidas.json")
+
+
+def cargar_corregidas(ruta):
+    """Coordenadas corregidas a mano (lo que dice Roberto del sitio real): {"casa|codigo": {lat, lon, radio_m, nombre}}.
+    Mandan sobre GesRuta, la geocodificacion y lo aprendido (fuente 'corregida'). Las claves que empiezan por '_' son notas."""
+    out = {}
+    if not os.path.isfile(ruta):
+        return out
+    for k, x in json.load(open(ruta, encoding="utf-8")).items():
+        if k.startswith("_") or not isinstance(x, dict) or x.get("lat") is None or x.get("lon") is None:
+            continue
+        casa, _, cod = k.partition("|")
+        out[(v1.casa_norm(casa), cod.strip())] = {"lat": float(x["lat"]), "lon": float(x["lon"]), "fuente": "corregida",
+                                                  "radio_m": int(x.get("radio_m") or 1000), "nombre": x.get("nombre")}
+    return out
+
+
 def cargar_ancla(ruta):
     out = collections.defaultdict(list)
     if not ruta or not os.path.isfile(ruta):
@@ -1903,7 +1917,8 @@ def main():
             if isinstance(x, dict) and x.get("lat") is not None and x.get("lon") is not None:
                 casa, _, cod = k.partition("|")
                 geo[(v1.casa_norm(casa), cod.strip())] = {"lat": float(x["lat"]), "lon": float(x["lon"]), "fuente": v1.fuente_de(x), "nombre": x.get("nombre")}
-    ref = v1.mejor(ges, geo)
+    corr = cargar_corregidas(RUTA_CORREGIDAS)
+    ref = v1.mejor(ges, geo, corr)
     trazas = cargar_trazas([("locatel", d) for d in a.locatel] + [("wialon", d) for d in a.wialon])
     paradas_dia = {k: v1.paradas(v["pts"], v["fuente"]) for k, v in trazas.items()}
     internas_dia = {}

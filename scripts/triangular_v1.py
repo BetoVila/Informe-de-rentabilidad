@@ -14,8 +14,8 @@ Niveles por viaje (siempre explicito en 'metodo'):
 Ciclo = desde el fin del ciclo anterior (o inicio de jornada) hasta la salida de la parada de descarga; el ultimo
 ciclo llega al fin de jornada (incluye la vuelta). Asi la suma de los viajes del dia = la jornada medida.
 
-Coordenadas de lugares (mejor disponible): gps_aprendida (paradas propias) > gesruta (maestro) > nominatim_exacto >
-nominatim_localidad > manual. Aprende la coordenada REAL de cada lugar frecuente agrupando las paradas de nuestros
+Coordenadas de lugares (mejor disponible): corregida (config/coords_corregidas.json, lo que dice Roberto) > gps_aprendida
+(paradas propias) > gesruta (maestro) > nominatim_exacto > nominatim_localidad > manual. Aprende la coordenada REAL de cada lugar frecuente agrupando las paradas de nuestros
 camiones en los dias que GesRuta dice que fueron alli (con contraste frente a los dias que no fueron, para no confundir
 la base con la planta). Salidas: coords_aprendidas_v1.json (+ _por_casa) y coords_discrepancias_v1.json (>5 km).
 
@@ -30,10 +30,13 @@ sys.path.insert(0, SCRIPTS)
 GESRUTA = r"\\SERVIDOR\Programas\Gesruta"
 GEOCODE_DIR = os.path.join(os.path.dirname(D), "geocode")
 CASAS = {"EMPTR21": "Razo", "EMPAG21": "Agetrans"}
-RANGO = {"gps_aprendida": 0, "gesruta": 1, "nominatim_exacto": 2, "nominatim_localidad": 3, "manual": 4, "dudoso": 5}
+# 'corregida' manda sobre todo, tambien sobre lo aprendido: el aprendizaje se siembra desde la referencia, y con una
+# referencia mala se queda con la parada frecuente de alrededor (15142 Arteixo/Sabon de Razo estaba en GesRuta junto a
+# Carballo, a 20 km, y aprendio un sitio de Carballo). Su radio va en la propia correccion (radio_m).
+RANGO = {"corregida": -1, "gps_aprendida": 0, "gesruta": 1, "nominatim_exacto": 2, "nominatim_localidad": 3, "manual": 4, "dudoso": 5}
 # 'dudoso' NO se usa para emparejar (demasiado incierto): solo como punto de partida amplio para aprender.
-RADIO_MATCH = {"gesruta": 1.0, "nominatim_exacto": 1.0, "nominatim_localidad": 5.0, "manual": 3.0, "dudoso": None}
-RADIO_APRENDER = {"gesruta": 3.0, "nominatim_exacto": 5.0, "nominatim_localidad": 12.0, "manual": 8.0, "dudoso": 25.0}
+RADIO_MATCH = {"corregida": 1.0, "gesruta": 1.0, "nominatim_exacto": 1.0, "nominatim_localidad": 5.0, "manual": 3.0, "dudoso": None}
+RADIO_APRENDER = {"corregida": 3.0, "gesruta": 3.0, "nominatim_exacto": 5.0, "nominatim_localidad": 12.0, "manual": 8.0, "dudoso": 25.0}
 DWELL_S = 300          # parada = >= 5 min parado
 V_PARADO = 3.0         # km/h
 V_MOVIL = 5.0
@@ -372,10 +375,17 @@ def natkey(s):
     return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", str(s or ""))]
 
 
-def cerca(s, c, fuente, radio_m=None):
-    r = RADIO_MATCH.get(fuente, 3.0)
+def radio_match_km(fuente, radio_m=None):
+    """Radio (km) para decidir que una parada esta EN un lugar; None = esa fuente no sirve para emparejar."""
     if fuente == "gps_aprendida":
-        r = min(1.0, max(0.3, 2.0 * (radio_m or 150) / 1000.0))
+        return min(1.0, max(0.3, 2.0 * (radio_m or 150) / 1000.0))
+    if fuente == "corregida" and radio_m:
+        return radio_m / 1000.0
+    return RADIO_MATCH.get(fuente, 3.0)
+
+
+def cerca(s, c, fuente, radio_m=None):
+    r = radio_match_km(fuente, radio_m)
     if r is None:
         return False
     return hav((s["lat"], s["lon"]), (c["lat"], c["lon"])) <= r
