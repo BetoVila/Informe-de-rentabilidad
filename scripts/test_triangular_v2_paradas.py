@@ -552,6 +552,43 @@ class TestCiclosGeoNoUsaPlantaDeHormigonEnDiaMixto(unittest.TestCase):
         self.assertEqual(ciclos, [], "en un dia mixto, el codigo de la planta de hormigon de HOY no es zona del motor de aridos")
 
 
+class TestObraNoEsLaComida(unittest.TestCase):
+    """2516KSN 11/02/2026: carga en PRELU a las 13:09, entrega 13:27-13:51 a 6 km, comida 14:06-14:57 a 656 m de la planta.
+    La obra era 'la parada mas larga' y salia la comida."""
+    planta = {'lat': 43.0497, 'lon': -7.5657, 'radio_m': 450}
+    t0 = 1770800000
+
+    def parada(self, m_ini, m_fin, lat, lon):
+        return {'t_in': self.t0 + m_ini * 60, 't_out': self.t0 + m_fin * 60, 'lat': lat, 'lon': lon}
+
+    def escenario(self):
+        entrega = self.parada(18, 42, 42.9966, -7.5442)     # 6,2 km, 24 min
+        comida = self.parada(57, 108, 43.0454, -7.5603)     # 656 m, 51 min
+        return entrega, comida
+
+    def test_con_tacografo_la_comida_en_descanso_no_es_la_obra(self):
+        entrega, comida = self.escenario()
+        acts = [(self.t0, 3), (entrega['t_in'], 2), (entrega['t_out'], 3), (comida['t_in'], 0), (comida['t_out'], 3)]
+        self.assertIs(t2.elegir_obra([entrega, comida], self.planta, acts), entrega)
+
+    def test_sin_tacografo_la_parada_de_vuelta_cerca_de_la_planta_no_es_la_obra(self):
+        entrega, comida = self.escenario()
+        self.assertIs(t2.elegir_obra([entrega, comida], self.planta, []), entrega)
+
+    def test_espera_corta_y_descarga_larga_en_la_misma_zona_sigue_siendo_la_larga(self):
+        # 12 min esperando a 0,9 km y 97 min descargando con bomba a 1,4 km, trabajando: la obra es la larga
+        espera = self.parada(10, 22, 43.0417, -7.5657)
+        bomba = self.parada(30, 127, 43.0371, -7.5657)
+        acts = [(self.t0, 3), (espera['t_in'], 2), (espera['t_out'], 3), (bomba['t_in'], 2), (bomba['t_out'], 3)]
+        self.assertIs(t2.elegir_obra([espera, bomba], self.planta, acts), bomba)
+
+    def test_sin_estancia_previa_de_10_min_no_cambia(self):
+        entrega, comida = self.escenario()
+        corta = self.parada(18, 25, 42.9966, -7.5442)       # solo 7 min antes de la comida
+        acts = [(self.t0, 3), (corta['t_in'], 2), (corta['t_out'], 3), (comida['t_in'], 0), (comida['t_out'], 3)]
+        self.assertIs(t2.elegir_obra([corta, comida], self.planta, acts), comida)
+
+
 class TestTacografoArrastrado(unittest.TestCase):
     """Enero 2026: dias sin eventos del tacografo; _integrar arrastraba el ultimo estado (conduccion) de un evento de
     hasta 82 h antes y cubria toda la ventana. La conduccion no se arrastra mas de 6 h sin eventos; el descanso si."""

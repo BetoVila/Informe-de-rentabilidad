@@ -1016,11 +1016,63 @@ def visitas_plantas(j, plantas):
     return vis
 
 
-def ciclos_plantas(j, plantas, fuente, tablas):
+OBRA_MIN_S = 600                           # una entrega de hormigon es una estancia de >= 10 min en el sitio
+
+
+def _descanso_frac(acts, a, b):
+    """Parte de [a, b] que el tacografo marca en descanso; None si no cubre al menos la mitad del tramo."""
+    if not acts:
+        return None
+    segs = _integrar(acts, a, b, tope={3: CONDUCCION_SIN_EVENTO_S})
+    cub = sum(segs.values())
+    return segs.get(0, 0) / cub if cub >= 0.5 * max(1, b - a) else None
+
+
+def es_vuelta(tardia, temprana, planta, acts):
+    """True si la parada 'tardia' es del camino de VUELTA (comida, descanso) y 'temprana' la entrega. El hormigon fragua: se
+    entrega en la primera estancia de verdad tras cargar, nunca despues de comer. Con tacografo: la tardia casi toda en
+    descanso (>= 80%) y la temprana trabajando (< 50%). Sin tacografo: la tardia >= 1 km mas cerca de la planta."""
+    dwell = temprana.get("dwell", temprana["t_out"] - temprana["t_in"])
+    if dwell < OBRA_MIN_S or temprana["t_in"] >= tardia["t_in"]:
+        return False
+    r_t = _descanso_frac(acts, tardia["t_in"], tardia["t_out"])
+    if r_t is not None:
+        r_e = _descanso_frac(acts, temprana["t_in"], temprana["t_out"])
+        return r_t >= 0.8 and r_e is not None and r_e < 0.5
+    d = lambda s: v1.hav((planta["lat"], planta["lon"]), (s["lat"], s["lon"]))  # noqa: E731
+    return d(tardia) + 1.0 <= d(temprana)
+
+
+def elegir_obra(dentro, planta, acts):
+    """Obra del ciclo = la parada mas larga fuera de plantas tras cargar, SALVO que sea del camino de vuelta frente a una
+    estancia anterior (es_vuelta): 2516KSN 11/02/2026, entrega 13:27-13:51 a 6 km y comida 14:06-14:57 a 656 m de PRELU;
+    se publicaba la comida como obra (horas de obra y km cargado mal). Paradas seguidas a < HUB_EPS_KM = el mismo sitio."""
+    if not dentro:
+        return None
+    larga = max(dentro, key=lambda s: s["t_out"] - s["t_in"])
+    if planta is None:
+        return larga
+    sitios = []
+    for s in sorted(dentro, key=lambda s: s["t_in"]):
+        if sitios and v1.hav((sitios[-1]["lat"], sitios[-1]["lon"]), (s["lat"], s["lon"])) < HUB_EPS_KM:
+            x = sitios[-1]; x["t_out"] = max(x["t_out"], s["t_out"]); x["dwell"] += s["t_out"] - s["t_in"]; x["paradas"].append(s)
+        else:
+            sitios.append({"t_in": s["t_in"], "t_out": s["t_out"], "lat": s["lat"], "lon": s["lon"], "dwell": s["t_out"] - s["t_in"], "paradas": [s]})
+    actual = next(x for x in sitios if larga in x["paradas"])
+    for x in sitios:
+        if x is actual:
+            break
+        if es_vuelta(actual, x, planta, acts):
+            return max(x["paradas"], key=lambda s: s["t_out"] - s["t_in"])
+    return larga
+
+
+def ciclos_plantas(j, plantas, fuente, tablas, acts=None):
     """Ciclos de hormigonera: de la LLEGADA a una planta (a cargar) a la llegada a la siguiente planta (vuelta de la obra). Si
     la jornada empieza fuera de planta (viene de casa), el primer tramo se funde con el primer ciclo (como en aridos: el primer
-    viaje incluye la ida desde la base). Obra = parada mas larga fuera de plantas DESPUES de salir de la planta. Un ciclo sin
-    obra ni recorrido (lavado, espera en planta, cambio de planta) no es un viaje y se funde con el anterior."""
+    viaje incluye la ida desde la base). Obra = elegir_obra() sobre las paradas fuera de plantas DESPUES de salir de la
+    planta. Un ciclo sin obra ni recorrido (lavado, espera en planta, cambio de planta) no es un viaje y se funde con el
+    anterior."""
     vis = visitas_plantas(j, plantas)
     if not vis:
         return []
@@ -1037,7 +1089,7 @@ def ciclos_plantas(j, plantas, fuente, tablas):
     ciclos = []
     for (a, b, v) in cortes:
         dentro = [s for s in otras if s["t_out"] > a and s["t_in"] < b and (v is None or s["t_in"] >= v[1] - 60)]
-        obra = max(dentro, key=lambda s: s["t_out"] - s["t_in"]) if dentro else None
+        obra = elegir_obra(dentro, plantas.get(v[2]) if v else None, acts)
         ciclos.append({"t0": a, "t1": b,
                        "carga": ({"t_in": v[0], "t_out": v[1], "lat": v[3]["lat"], "lon": v[3]["lon"]} if v else None),
                        "descarga": ({"t_in": obra["t_in"], "t_out": obra["t_out"], "lat": obra["lat"], "lon": obra["lon"]} if obra else None),
@@ -1051,7 +1103,9 @@ def ciclos_plantas(j, plantas, fuente, tablas):
             continue
         if i > 0:
             p = ciclos[i - 1]; p["t1"] = c["t1"]
-            if c["obra"] and (not p["obra"] or (c["obra"]["t_out"] - c["obra"]["t_in"]) > (p["obra"]["t_out"] - p["obra"]["t_in"])):
+            pl_p = plantas.get(p["planta"]) if p["planta"] else None
+            if c["obra"] and (not p["obra"] or ((c["obra"]["t_out"] - c["obra"]["t_in"]) > (p["obra"]["t_out"] - p["obra"]["t_in"])
+                                                and not (pl_p and es_vuelta(c["obra"], p["obra"], pl_p, acts)))):
                 p["obra"], p["descarga"], p["falta"] = c["obra"], c["descarga"], None
             del ciclos[i]
         else:
@@ -1104,7 +1158,7 @@ def triangular_hormigon(viajes, jor, plantas, coords, fuente, tablas, acts, drvs
     plantas = {k: v for k, v in plantas.items() if k in {(t["c"], t["o"]) for t in viajes if t.get("o")}}
     ciclos = []
     for j in jor:
-        cic = ciclos_plantas(j, plantas, fuente, tablas)
+        cic = ciclos_plantas(j, plantas, fuente, tablas, acts)
         modo = "plantas" if cic else "sin_planta"
         if len(cic) < n:
             codigos = {c for t in viajes for c in (t["o"], t["d"]) if c}
