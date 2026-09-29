@@ -319,6 +319,55 @@ class TestVisitasZonaLlegadaReal(unittest.TestCase):
         self.assertEqual(vis[0]['t_parado_in'], t0 + 840, "la llegada real, no el frenazo suelto de t0+180")
 
 
+class TestParadaConHuecoYRuidoDeGPS(unittest.TestCase):
+    # 5623KMS 01/09/2026: llega parado a las 09:14, 211 min sin traza, y a las 12:45 sigue en el mismo punto con el GPS
+    # marcando 8-10 km/h de ruido. La parada empezo a las 09:14; sin contar el hueco ni tolerar el ruido se confirmaba
+    # a las 12:52 (218 min tarde).
+    zona = (43.0, -8.0, 0.2, 'gps_aprendida')
+
+    def punto(self, t, v, dlat=0.0):
+        return {'t': t, 'f': 'wialon', 's': v, 'lat': 43.0 + dlat, 'lon': -8.0, 'kmc': None, 'litc': None, 'rec': None, 'parada_min': None}
+
+    def test_hueco_sin_moverse_cuenta_como_parado(self):
+        t0 = ep('2026-09-01T09:14')
+        pts = (tramo(t0 - 4 * 60, 4, 42.990, 42.997, 30)                     # llega, fuera de la zona
+               + [self.punto(t0, 1)]                                         # entra ya parado
+               + [self.punto(t0 + 211 * 60 + 60 * k, v, 0.0001) for k, v in enumerate([3, 2, 1, 10, 1, 8, 2, 1, 2, 1])])
+        ts = [p['t'] for p in pts]
+        vis = t2.visitas_zona(pts, ts, self.zona, t0 - 3600, t0 + 5 * 3600, min_parada_s=120)
+        self.assertEqual(len(vis), 1)
+        self.assertEqual(vis[0]['t_parado_in'], t0, "la parada empieza al llegar, no tras el hueco y el ruido")
+
+    def test_llega_frenando_y_aparece_parado_cerca_tras_el_hueco(self):
+        # 5623KMS 16/03/2026: 18:21 a 6 km/h, 40 min sin traza, a las 19:01 parado a 123 m: llego a las 18:21
+        est = {'t_parado_in': None, 'cand_in': None, 'cand_s': 0}
+        t2.confirma_parada(est, self.punto(1000, 6), self.punto(1000 + 2400, 0, 0.0011))
+        self.assertEqual(est['t_parado_in'], 1000)
+
+    def test_locatel_parado_con_motor_en_marcha_cuenta_antes_del_aviso(self):
+        # 9955NGL 18/06/2026: puntos a 0 km/h desde las 13:06; el aviso de parada (parada_min) no llega hasta las 13:54
+        est = {'t_parado_in': None, 'cand_in': None, 'cand_s': 0}
+        pts = [dict(self.punto(1000 + 300 * k, 0), f='locatel') for k in range(3)]
+        pts.append(dict(self.punto(1000 + 2900, 0), f='locatel', parada_min=436))
+        prev = None
+        for q in pts:
+            t2.confirma_parada(est, prev, q)
+            prev = q
+        self.assertEqual(est['t_parado_in'], 1000)
+
+    def test_hueco_con_desplazamiento_no_es_parada(self):
+        # 20 min sin puntos pero 3 km mas alla: circulo durante el hueco, no se cuenta como parado
+        est = {'t_parado_in': None, 'cand_in': None, 'cand_s': 0}
+        t2.confirma_parada(est, self.punto(1000, 1), self.punto(1000 + 1200, 2, 0.027))
+        self.assertIsNone(est['t_parado_in'])
+
+    def test_hueco_tras_el_que_va_en_marcha_no_es_parada(self):
+        # mismo sitio a ambos lados del hueco pero a 70 km/h al volver la senal (GPS congelado en un tunel)
+        est = {'t_parado_in': None, 'cand_in': None, 'cand_s': 0}
+        t2.confirma_parada(est, self.punto(1000, 1), self.punto(1000 + 1200, 70))
+        self.assertIsNone(est['t_parado_in'])
+
+
 class TestDestinoHormigonPorGPS(unittest.TestCase):
     # Roberto 28/09/2026: «en los viajes de hormigon... el lugar de descarga no deberia ser la planta, deberia ser
     # el lugar que te sale en el localizador al triangular el viaje». El albaran de hormigon siempre repite la
@@ -501,6 +550,35 @@ class TestCiclosGeoNoUsaPlantaDeHormigonEnDiaMixto(unittest.TestCase):
         jor, coords = self.escenario()
         ciclos = t2.ciclos_geo(jor[0], [self.ticket('27150', '27150')], coords, self.casa, "wialon", None, excluir={'27150'})
         self.assertEqual(ciclos, [], "en un dia mixto, el codigo de la planta de hormigon de HOY no es zona del motor de aridos")
+
+
+class TestTacografoArrastrado(unittest.TestCase):
+    """Enero 2026: dias sin eventos del tacografo; _integrar arrastraba el ultimo estado (conduccion) de un evento de
+    hasta 82 h antes y cubria toda la ventana. La conduccion no se arrastra mas de 6 h sin eventos; el descanso si."""
+    d0 = 1768000000
+
+    def test_conduccion_arrastrada_de_dias_atras_se_descarta(self):
+        d1 = self.d0 + 40 * 3600
+        viejo = self.d0 - 82 * 3600
+        tc = t2.tacografo_tramo([(viejo, 3)], [(viejo, 'h1')], self.d0, d1, mov_s=8 * 3600)
+        self.assertFalse(tc["tacografo"])
+        self.assertEqual(tc["motivo"], "sin_datos_de_tacografo")
+
+    def test_descanso_largo_arrastrado_sigue_contando(self):
+        # fin de semana parado: descanso desde el viernes, sin eventos hasta que vuelve a conducir el lunes
+        h = 3600
+        acts = [(self.d0 - 50 * h, 0), (self.d0 + 2 * h, 3), (self.d0 + 6 * h, 0)]
+        tc = t2.tacografo_tramo(acts, [(self.d0 - 50 * h, 'h1')], self.d0, self.d0 + 8 * h, mov_s=4 * h)
+        self.assertTrue(tc["tacografo"])
+        self.assertEqual(tc["min_descanso"], 4 * 60)
+        self.assertEqual(tc["min_conduccion"], 4 * 60)
+
+    def test_jornada_normal_sigue_usando_el_tacografo(self):
+        h = 3600
+        acts = [(self.d0, 3), (self.d0 + 4 * h, 2), (self.d0 + 5 * h, 3), (self.d0 + 9 * h, 0)]
+        tc = t2.tacografo_tramo(acts, [(self.d0, 'h1')], self.d0, self.d0 + 10 * h, mov_s=8 * h)
+        self.assertTrue(tc["tacografo"])
+        self.assertEqual(tc["min_conduccion"], 8 * 60)
 
 
 if __name__ == '__main__':

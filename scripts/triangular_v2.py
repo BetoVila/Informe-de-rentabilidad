@@ -36,12 +36,47 @@ V_PARADO, V_MOVIL = v1.V_PARADO, v1.V_MOVIL
 DWELL_S = 180                              # parada = >= 3 min (las descargas de aridos duran 5-10 min; alguna menos de 5)
 KM_MIN_CICLO, MIN_MIN_CICLO = 1.0, 8.0     # ciclo valido (hub): >= 1 km y >= 8 min; si no, se funde con el anterior
 HUB_EPS_KM = 0.35                          # paradas a < 350 m son el mismo sitio
+RUIDO_KMH = 15.0                           # tras un hueco de traza, por debajo de esto no va en marcha
+
+
+def confirma_parada(est, prev, q):
+    """Confirmacion de 'parado de verdad' (>= DWELL_S seguidos) punto a punto, comun a visitas_zona() y ciclos_geo().
+    est = {"t_parado_in", "cand_in", "cand_s"}. Un HUECO de traza (> 15 min sin puntos) con el camion en el mismo sitio
+    a ambos lados (< HUB_EPS_KM) es tiempo parado desde el ultimo punto antes del hueco (5623KMS 01/09/2026: llega a
+    las 09:14, 211 min sin traza y a las 12:45 sigue en el mismo punto; sin contarlo, la parada no se confirmaba hasta
+    las 12:52. 16/03/2026: llega a las 18:21 frenando, 40 min sin traza, y aparece parado a 123 m)."""
+    dtm = (q["t"] - prev["t"]) if prev is not None else 0
+    if q["f"] == "locatel" and (q.get("parada_min") or 0) > 0:
+        if est["t_parado_in"] is None:
+            est["t_parado_in"] = est["cand_in"] or q["t"]
+    # Locatel sin aviso de parada cuenta por velocidad como Wialon: el aviso llega al APAGAR el motor, y un camion que
+    # espera con el motor en marcha manda puntos a 0 km/h (9955NGL 18/06/2026: parado desde las 13:06, aviso a las 13:54)
+    elif (q["s"] or 0) <= V_PARADO and dtm <= 900:
+        if est["t_parado_in"] is None:
+            if est["cand_in"] is None:
+                est["cand_in"], est["cand_s"] = q["t"], 0
+            est["cand_s"] += dtm
+            if est["cand_s"] >= DWELL_S:
+                est["t_parado_in"] = est["cand_in"]
+    elif (dtm > 900 and (q["s"] or 0) <= RUIDO_KMH
+          and v1.hav((prev["lat"], prev["lon"]), (q["lat"], q["lon"])) < HUB_EPS_KM):
+        if est["t_parado_in"] is None:          # hueco de traza sin moverse: parado desde el ultimo punto antes del hueco
+            if est["cand_in"] is None:
+                est["cand_in"], est["cand_s"] = prev["t"], 0
+            est["cand_s"] += dtm
+            if est["cand_s"] >= DWELL_S:
+                est["t_parado_in"] = est["cand_in"]
+    elif (q["s"] or 0) > V_MOVIL:
+        est["cand_in"], est["cand_s"] = None, 0   # volvio a circular de verdad: el candidato era un frenazo suelto
+
+
 HUECO_S = 1800                             # 30 min o mas sin posicion = sin señal, no parada (igual que el mapa del dia)
 LARGA_KM = 200.0                           # origen-destino a >= 200 km = larga distancia (pasada de nacional)
 MAX_JORNADA_H = 24.0                       # jornada mas larga: no es de aridos, sus viajes van a la pasada de nacional
 GAP, MATCH, MISMATCH = -0.6, 1.0, -1.5     # alineamiento: saltar; geografia que confirma; que contradice
 VENTANA_DIAS = 7                           # un albaran puede agrupar tickets de varios dias: se buscan a ±7 dias en la traza
 ACT = {3: "conduccion", 2: "otros", 1: "disponible", 0: "descanso"}
+CONDUCCION_SIN_EVENTO_S = 6 * 3600
 
 
 # ---------------------------------------------------------------- hora de Madrid sin tzdata
@@ -201,8 +236,9 @@ def jornadas_de(pts, paradas, rest_s, reposos=None):
 
 
 # ---------------------------------------------------------------- tacografo: minutos por actividad y conductor en un tramo
-def _integrar(serie, d0, d1):
-    """serie = [(t, valor)] ordenada (valor vigente desde t). Devuelve {valor: segundos} dentro de [d0, d1]."""
+def _integrar(serie, d0, d1, tope=None):
+    """serie = [(t, valor)] ordenada (valor vigente desde t). Devuelve {valor: segundos} dentro de [d0, d1].
+    tope = {valor: segundos}: un valor no se arrastra mas de eso desde su evento (lo que sobra queda sin cubrir)."""
     out = collections.Counter()
     if not serie:
         return out
@@ -213,7 +249,11 @@ def _integrar(serie, d0, d1):
     while cur_t < d1:
         nxt = serie[k][0] if k < len(serie) else d1
         fin = min(nxt, d1)
-        if v is not None and fin > cur_t:
+        if tope and v in tope and t is not None:
+            fin_v = min(fin, t + tope[v])
+            if fin_v > cur_t:
+                out[v] += fin_v - cur_t
+        elif v is not None and fin > cur_t:
             out[v] += fin - cur_t
         cur_t = fin
         if k < len(serie):
@@ -229,7 +269,10 @@ def tacografo_tramo(acts, drvs, d0, d1, mov_s=0):
     (con tarjeta en la ranura 1 el tacografo pasa solo a conduccion al moverse). Medido 23/09: en 5 camiones (5735JVZ, 4029KXY,
     8111JSB, 8810GKT, 6081FHD) el localizador no recibe el tacografo: sin tarjeta y la actividad congelada en 'descanso' con el
     camion en marcha. Ahi el desglose NO se usa (se usa la traza) y la fila lo dice (min_coherente/motivo_min)."""
-    segs = _integrar(acts, d0, d1)
+    # conduccion sin ningun evento durante mas de 6 h es un estado ARRASTRADO de dias sin datos, no conduccion (la ley
+    # obliga a pausar a las 4,5 h y la pausa es un evento): enero 2026, 27 viajes largos con 20-70 h de "conduccion"
+    # arrastrada de un evento de hasta 82 h antes. Los descansos largos (noche, fin de semana) si se arrastran.
+    segs = _integrar(acts, d0, d1, tope={3: CONDUCCION_SIN_EVENTO_S})
     cubierto = sum(segs.values())
     dur = max(1, d1 - d0)
     res = {"min_conduccion": None, "min_otros": None, "min_disponible": None, "min_descanso": None, "tacografo": False,
@@ -386,20 +429,9 @@ def ciclos_geo(j, viajes, coords, casa, fuente, tablas, excluir=None):
     def marcar_parado(cur, q):
         """Actualiza cur['t_parado_in'] con el mismo criterio que visitas_zona(): confirma solo cuando el tramo parado
         se sostiene >= DWELL_S segundos seguidos; un frenazo suelto no lo confirma y vuelve a circular lo descarta."""
-        prev = cur["_prev"]
-        dtm = (q["t"] - prev["t"]) if prev is not None else 0
-        if q["f"] == "locatel":
-            if (q.get("parada_min") or 0) > 0 and cur["t_parado_in"] is None:
-                cur["t_parado_in"] = q["t"]
-        elif (q["s"] or 0) <= V_PARADO and dtm <= 900:
-            if cur["t_parado_in"] is None:
-                if cur["_cand_in"] is None:
-                    cur["_cand_in"], cur["_cand_s"] = q["t"], 0
-                cur["_cand_s"] += dtm
-                if cur["_cand_s"] >= DWELL_S:
-                    cur["t_parado_in"] = cur["_cand_in"]
-        elif (q["s"] or 0) > V_MOVIL:
-            cur["_cand_in"], cur["_cand_s"] = None, 0    # volvio a circular de verdad: el candidato era un frenazo suelto
+        est = {"t_parado_in": cur["t_parado_in"], "cand_in": cur["_cand_in"], "cand_s": cur["_cand_s"]}
+        confirma_parada(est, cur["_prev"], q)
+        cur["t_parado_in"], cur["_cand_in"], cur["_cand_s"] = est["t_parado_in"], est["cand_in"], est["cand_s"]
         cur["_prev"] = q
 
     visitas, cur = [], None
@@ -1242,18 +1274,11 @@ def visitas_zona(pts, ts, zona, t0, t1, min_parada_s=600):
             dtm = (q["t"] - prev["t"]) if prev is not None else 0
             if q["f"] == "locatel":
                 cur["parado_s"] += int((q.get("parada_min") or 0) * 60)
-                if (q.get("parada_min") or 0) > 0 and cur["t_parado_in"] is None:
-                    cur["t_parado_in"] = q["t"]
             elif (q["s"] or 0) <= V_PARADO and dtm <= 900:
-                cur["parado_s"] += dtm
-                if cur["t_parado_in"] is None:
-                    if cand_in is None:
-                        cand_in, cand_s = q["t"], 0
-                    cand_s += dtm
-                    if cand_s >= DWELL_S:
-                        cur["t_parado_in"] = cand_in
-            elif (q["s"] or 0) > V_MOVIL:
-                cand_in, cand_s = None, 0    # volvio a circular de verdad: el candidato era un frenazo suelto
+                cur["parado_s"] += dtm      # decide si la visita cuenta (min_parada_s): sin cambios
+            est = {"t_parado_in": cur["t_parado_in"], "cand_in": cand_in, "cand_s": cand_s}
+            confirma_parada(est, prev, q)
+            cur["t_parado_in"], cand_in, cand_s = est["t_parado_in"], est["cand_in"], est["cand_s"]
             cur["t_out"] = q["t"]
         elif cur is not None:
             if cur["parado_s"] >= min_parada_s:
@@ -1523,7 +1548,10 @@ def triangular_larga(m, idxs, dem, pts, jornadas, coords, fuente, tablas, acts, 
         # llegada de verdad = cuando el camion ya esta parado dentro de la zona de destino, no cuando entra en ella (puede
         # seguir circulando varios minutos mas si la zona es ancha - Roberto 28/09/2026, ver docstring de visitas_zona)
         t_llegada = U.get("t_parado_in") or U["t_in"]
-        kv, lv = (None, None) if vacio_desconocido else ((0.0, 0.0) if t_ini >= L["t_in"] else km_litros(pj["pts"], fuente, tablas, t_ini, L["t_in"]))
+        # lo mismo en el ORIGEN: la carga empieza al pararse de verdad, no al entrar en la geocerca (auditoria ene-feb 2026:
+        # con L["t_in"] el 78% de los largos publicaban la carga una mediana de 4 min antes, con el camion aun en la autovia)
+        t_llegada_carga = L.get("t_parado_in") or L["t_in"]
+        kv, lv = (None, None) if vacio_desconocido else ((0.0, 0.0) if t_ini >= t_llegada_carga else km_litros(pj["pts"], fuente, tablas, t_ini, t_llegada_carga))
         kc, lc = km_litros(pj["pts"], fuente, tablas, L["t_out"], t_llegada)
         trabajo = sum(max(0, min(t_fin, j["fin"]) - max(t_ini, j["ini"])) for j in jornadas if j["fin"] > t_ini and j["ini"] < t_fin) / 60.0
         mt.update({"km_vacio": kv, "km_cargado": kc, "litros_vacio": lv, "litros_cargado": lc,
@@ -1531,7 +1559,7 @@ def triangular_larga(m, idxs, dem, pts, jornadas, coords, fuente, tablas, acts, 
                    "min_espera": round(max(0.0, trabajo - (mt.get("min_conduccion") or 0)), 1),
                    "metodo": "geo", "confianza": conf, "medido": True, "repartido": False, "t_ini": t_ini, "t_fin": t_fin,
                    "jornada": jornada_de(L["t_out"]), "orden_ciclo": None, "geo_score": 2 * MATCH,
-                   "t_carga_in": L["t_in"], "t_carga_out": L["t_out"], "t_descarga_in": t_llegada, "t_descarga_out": min(U["t_out"], t_fin),
+                   "t_carga_in": t_llegada_carga, "t_carga_out": L["t_out"], "t_descarga_in": t_llegada, "t_descarga_out": min(U["t_out"], t_fin),
                    "motivo": "vacio_desconocido_traza_empieza_en_marcha" if vacio_desconocido else None})
         for x in restar:
             rl_ = salida[x["i"]] if salida is not None else None
