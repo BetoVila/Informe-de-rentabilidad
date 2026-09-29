@@ -618,5 +618,166 @@ class TestTacografoArrastrado(unittest.TestCase):
         self.assertEqual(tc["min_conduccion"], 8 * 60)
 
 
+class TestCiclosGeoCargaEsLaUnionDeLasVisitas(unittest.TestCase):
+    # 3164MSG, cantera POZO, 16/03/2026 (Roberto/Claude 29/09/2026): la geocerca de POZO mide 300 m (gps_aprendida, radio_m
+    # 124) y el camion la cruza dos veces en cada carga: un paso de 1-3 min a 10-13 km/h (n=2-3 puntos, sale de la zona) y
+    # ~8 min despues la parada real de 5-7 min. ciclos_geo() las fundia como "misma carga" pero se quedaba con la PRIMERA
+    # visita: publicaba la hora del paso (16:44) y no la de la parada sostenida (16:56, ~19% de las cargas de esa
+    # matricula, 2-7 min antes). La carga es la union de las visitas: t_in = la primera, t_out = la ultima y t_parado_in =
+    # la primera parada sostenida (de la visita que la tenga).
+    casa = "Razo"
+    coords = {("Razo", "A"): {"lat": 42.000, "lon": -8.0, "fuente": "gps_aprendida", "radio_m": 124},
+              ("Razo", "B"): {"lat": 42.100, "lon": -8.0, "fuente": "gesruta"}}
+
+    def ciclo(self, primera_visita, espera_fuera_min=0):
+        t0 = ep('2026-03-16T16:44')
+        w = espera_fuera_min * 60
+        pts = (tramo(t0 - 180, 3, 41.995, 42.000, 60) + primera_visita
+               + tramo(t0 + 2 * 60, 6, 42.006, 42.012, 25)        # sale de la geocerca de 300 m (0,7-1,3 km)
+               + (tramo(t0 + 8 * 60, espera_fuera_min, 42.012, 42.012, 0) if espera_fuera_min else [])   # espera fuera de la zona
+               + tramo(t0 + 8 * 60 + w, 3, 42.006, 42.001, 25)    # vuelve
+               + tramo(t0 + 11 * 60 + w, 8, 42.000, 42.000, 0)    # parada real de carga
+               + tramo(t0 + 19 * 60 + w, 10, 42.000, 42.100, 60) + tramo(t0 + 29 * 60 + w, 10, 42.100, 42.100, 0)
+               + tramo(t0 + 39 * 60 + w, 3, 42.100, 42.120, 60))
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        cic = t2.ciclos_geo(jor[0], [{"o": "A", "d": "B", "v": "1", "cant": "1"}], self.coords, self.casa, "wialon", None)
+        self.assertEqual(len(cic), 1, "las dos visitas son UNA carga, no dos ciclos")
+        return t0, cic[0], jor[0]
+
+    def test_un_paso_seguido_de_la_parada_real_publica_la_hora_de_la_parada(self):
+        t0 = ep('2026-03-16T16:44')
+        _, c, j = self.ciclo(tramo(t0, 2, 42.000, 42.001, 12))       # paso a 12 km/h, sin parada sostenida
+        self.assertEqual(c["carga"]["t_parado_in"], t0 + 11 * 60, "la parada sostenida de la segunda visita, no el paso")
+        self.assertGreaterEqual(c["carga"]["t_out"], t0 + 18 * 60, "sale cuando acaba la ULTIMA visita, no la del paso")
+        self.assertLessEqual(c["carga"]["t_in"], t0, "la entrada en la geocerca sigue siendo la primera visita")
+        m = t2.medir_ciclo(j, c, 0, 1, "wialon", None, [], [])
+        self.assertEqual(m["t_carga_in"], t0 + 11 * 60, "medir_ciclo publica la parada real")
+
+    def test_si_la_primera_visita_ya_era_una_parada_sostenida_se_queda_esa(self):
+        t0 = ep('2026-03-16T16:44')
+        _, c, _ = self.ciclo(tramo(t0, 5, 42.000, 42.000, 0))        # parado de verdad desde el principio
+        self.assertEqual(c["carga"]["t_parado_in"], t0, "la primera parada sostenida no se mueve a la segunda visita")
+        self.assertGreaterEqual(c["carga"]["t_out"], t0 + 18 * 60, "pero el fin de la carga si es el de la ultima visita")
+
+    def test_una_visita_que_empieza_mucho_despues_no_alarga_la_carga(self):
+        # sin tope, la union encadenaba visitas de todo el dia (carga publicada hasta 7 h despues, 9015KXT 22/07/2026)
+        t0 = ep('2026-03-16T16:44')
+        _, c, j = self.ciclo(tramo(t0, 2, 42.000, 42.001, 12), espera_fuera_min=25)
+        self.assertGreater(25 * 60, t2.GAP_CARGA_S)
+        self.assertIsNone(c["carga"].get("t_parado_in"), "la parada de 30+ min despues no se cuela como llegada a cargar")
+        self.assertLess(c["carga"]["t_out"], t0 + 5 * 60, "la carga sigue acabando con la primera visita")
+        self.assertNotIn("t_out_km", c["carga"])
+
+    def test_el_reparto_cargado_vacio_no_cambia(self):
+        # solo cambian las horas publicadas: el km cargado sigue contando desde el fin de la PRIMERA visita
+        t0 = ep('2026-03-16T16:44')
+        _, c, j = self.ciclo(tramo(t0, 2, 42.000, 42.001, 12))
+        self.assertLess(c["carga"]["t_out_km"], c["carga"]["t_out"], "la union alargo t_out, no el limite de los km")
+        m = t2.medir_ciclo(j, c, 0, 1, "wialon", None, [], [])
+        kc, _ = t2.km_litros(j["pts"], "wialon", None, c["carga"]["t_out_km"], c["descarga"]["t_in"])
+        self.assertEqual(m["km_cargado"], kc)
+
+
+class TestAridosNoRecuentaTiempoDeHormigonEnDiaMixto(unittest.TestCase):
+    # 8803NKR 22/07/2026, 3337JNC 29/09/2025 (Roberto/Claude 29/09/2026): la cantera compartida por hormigon y aridos
+    # (mismo codigo) tiene como coordenada la planta aprendida por la hormigonera (radio_m=450), pero ciclos_geo() la lee
+    # con el radio generico de 3 km: un punto a 2-3 km cuenta "dentro" y monta ciclos de aridos POR ENCIMA de las rondas de
+    # hormigon (mismo tramo de traza contado dos veces; los ciclos que no se asignan quedan de sobrantes y otra pasada los
+    # recupera con albaranes de hormigon de otros dias). Tocar cerca()/RADIO_MATCH regresiona los dias sin hormigon, y
+    # excluir el codigo entero pierde ciclos de aridos reales en los huecos entre rondas (1245CRJ 30/09/2025). Regla:
+    # en un dia mixto el hormigon va primero y un ciclo de aridos que solapa (> 50 %) tiempo ya asignado a hormigon no se
+    # asigna ni queda de sobrante; el resto se comporta como siempre.
+    casa = "Razo"
+    coords = {("Razo", "27150"): {"lat": 42.000, "lon": -8.000, "fuente": "planta_aprendida", "radio_m": 450}}
+    ticket = {"o": "27150", "d": "27150", "v": "1", "cant": "1", "c": "Razo", "dia": "2026-07-22"}
+
+    def ronda(self, base, lat_ini=42.018):
+        # carga a ~2 km del centro de la planta (dentro del radio generico, fuera del real), ida a la obra, descarga y vuelta
+        return (tramo(base, 10, lat_ini, lat_ini, 0) + tramo(base + 10 * 60, 8, lat_ini, 42.100, 60)
+                + tramo(base + 18 * 60, 15, 42.100, 42.100, 0) + tramo(base + 33 * 60, 8, 42.100, lat_ini, 60))
+
+    def jornada(self):
+        t0 = ep('2026-07-22T08:00')
+        pts = (self.ronda(t0) + self.ronda(t0 + 45 * 60) + self.ronda(t0 + 90 * 60)
+               + tramo(t0 + 135 * 60, 10, 42.018, 42.018, 0) + tramo(t0 + 145 * 60, 3, 42.018, 42.030, 60))
+        return t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+
+    def dia(self, ocupado):
+        jor = self.jornada()
+        diag = collections.Counter()
+        r = t2.triangular_dia([dict(self.ticket)], jor, [], "wialon", self.coords, None, [], [], diag, ocupado=ocupado)
+        return r[0], jor[0], diag
+
+    def test_ciclo_ocupado_solo_si_solapa_mas_de_la_mitad(self):
+        c = {"t0": 0, "t1": 100}
+        self.assertTrue(t2.ciclo_ocupado(c, [(0, 60)]))
+        self.assertFalse(t2.ciclo_ocupado(c, [(0, 50)]), "justo la mitad no es mayoria")
+        self.assertFalse(t2.ciclo_ocupado(c, []))
+        self.assertFalse(t2.ciclo_ocupado(c, None))
+        self.assertTrue(t2.ciclo_ocupado(c, [(0, 30), (40, 80)]), "varias ventanas se suman")
+
+    def test_sin_hormigon_ese_dia_todo_sigue_igual(self):
+        r, j, diag = self.dia(None)
+        self.assertEqual(r["metodo"], "geo")
+        self.assertEqual(len(j["ciclos"]), 2)
+        self.assertFalse(any(c.get("ocupado_hormigon") for c in j["ciclos"]))
+        self.assertEqual(len(j["sobrantes"]), 1, "el ciclo que el ticket no usa sigue quedando de sobrante, como siempre")
+
+    def test_el_ciclo_ocupado_por_hormigon_no_se_asigna_ni_queda_de_sobrante(self):
+        ini, med = ep('2026-07-22T08:10'), ep('2026-07-22T09:40')
+        r, j, diag = self.dia([(ini, med)])
+        self.assertEqual(r["metodo"], "geo", "el ciclo real de aridos (el que queda libre) se sigue midiendo")
+        self.assertEqual(r["t_ini"], med)
+        self.assertEqual(j["sobrantes"], [], "sin sobrante fantasma que otra pasada recupere con un km ajeno")
+        self.assertEqual(diag["ciclos_geo_ocupados_por_hormigon"], 1)
+
+    def test_solo_reclaman_tiempo_los_ciclos_por_planta_de_albaranes_medibles(self):
+        # 6081FHD 28/05/2026: dia de banera con 4 albaranes de hormigon REPETIDOS (ocupan turno pero no se miden); se
+        # llevaban ciclos del respaldo por hub y el motor de aridos tiraba 3 ciclos de banera reales por "solapar hormigon"
+        base = TestPlantaAjenaNoTapaLaObra
+        jor = base().jornada_dos_cargas()
+        planta = {base.planta_propia: dict(base.coords_planta_propia, dias=10, visitas=50)}
+        tk = lambda cant, rep: {"c": "Razo", "o": "A", "d": "A", "horm": True, "v": "00001", "cant": cant, "m3": 8.0, "cargas": [], "_repetida": rep}  # noqa: E731
+        t2.triangular_hormigon([tk("0001", True), tk("0002", False)], jor, planta, {}, "wialon", None, [], [], collections.Counter())
+        reclamados = [c for c in jor[0]["ciclos"] if c.get("reclamado_hormigon")]
+        self.assertEqual(len(jor[0]["ciclos"]), 2)
+        self.assertEqual(len(reclamados), 1, "solo el ciclo del albaran medible reclama tiempo; el del repetido no")
+
+    def test_si_todo_lo_que_ve_ciclos_geo_es_de_hormigon_el_ticket_queda_sin_ciclo(self):
+        r, j, diag = self.dia([(ep('2026-07-22T08:10'), ep('2026-07-22T10:27'))])
+        self.assertEqual(r["metodo"], "sin_ciclo", "honesto: sin dato, no el dia entero (que ya cuenta el hormigon)")
+        self.assertIsNone(r["km"])
+        self.assertEqual(j["sobrantes"], [])
+
+
+class TestTacografoArrastrado(unittest.TestCase):
+    """Enero 2026: dias sin eventos del tacografo; _integrar arrastraba el ultimo estado (conduccion) de un evento de
+    hasta 82 h antes y cubria toda la ventana. La conduccion no se arrastra mas de 6 h sin eventos; el descanso si."""
+    d0 = 1768000000
+
+    def test_conduccion_arrastrada_de_dias_atras_se_descarta(self):
+        d1 = self.d0 + 40 * 3600
+        viejo = self.d0 - 82 * 3600
+        tc = t2.tacografo_tramo([(viejo, 3)], [(viejo, 'h1')], self.d0, d1, mov_s=8 * 3600)
+        self.assertFalse(tc["tacografo"])
+        self.assertEqual(tc["motivo"], "sin_datos_de_tacografo")
+
+    def test_descanso_largo_arrastrado_sigue_contando(self):
+        # fin de semana parado: descanso desde el viernes, sin eventos hasta que vuelve a conducir el lunes
+        h = 3600
+        acts = [(self.d0 - 50 * h, 0), (self.d0 + 2 * h, 3), (self.d0 + 6 * h, 0)]
+        tc = t2.tacografo_tramo(acts, [(self.d0 - 50 * h, 'h1')], self.d0, self.d0 + 8 * h, mov_s=4 * h)
+        self.assertTrue(tc["tacografo"])
+        self.assertEqual(tc["min_descanso"], 4 * 60)
+        self.assertEqual(tc["min_conduccion"], 4 * 60)
+
+    def test_jornada_normal_sigue_usando_el_tacografo(self):
+        h = 3600
+        acts = [(self.d0, 3), (self.d0 + 4 * h, 2), (self.d0 + 5 * h, 3), (self.d0 + 9 * h, 0)]
+        tc = t2.tacografo_tramo(acts, [(self.d0, 'h1')], self.d0, self.d0 + 10 * h, mov_s=8 * h)
+        self.assertTrue(tc["tacografo"])
+        self.assertEqual(tc["min_conduccion"], 8 * 60)
+
+
 if __name__ == '__main__':
     unittest.main()

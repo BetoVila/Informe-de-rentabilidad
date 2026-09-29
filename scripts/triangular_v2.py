@@ -364,6 +364,7 @@ def destino_hormigon(t, obra, coords, cercano):
 
 
 KM_MISMA_CARGA = 3.0    # dos paradas en el mismo origen con menos de 3 km recorridos entre ellas = la misma carga (espera en cantera)
+GAP_CARGA_S = 1200      # ...y la hora publicada de la carga solo abarca la visita siguiente si empieza a <= 20 min de acabar la anterior
 
 
 def fundir_pequenos(ciclos, j, fuente, tablas, km_min=KM_MIN_CICLO, min_min=MIN_MIN_CICLO):
@@ -391,21 +392,14 @@ def fundir_pequenos(ciclos, j, fuente, tablas, km_min=KM_MIN_CICLO, min_min=MIN_
     return ciclos
 
 
-def ciclos_geo(j, viajes, coords, casa, fuente, tablas, excluir=None):
+def ciclos_geo(j, viajes, coords, casa, fuente, tablas):
     """Maquina de estados carga -> descarga sobre las paradas clasificadas en el mapa. Devuelve ciclos con (o, d) o [] si el
     dia no tiene geografia util. Convencion v1: un ciclo va del fin del anterior a la SALIDA de su descarga; el ultimo, al fin.
     - Dos paradas en el mismo origen con < KM_MISMA_CARGA recorridos entre ellas = la misma carga (espera en la cantera).
     - Si no hay parada de descarga (volcar una banera dura 2-3 min), la descarga es el PASO de la traza por el destino (el
-      punto mas cercano dentro de su radio): 'descarga_por_paso'. Si tampoco pasa, 'descarga_no_vista' (se cierra al cargar).
-    - excluir: codigos que hoy son planta de hormigon de ESTE camion (dia mixto, ver triangular_dia): una cantera puede
-      servir hormigon y aridos con el mismo codigo, y su coordenada aprendida es el centro preciso de la hormigonera
-      (~450 m), no el radio generico de aridos; visitas_plantas()/ciclos_plantas() ya la miden con su propio radio
-      exacto, asi que ciclos_geo() no debe tratarla ademas como zona propia (un punto a 2-3 km seguiria contando
-      'dentro' con el radio generico de 3 km y arrastraria km/tiempo de la ronda siguiente -- 8803NKR, 22/07/2026,
-      +15,8% de km; Roberto/Claude 29/09/2026). Fuera de un dia mixto esto no se usa: el radio generico de siempre
-      sigue igual para aridos/banera."""
-    O = {t["o"] for t in viajes if t["o"]} - (excluir or set())
-    Dd = {t["d"] for t in viajes if t["d"]} - (excluir or set())
+      punto mas cercano dentro de su radio): 'descarga_por_paso'. Si tampoco pasa, 'descarga_no_vista' (se cierra al cargar)."""
+    O = {t["o"] for t in viajes if t["o"]}
+    Dd = {t["d"] for t in viajes if t["d"]}
     pares = {(t["o"], t["d"]) for t in viajes}
     pts = j["pts"]
     ts = [q["t"] for q in pts]
@@ -522,7 +516,7 @@ def ciclos_geo(j, viajes, coords, casa, fuente, tablas, excluir=None):
 
     def cerrar_sin_parada(t_limite):
         nonlocal prev_fin
-        p = paso_por_destino(loaded["o"], loaded["s"]["t_out"], t_limite)
+        p = paso_por_destino(loaded["o"], loaded["s"].get("t_out_km", loaded["s"]["t_out"]), t_limite)
         if p:
             q, d = p[1], p[2]
             ds = {"t_in": q["t"], "t_out": q["t"], "lat": q["lat"], "lon": q["lon"], "paso": True}
@@ -557,8 +551,22 @@ def ciclos_geo(j, viajes, coords, casa, fuente, tablas, excluir=None):
                 dual = {"s": s, "o": oo[0]} if oo else None
                 continue
             if oo:
-                if loaded["o"] in oo and km_entre(loaded["s"]["t_out"], s["t_in"]) < umbral_misma_carga(loaded["o"]):
-                    continue                                    # misma carga: espera o movimiento dentro de la cantera
+                cs = loaded["s"]
+                if loaded["o"] in oo and km_entre(cs.get("t_out_km", cs["t_out"]), s["t_in"]) < umbral_misma_carga(loaded["o"]):
+                    # misma carga: espera o movimiento dentro de la cantera. Si la visita siguiente empieza a <= GAP_CARGA_S
+                    # de acabar la anterior, la hora PUBLICADA de la carga es la union de las dos: si la primera fue solo un
+                    # paso o una frenada (sin parada sostenida) y la parada real es la segunda, la carga se fecha en esa parada
+                    # (3164MSG, POZO, geocerca de 300 m: paso de 1-3 min a 10-13 km/h, sale de la zona y ~8 min despues para
+                    # 5-7 min; se publicaba la hora del paso, 2-7 min antes de la parada real). Sin ese tope la union encadenaba
+                    # visitas de todo el dia (carga hasta 7 h despues). t_out_km conserva el fin de la PRIMERA visita: es el
+                    # limite que siguen usando el umbral de "misma carga", la busqueda de paso por destino y el reparto
+                    # cargado/vacio de medir_ciclo, para que solo cambien las horas publicadas, no los km.
+                    if s["t_in"] - cs["t_out"] <= GAP_CARGA_S:
+                        cs.setdefault("t_out_km", cs["t_out"])
+                        if cs.get("t_parado_in") is None:
+                            cs["t_parado_in"] = s.get("t_parado_in")
+                        cs["t_out"] = max(cs["t_out"], s["t_out"])
+                    continue
                 cerrar_sin_parada(s["t_in"])                    # otra carga: la descarga fue rapida (paso) o no se vio
                 loaded = {"s": s, "o": oo[0]}
             # parada intermedia (espera): sigue cargado
@@ -769,9 +777,10 @@ def medir_ciclo(j, c, k, nc, fuente, tablas, acts, drvs, prestada=False):
         # CARGADO / VACIO (tarifas): vacio = del inicio del ciclo a llegar a cargar; cargado = de salir de la carga a llegar a
         # la descarga. Solo si se conocen las dos visitas; si no, null (no se inventa el reparto).
         ca, de = c.get("carga") or {}, c.get("descarga") or {}
-        if ca.get("t_in") is not None and de.get("t_in") is not None and c["t0"] <= ca["t_in"] <= ca.get("t_out", ca["t_in"]) <= de["t_in"] <= c["t1"]:
+        ca_out_km = ca.get("t_out_km", ca.get("t_out", ca.get("t_in")))   # fin de la PRIMERA visita (ver ciclos_geo, GAP_CARGA_S)
+        if ca.get("t_in") is not None and de.get("t_in") is not None and c["t0"] <= ca["t_in"] <= ca_out_km <= de["t_in"] <= c["t1"]:
             kv, lv = km_litros(j["pts"], fuente, tablas, c["t0"], ca["t_in"])
-            kc, lc = km_litros(j["pts"], fuente, tablas, ca.get("t_out", ca["t_in"]), de["t_in"])
+            kc, lc = km_litros(j["pts"], fuente, tablas, ca_out_km, de["t_in"])
             m.update({"km_vacio": kv, "km_cargado": kc, "litros_vacio": lv, "litros_cargado": lc})
         # hitos del ciclo (hora real de llegar a cargar, salir cargado y llegar a descargar): los usa la pasada de largo
         # recorrido para conciliar con los ciclos locales y salen al JSON como t_carga / t_carga_fin / t_descarga.
@@ -788,10 +797,11 @@ def medir_ciclo(j, c, k, nc, fuente, tablas, acts, drvs, prestada=False):
     return m
 
 
-def asignar_geo(viajes, pendientes, ciclos, j, fuente, tablas, acts, drvs, res, prestada=False):
+def asignar_geo(viajes, pendientes, ciclos, j, fuente, tablas, acts, drvs, res, prestada=False, bloqueados=()):
     """Por ORIGEN: los albaranes de una cantera van en orden cronologico (deduccion sobre datos reales), asi que se alinean
-    monotonamente con los ciclos cargados en ese origen, en orden temporal; el destino solo puntua (confirma, no fuerza)."""
-    usados = set()
+    monotonamente con los ciclos cargados en ese origen, en orden temporal; el destino solo puntua (confirma, no fuerza).
+    bloqueados = indices de ciclos que no se asignan ni quedan libres (tiempo que ya tiene dueno: ver triangular_dia)."""
+    usados = set(bloqueados)
     grupos = collections.OrderedDict()
     for i in pendientes:
         grupos.setdefault(viajes[i]["o"], []).append(i)
@@ -853,15 +863,26 @@ def reparto(tramos, fuente, tablas, acts, drvs, k, motivo, j):
             "tramos": [(a, b, jj) for (a, b, jj) in tramos], "k_reparto": k}   # para recortarlo si un viaje largo pisa sus tramos
 
 
-def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, drvs, diag, permitir_ciclos=True, viajes_sig=None, excluir_zonas=None):
+def ciclo_ocupado(c, ocupado, umbral=0.5):
+    """True si mas de `umbral` de la duracion del ciclo cae dentro de tiempo que ya tiene dueno (ventanas (t0, t1))."""
+    dur = c["t1"] - c["t0"]
+    if dur <= 0 or not ocupado:
+        return False
+    return sum(max(0, min(c["t1"], b) - max(c["t0"], a)) for (a, b) in ocupado) / dur > umbral
+
+
+def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, drvs, diag, permitir_ciclos=True, viajes_sig=None, ocupado=None):
     """viajes_sig = albaranes del dia SIGUIENTE del mismo camion: en una jornada nocturna sus cargas de madrugada estan en esta
     traza, asi que sus lugares tambien cortan ciclos (que quedan sobrantes hoy y se prestan manana).
-    excluir_zonas = codigos que hoy son planta de hormigon de este mismo camion (dia mixto): ver ciclos_geo()."""
+    ocupado = ventanas (t0, t1) de la traza que HOY ya son de un ciclo de hormigon asignado (dia mixto, ver main()): un ciclo
+    de ciclos_geo() que caiga mayoritariamente ahi mide el mismo tramo de traza que ya cuenta el hormigon (doble conteo) y
+    no se asigna a ningun albaran de aridos ni queda como sobrante (que otra pasada lo recuperaria con un km que no es suyo).
+    Los ciclos ocupados se quedan en la lista (marcados) para no cambiar los indices: medir_ciclo() mide el primero desde el
+    inicio de jornada y el ultimo hasta el fin."""
     n = len(viajes)
     res = [None] * n
     pendientes = list(range(n))
     casa = viajes[0]["c"]
-    excluir_zonas = excluir_zonas or set()
     if permitir_ciclos:
         if prestados:
             jp = prestados[0][1]
@@ -870,22 +891,28 @@ def triangular_dia(viajes, jornadas, prestados, fuente, coords, tablas, acts, dr
             pendientes, libres = asignar_dp(viajes, pendientes, cic, libres, jp, fuente, tablas, acts, drvs, res, coords, casa, prestada=True)
             diag["ciclos_prestados_usados"] += len(cic) - len(libres)
             jp["sobrantes"] = [c for k, c in enumerate(cic) if k in libres] + [c for c in jp["sobrantes"] if c not in cic]
-        codigos = {c for t in viajes for c in (t["o"], t["d"]) if c} - excluir_zonas
+        codigos = {c for t in viajes for c in (t["o"], t["d"]) if c}
         for j in jornadas:
             if j["ciclos"] is None:
                 base = viajes + (list(viajes_sig) if (j["nocturna"] and viajes_sig) else [])
-                cic = ciclos_geo(j, base, coords, casa, fuente, tablas, excluir=excluir_zonas)
+                cic = ciclos_geo(j, base, coords, casa, fuente, tablas)
                 if cic:
                     j["modo"] = "geo"
+                    if ocupado:
+                        for c in cic:
+                            if ciclo_ocupado(c, ocupado):
+                                c["ocupado_hormigon"] = True
+                                diag["ciclos_geo_ocupados_por_hormigon"] += 1
                 else:
                     hub, modo = elegir_hub(sitios_jornada(j, codigos, coords, casa), viajes)
                     cic = particionar_hub(j, hub, modo, fuente, tablas, acts, drvs)
                     j["modo"] = "hub_" + (modo or "unico")
                 j["ciclos"] = cic
-            pendientes, libres = asignar_geo(viajes, pendientes, j["ciclos"], j, fuente, tablas, acts, drvs, res)
+            bloq = {k for k, c in enumerate(j["ciclos"]) if c.get("ocupado_hormigon")}
+            pendientes, libres = asignar_geo(viajes, pendientes, j["ciclos"], j, fuente, tablas, acts, drvs, res, bloqueados=bloq)
             pendientes, libres = asignar_dp(viajes, pendientes, j["ciclos"], libres, j, fuente, tablas, acts, drvs, res, coords, casa)
             j["sobrantes"] = [j["ciclos"][k] for k in libres]
-            j["asignados"] = len(j["ciclos"]) - len(libres)
+            j["asignados"] = len(j["ciclos"]) - len(libres) - len(bloq)
     if pendientes:
         if not permitir_ciclos:
             tramos = [(j["c0"], j["c1"], j) for j in jornadas]
@@ -1195,6 +1222,8 @@ def triangular_hormigon(viajes, jor, plantas, coords, fuente, tablas, acts, drvs
         j, k, c = ciclos[idx]
         usados.add(idx); c["viaje"] = viajes[ids[0]]; j["asignados"] += 1
         vivos = [i for i in ids if not viajes[i].get("_repetida")]
+        if vivos and c.get("planta"):
+            c["reclamado_hormigon"] = True     # ciclo por PLANTA de un albaran medible: su tiempo de traza ya tiene dueno (ver main())
         for i in ids:
             if viajes[i].get("_repetida"):
                 res[i] = sin_dato("cantera_repetida", "mismo_numero_de_cantera_en_varias_lineas_del_ano", j)
@@ -2048,31 +2077,35 @@ def main():
         # de deteccion de zonas que cada uno ya usaba), y trabaja sobre su PROPIA copia de la jornada para no pisar los
         # ciclos/sobrantes del otro; fusionar_jornada junta despues los dos resultados en la jornada real (la necesitan tal
         # cual el dia siguiente -pernocta-, la segunda pasada de sobrantes y la pasada de largo recorrido).
-        codigos_h_hoy = set()
         if i_arid and i_h:
-            # codigos que HOY son planta de hormigon de este mismo camion: la coordenada aprendida es el centro preciso
-            # de la hormigonera (~450 m, ver aprender_plantas), no un lugar generico de aridos; ciclos_geo()/
-            # ventanas_de_zona() no deben tratarla como zona propia del motor de aridos (8803NKR, 22/07/2026: un punto
-            # a 2-3 km de la planta contaba como "dentro" con el radio generico de 3 km y arrastraba km/tiempo de la
-            # ronda siguiente; Roberto/Claude 29/09/2026 -- descartado el 29/09 aplicarlo via cerca()/RADIO_MATCH
-            # porque esos dos se leen tambien fuera de un dia mixto y regresionaban aridos/banera en canteras que SI
-            # sirven ambos materiales; acotado aqui a codigos que HOY tiene tambien carga de hormigon).
-            codigos_h_hoy = {t["o"] for i in i_h for t in [dem[i]] if t.get("o") and (t["c"], t["o"]) in plantas}
             ventanas_planta = [(a, b) for j in jor for (a, b, _, _) in visitas_plantas(j, plantas)]
-            codigos_arid_hoy = ({dem[i]["o"] for i in i_arid if dem[i]["o"]} | {dem[i]["d"] for i in i_arid if dem[i]["d"]}) - codigos_h_hoy
-            ventanas_arid = [v for j in jor for v in ventanas_de_zona(j["pts"], codigos_arid_hoy, coords, m)]
+            ventanas_arid = [v for j in jor for v in ventanas_de_zona(j["pts"], {dem[i]["o"] for i in i_arid if dem[i]["o"]} | {dem[i]["d"] for i in i_arid if dem[i]["d"]}, coords, m)]
             jor_arid = [jornada_enmascarada(j, ventanas_planta) for j in jor]
             jor_h = [jornada_enmascarada(j, ventanas_arid) for j in jor]
         else:
             jor_arid = jor_h = jor
-        if i_arid:
-            dnext = (dt.date.fromisoformat(d) + dt.timedelta(days=1)).isoformat()
-            sig = [dem[i] for i in por_dia.get((m, dnext), []) if not dem[i]["larga"] and not dem[i]["horm"] and i not in espejo_de]
-            r = triangular_dia([dem[i] for i in i_arid], jor_arid, prestados, fuente, coords, sens.get(m), acts.get(m, []), drvs.get(m, []), diag, viajes_sig=sig, excluir_zonas=codigos_h_hoy)
-            res.update(dict(zip(i_arid, r)))
+        # En un dia mixto el hormigon va PRIMERO: sus ciclos asignados son tiempo de traza que ya tiene dueno, y el motor de
+        # aridos no debe volver a contarlo. Una cantera puede servir hormigon y aridos con el mismo codigo y su coordenada
+        # aprendida (centro de la hormigonera, ~450 m) entra en ciclos_geo() con el radio generico de 3 km: un punto a 2-3
+        # km de la planta contaba "dentro" y montaba ciclos de aridos por encima de las rondas de hormigon (8803NKR
+        # 22/07/2026: 3 ciclos espurios de horas para 1 ticket, y los sobrantes enganchaban albaranes de hormigon de otros
+        # dias con un km que no era suyo). Bajar el radio en cerca()/RADIO_MATCH regresiona aridos en dias sin hormigon
+        # (-724 viajes medidos, 29/09/2026), y excluir el codigo entero pierde ciclos de aridos REALES que caen en huecos
+        # entre las rondas de hormigon (3337JNC 29/09/2025, 1245CRJ 30/09/2025): por eso se descarta solo lo que solapa.
+        ocupado_h = []
         if i_h:
             r = triangular_hormigon([dem[i] for i in i_h], jor_h, plantas, coords, fuente, sens.get(m), acts.get(m, []), drvs.get(m, []), diag)
             res.update(dict(zip(i_h, r)))
+            if i_arid:
+                # solo ciclos POR PLANTA reclamados por albaranes MEDIBLES: los albaranes repetidos (ocupan turno pero no se
+                # miden) y el respaldo por hub del dia (sin planta) reclaman ciclos que no son tiempo de hormigon demostrado
+                # (6081FHD 28/05/2026: dia de banera con 4 albaranes de hormigon repetidos, que se llevaban los ciclos del hub)
+                ocupado_h = [(c["t0"], c["t1"]) for jm in jor_h for c in (jm.get("ciclos") or []) if c.get("reclamado_hormigon")]
+        if i_arid:
+            dnext = (dt.date.fromisoformat(d) + dt.timedelta(days=1)).isoformat()
+            sig = [dem[i] for i in por_dia.get((m, dnext), []) if not dem[i]["larga"] and not dem[i]["horm"] and i not in espejo_de]
+            r = triangular_dia([dem[i] for i in i_arid], jor_arid, prestados, fuente, coords, sens.get(m), acts.get(m, []), drvs.get(m, []), diag, viajes_sig=sig, ocupado=ocupado_h)
+            res.update(dict(zip(i_arid, r)))
         for i, r in res.items():
             salida[i] = r
         if jor_arid is not jor:
