@@ -223,6 +223,41 @@ class TestPlantaAjenaNoTapaLaObra(unittest.TestCase):
         self.assertEqual([r["km"] for r in con_ajena], [r["km"] for r in sin_ajena])
 
 
+class TestVisitasPlantasNoFusionaSiHuboRecorridoReal(unittest.TestCase):
+    # 1865NNH, 15/07/2026 (Roberto/Claude 29/09/2026): visitas_plantas() fundia paradas consecutivas en la MISMA
+    # planta sin comprobar si hubo un recorrido real entre medias (114 km, 39 km de reparto real), al reves que
+    # ciclos_geo() para aridos, que ya exige < KM_MISMA_CARGA (3 km) antes de fundir dos paradas del mismo origen.
+    # Con solo 1 visita en vez de 3, el dia entero se veia como un unico ciclo planta->obra->planta.
+    planta = ("Razo", "A")
+    plantas = {planta: {"lat": 42.000, "lon": -8.000, "radio_m": 450}}
+
+    def test_dos_visitas_con_una_ronda_real_entre_medias_no_se_funden(self):
+        t0 = ep('2026-09-21T08:00')
+        pts = (tramo(t0 - 3 * 60, 3, 41.980, 42.000, 60)
+               + tramo(t0, 10, 42.000, 42.000, 0)                  # visita 1 a la planta
+               + tramo(t0 + 10 * 60, 10, 42.000, 42.100, 60)       # ronda real: se aleja ~11 km
+               + tramo(t0 + 20 * 60, 10, 42.100, 42.100, 0)        # parada en la obra (fuera de la planta)
+               + tramo(t0 + 30 * 60, 10, 42.100, 42.000, 60)       # y vuelve
+               + tramo(t0 + 40 * 60, 10, 42.000, 42.000, 0)        # visita 2 a la planta (recarga)
+               + tramo(t0 + 50 * 60, 3, 42.000, 42.020, 60))
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        vis = t2.visitas_plantas(jor[0], self.plantas)
+        self.assertEqual(len(vis), 2, "dos rondas reales de planta deben salir como DOS visitas, no fundidas en una")
+
+    def test_dos_paradas_seguidas_sin_recorrido_si_se_funden(self):
+        # cola / cargadero: la traza rompe la parada en dos por un punto suelto en movimiento, pero sin alejarse de
+        # la planta. Esto SIGUE fundiendose en una sola visita, como antes del arreglo (no se ha roto nada).
+        t0 = ep('2026-09-21T08:00')
+        pts = (tramo(t0 - 3 * 60, 3, 41.980, 42.000, 60)
+               + tramo(t0, 10, 42.000, 42.000, 0)
+               + [dict(tramo(t0 + 10 * 60, 1, 42.000, 42.000, 10)[0])]  # un punto suelto moviendose, mismo sitio
+               + tramo(t0 + 11 * 60, 10, 42.000, 42.000, 0)
+               + tramo(t0 + 21 * 60, 3, 42.000, 42.020, 60))
+        jor = t2.jornadas_de(pts, t2.paradas_flujo(pts), 8 * 3600)
+        vis = t2.visitas_plantas(jor[0], self.plantas)
+        self.assertEqual(len(vis), 1, "sin recorrido real entre medias, sigue siendo una sola visita (cola/cargadero)")
+
+
 class TestRotuloCargaDescarga(unittest.TestCase):
     coords = {('Razo', 'SABO'): {'lat': 43.0, 'lon': -8.0, 'fuente': 'gesruta'}}
 
@@ -268,6 +303,20 @@ class TestVisitasZonaLlegadaReal(unittest.TestCase):
         pts = tramo(t0, 12, 43.0, 43.0, 80)   # nunca para, solo pasa por delante
         ts = [p['t'] for p in pts]
         self.assertEqual(t2.visitas_zona(pts, ts, self.zona, t0, t0 + 3600), [])
+
+    def test_un_frenazo_suelto_no_confirma_t_parado_in(self):
+        # 5003MBV 09/07/2026: un unico punto a 2 km/h en plena zona (no en el borde) marcaba la llegada 11 min antes
+        # de la parada real, con el camion circulando a 35-65 km/h justo antes y despues. t_parado_in solo debe
+        # confirmarse cuando el "parado" se sostiene >= DWELL_S seguidos; un frenazo de un solo punto se descarta.
+        t0 = ep('2026-09-10T10:00')
+        pts = (tramo(t0, 3, 43.0, 43.0, 60)                                  # circulando
+               + [dict(tramo(t0 + 180, 1, 43.0, 43.0, 2.0)[0])]              # frenazo suelto, 1 punto a 2 km/h
+               + tramo(t0 + 240, 10, 43.0, 43.0, 50)                        # vuelve a circular de verdad
+               + tramo(t0 + 840, 12, 43.0, 43.0, 0))                        # parada real, sostenida
+        ts = [p['t'] for p in pts]
+        vis = t2.visitas_zona(pts, ts, self.zona, t0, t0 + 3600)
+        self.assertEqual(len(vis), 1)
+        self.assertEqual(vis[0]['t_parado_in'], t0 + 840, "la llegada real, no el frenazo suelto de t0+180")
 
 
 class TestDestinoHormigonPorGPS(unittest.TestCase):

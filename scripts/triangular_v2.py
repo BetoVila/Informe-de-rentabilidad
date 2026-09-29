@@ -909,23 +909,25 @@ def visitas_por_puntos(j, plantas):
 
 def visitas_plantas(j, plantas):
     """Visitas de la jornada a cualquier planta aprendida: paradas dentro de su radio (y entradas de la traza sin parada, para
-    las cargas rapidas), fundiendo las consecutivas en la misma planta sin parada fuera entre medias (cola y cargadero). Si la
+    las cargas rapidas), fundiendo las consecutivas en la misma planta SOLO si no hubo un recorrido real entre medias
+    (< KM_MISMA_CARGA, igual que en aridos: cola y cargadero, no una ronda entera a la obra y de vuelta). Si la
     jornada ARRANCA en una planta (durmio alli) la salida es la carga del primer viaje, y si ACABA en una planta la llegada
     cierra el ultimo: los descansos no son paradas de la jornada, asi que se anaden como visitas de borde. [(t_in, t_out, key, parada)]."""
+    pts = j["pts"]
+    ts = [q["t"] for q in pts]
     out = []
     for s in j["paradas"]:
         out.append((s["t_in"], s["t_out"], planta_en(s, plantas), s))
     out.sort(key=lambda x: x[0])
     vis = []
     for (a, b, key, s) in out:
-        if key is None:
-            vis.append((a, b, None, s))
-        elif vis and vis[-1][2] == key:
+        junta = (key is not None and vis and vis[-1][2] == key
+                 and v1.km_gps(pts[bisect.bisect_left(ts, vis[-1][1]):bisect.bisect_right(ts, a)]) < KM_MISMA_CARGA)
+        if junta:
             vis[-1] = (vis[-1][0], b, key, vis[-1][3])
         else:
             vis.append((a, b, key, s))
     vis = [v for v in vis if v[2] is not None]
-    pts = j["pts"]
     if pts:
         k0 = planta_en(pts[0], plantas)
         if k0 and not (vis and vis[0][0] <= j["ini"] + 60):
@@ -1171,35 +1173,42 @@ def visitas_zona(pts, ts, zona, t0, t1, min_parada_s=600):
     real (>= min_parada_s parado). Devuelve [{t_in, t_out, parado_s, t_parado_in}] en orden. Pasar por delante por la
     autovia no cuenta. t_in = el momento de ENTRAR en la geocerca (que puede ser amplia, hasta 10 km, cuando solo se
     conoce el centro del pueblo): el camion puede seguir circulando varios minutos mas dentro de ella antes de parar de
-    verdad. t_parado_in = el primer punto de la visita en el que YA esta parado (Roberto 28/09/2026, medido en
-    septiembre 2026: usar t_in como hora de llegada adelantaba la descarga una mediana de 5-6 min, siempre en la misma
-    direccion, con el camion circulando a velocidad de carretera en ese instante)."""
+    verdad. t_parado_in = el primer instante de un tramo parado que se SOSTIENE >= DWELL_S seguidos (Roberto
+    28/09/2026, medido en septiembre 2026: usar t_in como hora de llegada adelantaba la descarga una mediana de
+    5-6 min, siempre en la misma direccion, con el camion circulando a velocidad de carretera en ese instante; el
+    primer arreglo confirmaba con un solo punto a baja velocidad, y un frenazo suelto (cruce, rotonda, baden)
+    lo colaba como llegada: 5003MBV 09/07/2026 adelantaba 11 min por un unico punto a 2 km/h en plena zona, con el
+    camion circulando a 35-65 km/h justo antes y despues)."""
     lat, lon, r, _ = zona
     dlat = r / 111.0
     dlon = r / (111.0 * max(0.2, math.cos(math.radians(lat))))
     i0, i1 = bisect.bisect_left(ts, t0), bisect.bisect_right(ts, t1)
     out, cur, prev = [], None, None
+    cand_in, cand_s = None, 0
     for k in range(i0, i1):
         q = pts[k]
         dentro = abs(q["lat"] - lat) <= dlat and abs(q["lon"] - lon) <= dlon and v1.hav((q["lat"], q["lon"]), (lat, lon)) <= r
         if dentro:
             if cur is None:
                 cur = {"t_in": q["t"], "t_out": q["t"], "parado_s": 0, "t_parado_in": None}
-                ya_parado = (q.get("parada_min") or 0) > 0 if q["f"] == "locatel" else (q["s"] or 0) <= V_PARADO
-                if ya_parado:
+                cand_in, cand_s = None, 0
+                prev = None  # no arrastrar el hueco de fuera de la zona al primer punto de esta visita
+            dtm = (q["t"] - prev["t"]) if prev is not None else 0
+            if q["f"] == "locatel":
+                cur["parado_s"] += int((q.get("parada_min") or 0) * 60)
+                if (q.get("parada_min") or 0) > 0 and cur["t_parado_in"] is None:
                     cur["t_parado_in"] = q["t"]
-            else:
-                dtm = q["t"] - prev["t"]
-                parado_aqui = False
-                if q["f"] == "locatel":
-                    parado_aqui = (q.get("parada_min") or 0) > 0
-                    cur["parado_s"] += int((q.get("parada_min") or 0) * 60)
-                elif (q["s"] or 0) <= V_PARADO and dtm <= 900:
-                    parado_aqui = True
-                    cur["parado_s"] += dtm
-                if parado_aqui and cur["t_parado_in"] is None:
-                    cur["t_parado_in"] = q["t"]
-                cur["t_out"] = q["t"]
+            elif (q["s"] or 0) <= V_PARADO and dtm <= 900:
+                cur["parado_s"] += dtm
+                if cur["t_parado_in"] is None:
+                    if cand_in is None:
+                        cand_in, cand_s = q["t"], 0
+                    cand_s += dtm
+                    if cand_s >= DWELL_S:
+                        cur["t_parado_in"] = cand_in
+            elif (q["s"] or 0) > V_MOVIL:
+                cand_in, cand_s = None, 0    # volvio a circular de verdad: el candidato era un frenazo suelto
+            cur["t_out"] = q["t"]
         elif cur is not None:
             if cur["parado_s"] >= min_parada_s:
                 out.append(cur)
